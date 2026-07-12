@@ -6,23 +6,24 @@ import { RecentThreads } from "@/components/dashboard/RecentThreads";
 
 export default function DashboardPage() {
   return (
-    <div className="min-h-screen bg-[#dcdcdc] p-4">
-      <div className="flex bg-white rounded-[32px] overflow-hidden shadow-2xl min-h-[calc(100vh-2rem)]">
-        <Sidebar />
-        <main className="flex-1 bg-[#f7f7f8] p-7 space-y-6 overflow-auto">
-          {/* Quick Stats */}
-          <QuickStats />
+    <div className="min-h-screen bg-[#f7f7f8]">
+      {/* Fixed sidebar */}
+      <Sidebar />
 
-          {/* Statistics + Pending Approvals */}
-          <div className="grid grid-cols-[1fr_340px] gap-6">
-            <Statistics />
-            <PendingApprovals />
-          </div>
+      {/* Scrollable main content */}
+      <main className="ml-[230px] min-h-screen p-7 space-y-6">
+        {/* Quick Stats */}
+        <QuickStats />
 
-          {/* Manage Threads Table */}
-          <RecentThreads />
-        </main>
-      </div>
+        {/* Statistics + Pending Approvals */}
+        <div className="grid grid-cols-[1fr_340px] gap-6">
+          <Statistics />
+          <PendingApprovals />
+        </div>
+
+        {/* Manage Threads Table */}
+        <RecentThreads />
+      </main>
     </div>
   );
 }

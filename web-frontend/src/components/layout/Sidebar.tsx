@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import {
   Home2,
   Sms,
@@ -25,12 +26,17 @@ const navItems = [
 
 export function Sidebar() {
   return (
-    <aside className="flex flex-col w-[230px] bg-white px-5 py-7 shrink-0">
+    <aside className="fixed top-0 left-0 h-screen w-[230px] bg-white px-5 py-7 flex flex-col border-r border-gray-100 z-20">
       {/* Logo */}
       <div className="flex items-center gap-2.5 px-2 mb-10">
-        <div className="w-9 h-9 bg-black rounded-xl flex items-center justify-center">
-          <span className="text-white font-bold text-base">E</span>
-        </div>
+        <Image
+          src="/ellipse-logo.png"
+          alt="Ellipse"
+          width={40}
+          height={40}
+          className="w-10 h-10 object-contain"
+          priority
+        />
         <span className="font-bold text-xl tracking-tight">Ellipse</span>
       </div>
 
