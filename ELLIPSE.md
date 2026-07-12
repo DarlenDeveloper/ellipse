@@ -29,7 +29,7 @@
 - Smart grouping by customer, urgency, topic, sentiment
 - Real-time updates
 
-### 2. Connectors
+### 2. Integrations
 - Gmail (OAuth2)
 - SMTP/IMAP
 - WhatsApp Business API
@@ -74,13 +74,13 @@
 
 **Afternoon:**
 - Inbox UI
-- Connector settings UI
+- Integrations settings UI
 - Agent config UI
 - Analytics dashboard UI
 
 **Evening:**
 - Firebase setup (Auth, Firestore, Functions)
-- Gmail connector backend
+- Gmail integration backend
 - Message ingestion + real-time sync
 
 ### Day 2 — Intelligence + Polish
@@ -91,7 +91,7 @@
 - Web Agent infrastructure
 
 **Afternoon:**
-- WhatsApp + SMTP connectors
+- WhatsApp + SMTP integrations
 - Analytics data pipeline
 - Agent playbook configuration
 
@@ -108,7 +108,7 @@
 orgs/{orgId}/
   settings/{doc}
   members/{userId}
-  connectors/{connectorId}
+  integrations/{integrationId}
   threads/{threadId}/
     messages/{messageId}
   agents/{agentId}
