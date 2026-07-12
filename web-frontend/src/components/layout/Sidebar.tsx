@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { icon: Home2, label: "Dashboard", href: "/" },
   { icon: Sms, label: "Inbox", href: "/inbox" },
-  { icon: Hierarchy, label: "Connectors", href: "/connectors" },
+  { icon: Hierarchy, label: "Integrations", href: "/integrations" },
   { icon: Cpu, label: "Agents", href: "/agents" },
   { icon: Global, label: "Web Agents", href: "/web-agents" },
   { icon: Profile2User, label: "Users", href: "/users" },
