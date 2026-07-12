@@ -1,0 +1,62 @@
+# ---------- Dependencies ----------
+node_modules/
+.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# ---------- Environment / Secrets ----------
+.env
+.env.*
+!.env.example
+*.local
+serviceAccount*.json
+firebase-adminsdk*.json
+*.pem
+*.key
+
+# ---------- Next.js / Web Frontend ----------
+web-frontend/.next/
+web-frontend/out/
+web-frontend/build/
+web-frontend/.vercel
+web-frontend/next-env.d.ts
+web-frontend/*.tsbuildinfo
+
+# ---------- Firebase / Backend ----------
+backend/node_modules/
+backend/lib/
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+.runtimeconfig.json
+functions/node_modules/
+
+# ---------- Mobile ----------
+mobile/node_modules/
+mobile/.expo/
+mobile/dist/
+mobile/ios/Pods/
+mobile/android/.gradle/
+mobile/android/app/build/
+mobile/*.keystore
+mobile/.expo-shared/
+
+# ---------- Build output ----------
+dist/
+build/
+*.log
+coverage/
+
+# ---------- OS / Editor ----------
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# ---------- Testing ----------
+/coverage
+.nyc_output
