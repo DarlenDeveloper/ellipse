@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { Sidebar } from "@/components/layout/Sidebar";
 
 export const metadata: Metadata = {
   title: "Ellipse — Unified Agentic Communication Hub",
@@ -13,7 +14,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="antialiased">{children}</body>
+      <body className="antialiased bg-[#f7f7f8]">
+        <Sidebar />
+        <div className="ml-[230px] min-h-screen">{children}</div>
+      </body>
     </html>
   );
 }

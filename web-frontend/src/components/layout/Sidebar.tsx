@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { usePathname } from "next/navigation";
 import {
   Home2,
   Sms,
@@ -14,7 +15,7 @@ import {
 import { cn } from "@/lib/utils";
 
 const navItems = [
-  { icon: Home2, label: "Dashboard", href: "/", active: true },
+  { icon: Home2, label: "Dashboard", href: "/" },
   { icon: Sms, label: "Inbox", href: "/inbox" },
   { icon: Hierarchy, label: "Connectors", href: "/connectors" },
   { icon: Cpu, label: "Agents", href: "/agents" },
@@ -25,6 +26,7 @@ const navItems = [
 ];
 
 export function Sidebar() {
+  const pathname = usePathname();
   return (
     <aside className="fixed top-0 left-0 h-screen w-[230px] bg-white px-5 py-7 flex flex-col border-r border-gray-100 z-20">
       {/* Logo */}
@@ -42,25 +44,31 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 space-y-1.5">
-        {navItems.map((item) => (
-          <a
-            key={item.label}
-            href={item.href}
-            className={cn(
-              "flex items-center gap-3.5 px-4 py-3 rounded-full text-[15px] font-medium transition-colors",
-              item.active
-                ? "bg-black text-white shadow-sm"
-                : "text-gray-500 hover:bg-gray-50"
-            )}
-          >
-            <item.icon
-              size={20}
-              variant={item.active ? "Bold" : "Linear"}
-              color={item.active ? "#ffffff" : "#9ca3af"}
-            />
-            {item.label}
-          </a>
-        ))}
+        {navItems.map((item) => {
+          const active =
+            item.href === "/"
+              ? pathname === "/"
+              : pathname.startsWith(item.href);
+          return (
+            <a
+              key={item.label}
+              href={item.href}
+              className={cn(
+                "flex items-center gap-3.5 px-4 py-3 rounded-full text-[15px] font-medium transition-colors",
+                active
+                  ? "bg-black text-white shadow-sm"
+                  : "text-gray-500 hover:bg-gray-50"
+              )}
+            >
+              <item.icon
+                size={20}
+                variant={active ? "Bold" : "Linear"}
+                color={active ? "#ffffff" : "#9ca3af"}
+              />
+              {item.label}
+            </a>
+          );
+        })}
       </nav>
 
       {/* User Profile */}
