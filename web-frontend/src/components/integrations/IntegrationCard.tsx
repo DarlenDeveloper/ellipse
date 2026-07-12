@@ -1,6 +1,7 @@
 "use client";
 
-import { ExportSquare, ArrowSwapHorizontal } from "iconsax-react";
+import Image from "next/image";
+import { ExportSquare, ArrowSwapHorizontal, DirectInbox } from "iconsax-react";
 import { cn } from "@/lib/utils";
 import type { Integration } from "./data";
 
@@ -11,7 +12,7 @@ export function IntegrationCard({
   integration: Integration;
   onToggle: (id: string) => void;
 }) {
-  const { name, description, mark, tileClass, connected } = integration;
+  const { name, description, logo, tileClass, connected } = integration;
 
   return (
     <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-[0_2px_12px_rgba(0,0,0,0.03)] flex flex-col">
@@ -19,11 +20,15 @@ export function IntegrationCard({
       <div className="flex items-start justify-between">
         <div
           className={cn(
-            "w-14 h-14 rounded-2xl flex items-center justify-center text-2xl font-bold",
+            "w-14 h-14 rounded-2xl flex items-center justify-center",
             tileClass
           )}
         >
-          {mark}
+          {logo ? (
+            <Image src={logo} alt={name} width={28} height={28} className="w-7 h-7" />
+          ) : (
+            <DirectInbox size={28} variant="Bold" color="#475569" />
+          )}
         </div>
         <button className="text-gray-300 hover:text-gray-500">
           <ExportSquare size={18} variant="Linear" />
