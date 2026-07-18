@@ -43,10 +43,12 @@
 - Human-in-the-loop approval flow
 
 ### 4. Web Agents
-- Autonomous browser agents that can perform web tasks on behalf of the user
-- Research, scrape, fill forms, monitor pages
-- Triggered by Boss Agent or manually
-- Report findings back into the inbox/thread
+- Customer-facing chatbot widgets embedded on company websites
+- Powered by Gemini, trained on company knowledge base
+- Customizable appearance (colors, avatar, position, welcome message)
+- Conversation logs fed back into the unified inbox
+- Embed via script tag or iframe
+- Configurable escalation to human agents
 
 ### 5. Boss Agent
 - Orchestrates all channel agents + web agents
