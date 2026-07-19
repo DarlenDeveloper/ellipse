@@ -25,6 +25,7 @@ web-frontend/*.tsbuildinfo
 # ---------- Firebase / Backend ----------
 backend/node_modules/
 backend/lib/
+backend/package-lock.json
 .firebase/
 firebase-debug.log
 firestore-debug.log
