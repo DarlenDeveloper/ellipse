@@ -20,8 +20,26 @@ Remaining (the 30%):
 - [ ] Handle Calendar + Contacts (Workspace is more than Gmail)
 
 ### WhatsApp — ⚪ 0%
-### Zoho CRM — ⚪ 0%
-### Odoo — ⚪ 0%
+
+### Zoho CRM — 🟡 50%
+Done:
+- [x] Client creds in Secret Manager (`ZOHO_CLIENT_ID` / `ZOHO_CLIENT_SECRET`)
+- [x] OAuth connect flow (`startZohoConnect` → consent → `zohoOAuthCallback`), deployed
+- [x] DC-aware token exchange (captures `accounts-server`) + store `connections/{enterpriseId}_zoho`
+- [x] Manual token refresh, cached + rate-limit friendly (refresh only on expiry)
+- [x] Action executors: `searchByEmail`, `createRecord`, `updateRecord`, `addNote`
+- [x] Real `executeAction()` routing for `targetSystem: "zoho"` (replaces stub)
+- [x] Integrations page Connect button wired
+
+Remaining (the 50%):
+- [x] Verified connect end-to-end (read 46 modules via `pingZoho`)
+- [ ] Test Supervised `create_record` through the gate
+- [ ] Register Zoho actions as Gemini function declarations (Zoho agent)
+- [ ] Read/enrich: look up inbound contacts in Zoho to add CRM context to conversations
+- [ ] Real-time: Notification API webhook (subscribe + scheduled renewal)
+- [ ] Move refresh token Firestore → Secret Manager (matches Gmail tech debt)
+
+### Odoo — ⚪ 0%  (reuse Zoho framework — near-identical OAuth2 + REST)
 ### Microsoft 365 — ⚪ 0%
 ### Salesforce — ⚪ 0%
 ### SMTP / IMAP — ⚪ 0%

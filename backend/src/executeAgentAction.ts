@@ -106,7 +106,7 @@ export async function executeAgentAction(
   }
 
   // 4b. Unsupervised — execute immediately
-  const externalRef = await executeAction(targetSystem, actionType, params);
+  const externalRef = await executeAction(enterpriseId, targetSystem, actionType, params);
   const ref = await db.collection("pending_actions").add({
     enterprise_id: enterpriseId,
     agent_id: agentId,
@@ -131,11 +131,45 @@ export async function executeAgentAction(
  * Stubbed for now — returns a placeholder external reference.
  */
 async function executeAction(
+  enterpriseId: string,
   targetSystem: string,
   actionType: string,
-  _params: Record<string, unknown>
+  params: Record<string, unknown>
 ): Promise<string | null> {
-  // TODO: route to internal handlers or connection tool executors
+  if (targetSystem === "zoho") {
+    return executeZohoAction(enterpriseId, actionType, params);
+  }
+  // TODO: internal handlers + other connections (odoo, whatsapp, ...)
   logger.info("executeAction (stub)", { targetSystem, actionType });
   return `${targetSystem}:stub:${Date.now()}`;
+}
+
+/**
+ * Routes a Zoho action to the connection's executors. actionType names the
+ * operation; params carry the module/record/fields the agent chose.
+ */
+async function executeZohoAction(
+  enterpriseId: string,
+  actionType: string,
+  params: Record<string, unknown>
+): Promise<string | null> {
+  const zoho = await import("./connections/zoho");
+  const module = (params.module as string) ?? "Leads";
+
+  switch (actionType) {
+    case "create_record":
+      return zoho.createRecord(enterpriseId, module, (params.fields as Record<string, unknown>) ?? {});
+    case "update_record":
+      return zoho.updateRecord(
+        enterpriseId,
+        module,
+        params.recordId as string,
+        (params.fields as Record<string, unknown>) ?? {}
+      );
+    case "add_note":
+      return zoho.addNote(enterpriseId, module, params.recordId as string, params.content as string);
+    default:
+      logger.warn("Unknown Zoho action", { actionType });
+      return null;
+  }
 }

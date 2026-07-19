@@ -15,7 +15,9 @@ export default function IntegrationsPage() {
   const [query, setQuery] = useState("");
   const [enterpriseId, setEnterpriseId] = useState<string | null>(null);
   const [googleEmail, setGoogleEmail] = useState<string | null>(null);
+  const [zohoConnected, setZohoConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [connectingZoho, setConnectingZoho] = useState(false);
   const [banner, setBanner] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   // Load enterprise + real google connection status
@@ -30,6 +32,12 @@ export default function IntegrationsPage() {
     if (connSnap.exists() && connSnap.data()?.status === "active") {
       setGoogleEmail(connSnap.data()?.account_email ?? "connected");
       setItems((prev) => prev.map((it) => (it.id === "google-workspace" ? { ...it, connected: true } : it)));
+    }
+
+    const zohoSnap = await getDoc(doc(db, "connections", `${entId}_zoho`));
+    if (zohoSnap.exists() && zohoSnap.data()?.status === "active") {
+      setZohoConnected(true);
+      setItems((prev) => prev.map((it) => (it.id === "zoho" ? { ...it, connected: true } : it)));
     }
   }, [user]);
 
@@ -49,6 +57,16 @@ export default function IntegrationsPage() {
       setBanner({ type: "error", text: "Google connection failed. Please try again." });
       window.history.replaceState({}, "", "/integrations");
     }
+
+    const z = params.get("zoho");
+    if (z === "connected") {
+      setBanner({ type: "success", text: "Zoho connected successfully." });
+      refresh();
+      window.history.replaceState({}, "", "/integrations");
+    } else if (z === "error") {
+      setBanner({ type: "error", text: "Zoho connection failed. Please try again." });
+      window.history.replaceState({}, "", "/integrations");
+    }
   }, [refresh]);
 
   const connectGoogle = async () => {
@@ -64,6 +82,22 @@ export default function IntegrationsPage() {
     } catch {
       setBanner({ type: "error", text: "Could not start Google connect." });
       setConnecting(false);
+    }
+  };
+
+  const connectZoho = async () => {
+    if (!enterpriseId) {
+      setBanner({ type: "error", text: "No workspace found. Finish onboarding first." });
+      return;
+    }
+    setConnectingZoho(true);
+    try {
+      const start = httpsCallable(functions, "startZohoConnect");
+      const res = (await start({ enterpriseId })) as { data: { url: string } };
+      window.location.href = res.data.url; // redirect to Zoho consent
+    } catch {
+      setBanner({ type: "error", text: "Could not start Zoho connect." });
+      setConnectingZoho(false);
     }
   };
 
@@ -117,14 +151,15 @@ export default function IntegrationsPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
         {filtered.map((integration) => {
           const isGoogle = integration.id === "google-workspace";
+          const isZoho = integration.id === "zoho";
           return (
             <IntegrationCard
               key={integration.id}
               integration={integration}
               onToggle={toggle}
-              onConnectClick={isGoogle ? connectGoogle : undefined}
-              subtitle={isGoogle && googleEmail ? googleEmail : undefined}
-              busy={isGoogle && connecting}
+              onConnectClick={isGoogle ? connectGoogle : isZoho ? connectZoho : undefined}
+              subtitle={isZoho && zohoConnected ? "Connected" : undefined}
+              busy={(isGoogle && connecting) || (isZoho && connectingZoho)}
             />
           );
         })}

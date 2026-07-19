@@ -11,6 +11,8 @@ setGlobalOptions({ region: "us-central1", maxInstances: 10 });
 const geminiKey = defineSecret("GEMINI_API_KEY");
 const googleClientId = defineSecret("GOOGLE_OAUTH_CLIENT_ID");
 const googleClientSecret = defineSecret("GOOGLE_OAUTH_CLIENT_SECRET");
+const zohoClientId = defineSecret("ZOHO_CLIENT_ID");
+const zohoClientSecret = defineSecret("ZOHO_CLIENT_SECRET");
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 
@@ -27,6 +29,29 @@ export const pingGemini = onRequest({ secrets: [geminiKey] }, async (_req, res) 
     res.status(500).json({ ok: false, error: (e as Error).message });
   }
 });
+
+/**
+ * TEMPORARY — verifies the Zoho token refresh + api_domain chain end-to-end.
+ * Call with ?enterpriseId=... Remove once the Zoho agent is live.
+ */
+export const pingZoho = onRequest(
+  { secrets: [zohoClientId, zohoClientSecret] },
+  async (req, res) => {
+    const enterpriseId = req.query.enterpriseId as string | undefined;
+    if (!enterpriseId) {
+      res.status(400).json({ ok: false, error: "Missing enterpriseId" });
+      return;
+    }
+    try {
+      const { listModules } = await import("./connections/zoho");
+      const data = await listModules(enterpriseId);
+      const names = (data?.modules ?? []).map((m: any) => m.api_name).slice(0, 10);
+      res.json({ ok: true, moduleCount: data?.modules?.length ?? 0, sample: names });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: (e as Error).message });
+    }
+  }
+);
 
 /**
  * Callable wrapper around the execution gate — used for testing the mode/tier/
@@ -111,6 +136,49 @@ export const syncGmail = onCall(
     const { ingestRecentGmail } = await import("./connections/google");
     const count = await ingestRecentGmail(enterpriseId);
     return { ingested: count };
+  }
+);
+
+/**
+ * Step 1 of Zoho connect — returns the Zoho consent URL.
+ */
+export const startZohoConnect = onCall(
+  { secrets: [zohoClientId, zohoClientSecret] },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+    const enterpriseId = request.data?.enterpriseId as string | undefined;
+    if (!enterpriseId) throw new HttpsError("invalid-argument", "Missing enterpriseId.");
+
+    const { buildConsentUrl } = await import("./connections/zoho");
+    return { url: buildConsentUrl(enterpriseId) };
+  }
+);
+
+/**
+ * Step 2 — Zoho redirects here with ?code, ?state(enterpriseId) and the
+ * DC-specific ?accounts-server. Exchanges the code, stores the connection,
+ * then bounces back to the app.
+ */
+export const zohoOAuthCallback = onRequest(
+  { secrets: [zohoClientId, zohoClientSecret] },
+  async (req, res) => {
+    const code = req.query.code as string | undefined;
+    const enterpriseId = req.query.state as string | undefined;
+    const accountsServer = req.query["accounts-server"] as string | undefined;
+
+    if (!code || !enterpriseId) {
+      res.redirect(`${FRONTEND_URL}/integrations?zoho=error`);
+      return;
+    }
+
+    try {
+      const { handleCallback } = await import("./connections/zoho");
+      await handleCallback(code, enterpriseId, accountsServer);
+      res.redirect(`${FRONTEND_URL}/integrations?zoho=connected`);
+    } catch (e) {
+      logger.error("Zoho OAuth callback failed", e);
+      res.redirect(`${FRONTEND_URL}/integrations?zoho=error`);
+    }
   }
 );
 
