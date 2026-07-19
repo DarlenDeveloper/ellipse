@@ -22,12 +22,10 @@ export type ExecuteAgentActionInput = {
   targetSystem: TargetSystem;
   /** Agent's reasoning text — stored as action_summary, shown on approval screen */
   reasoning: string;
-  /** Token usage from the Gemini call that produced this action, for wallet debit */
-  tokenUsage?: number;
 };
 
 export type ExecuteAgentActionResult = {
-  status: "off" | "pending" | "executed" | "blocked" | "downgraded" | "error";
+  status: "off" | "pending" | "executed" | "blocked" | "frozen" | "error";
   pendingActionId?: string;
   externalRef?: string;
   reason?: string;
@@ -40,5 +38,4 @@ export const tierFeatures: Record<Tier, { inbox: boolean; connections: boolean; 
   enterprise: { inbox: true, connections: true, webWidget: true },
 };
 
-// Rough cost model: credits debited per 1K tokens (tune later against real pricing)
-export const CREDITS_PER_1K_TOKENS = 1;
+

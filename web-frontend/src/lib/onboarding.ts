@@ -39,11 +39,8 @@ export async function getLandingRoute(uid: string): Promise<string> {
   return "/dashboard";
 }
 
-const startingWalletBalance: Record<Tier, number> = {
-  starter: 0,
-  business: 500, // trial credit
-  enterprise: 1000,
-};
+// Trial length (days) before the subscription window ends and the workspace freezes
+const TRIAL_DAYS = 14;
 
 // ---- Load current progress for a user ----
 export async function loadOnboardingState(uid: string): Promise<OnboardingState> {
@@ -131,21 +128,19 @@ export async function savePlan(enterpriseId: string, tier: Tier): Promise<void> 
   const entSnap = await getDoc(entRef);
   let walletId = entSnap.data()?.wallet_id as string | null | undefined;
 
+  const subscriptionEnd = new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000);
+
   if (!walletId) {
+    // Wallet tracks the subscription window only — no credits.
     const walletRef = doc(collection(db, "wallets"));
     await setDoc(walletRef, {
       enterprise_id: enterpriseId,
-      balance: startingWalletBalance[tier],
-      currency: "USD",
+      subscription_start: serverTimestamp(),
+      subscription_end: subscriptionEnd,
+      status: "active",
       updated_at: serverTimestamp(),
     });
     walletId = walletRef.id;
-  } else {
-    // Update balance to reflect the chosen tier's trial credit
-    await updateDoc(doc(db, "wallets", walletId), {
-      balance: startingWalletBalance[tier],
-      updated_at: serverTimestamp(),
-    });
   }
 
   await updateDoc(entRef, {

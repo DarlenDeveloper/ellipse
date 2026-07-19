@@ -29,7 +29,6 @@ export const runAgentAction = onCall(async (request) => {
     params: data.params ?? {},
     targetSystem: data.targetSystem,
     reasoning: data.reasoning ?? "Manual test action",
-    tokenUsage: data.tokenUsage,
   });
 
   return result;

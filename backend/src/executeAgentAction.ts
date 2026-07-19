@@ -6,7 +6,6 @@ import {
   Mode,
   Tier,
   tierFeatures,
-  CREDITS_PER_1K_TOKENS,
 } from "./types";
 
 /**
@@ -27,7 +26,7 @@ import {
 export async function executeAgentAction(
   input: ExecuteAgentActionInput
 ): Promise<ExecuteAgentActionResult> {
-  const { enterpriseId, agentId, domain, actionType, params, targetSystem, reasoning, tokenUsage } = input;
+  const { enterpriseId, agentId, domain, actionType, params, targetSystem, reasoning } = input;
 
   // 1. Load enterprise
   const entRef = db.doc(`enterprises/${enterpriseId}`);
@@ -64,37 +63,26 @@ export async function executeAgentAction(
     return { status: "off" };
   }
 
-  // Wallet check (Supervised + Unsupervised both consume model credits)
+  // Subscription check — the wallet tracks the subscription window (no credits).
+  // If the subscription has expired, freeze: no agent actions run.
   if (ent.wallet_id) {
-    const walletRef = db.doc(`wallets/${ent.wallet_id}`);
-    const walletSnap = await walletRef.get();
-    const balance = (walletSnap.data()?.balance as number) ?? 0;
+    const walletSnap = await db.doc(`wallets/${ent.wallet_id}`).get();
+    const w = walletSnap.data() as { subscription_end?: FirebaseFirestore.Timestamp; status?: string } | undefined;
+    const end = w?.subscription_end;
+    const expired = w?.status === "frozen" || (end ? end.toDate().getTime() < Date.now() : false);
 
-    if (balance <= 0) {
-      // Auto-downgrade to Off so agents don't fail silently
-      await entRef.update({ mode: "off", updated_at: FieldValue.serverTimestamp() });
+    if (expired) {
+      if (w?.status !== "frozen") {
+        await db.doc(`wallets/${ent.wallet_id}`).update({ status: "frozen", updated_at: FieldValue.serverTimestamp() });
+      }
       await db.collection("analytics_events").add({
-        source: "wallet_depleted_autodowngrade",
+        source: "subscription_expired",
         workspace_id: enterpriseId,
-        payload: { previous_mode: mode },
+        payload: { enterpriseId },
         timestamp: FieldValue.serverTimestamp(),
       });
-      // TODO: notify owner/admin
-      return { status: "downgraded", reason: "wallet_empty" };
-    }
-
-    // Debit for the model run that produced this action
-    if (tokenUsage && tokenUsage > 0) {
-      const cost = (tokenUsage / 1000) * CREDITS_PER_1K_TOKENS;
-      await walletRef.update({ balance: FieldValue.increment(-cost), updated_at: FieldValue.serverTimestamp() });
-      await db.collection("wallet_transactions").add({
-        wallet_id: ent.wallet_id,
-        type: "debit",
-        amount: cost,
-        reason: "agent_run",
-        ref_id: agentId,
-        timestamp: FieldValue.serverTimestamp(),
-      });
+      // TODO: notify owner/admin to renew
+      return { status: "frozen", reason: "subscription_expired" };
     }
   }
 
