@@ -15,7 +15,8 @@ Done:
 Remaining (the 30%):
 - [ ] Gmail agent: read → analyze (Gemini) → suggest (Supervised) / act (Unsupervised)
 - [ ] Send / reply from within the inbox (`messages.send`)
-- [ ] Real-time ingestion (`users.watch` + Pub/Sub) instead of manual sync
+- [x] Auto-sync: `scheduledGmailSync` polls every 5 min (no manual button)
+- [ ] True real-time push (`users.watch` + Pub/Sub) — upgrade from polling later
 - [ ] Move refresh token from Firestore → Secret Manager (security)
 - [ ] Handle Calendar + Contacts (Workspace is more than Gmail)
 
@@ -31,13 +32,18 @@ Done:
 - [x] Real `executeAction()` routing for `targetSystem: "zoho"` (replaces stub)
 - [x] Integrations page Connect button wired
 
-Remaining (the 50%):
+Done (agent):
 - [x] Verified connect end-to-end (read 46 modules via `pingZoho`)
-- [ ] Test Supervised `create_record` through the gate
-- [ ] Register Zoho actions as Gemini function declarations (Zoho agent)
-- [ ] Read/enrich: look up inbound contacts in Zoho to add CRM context to conversations
+- [x] Read/enrich: `enrichFromZoho` looks up Contact/Lead by email + related Deals
+- [x] Zoho agent (`runZohoAgent`): enrich → Gemini (reply + CRM tools) → route through gate
+- [x] Zoho actions registered as Gemini function declarations (create_record, update_record, add_note)
+
+Remaining:
+- [ ] Test `runZohoAgent` on a real conversation (Supervised → check `pending_actions`)
+- [x] Approval executor (`onPendingActionApproved`): approved pending_action → executes to Zoho
 - [ ] Real-time: Notification API webhook (subscribe + scheduled renewal)
 - [ ] Move refresh token Firestore → Secret Manager (matches Gmail tech debt)
+- [ ] Remove temporary `pingZoho` debug function before ship
 
 ### Odoo — ⚪ 0%  (reuse Zoho framework — near-identical OAuth2 + REST)
 ### Microsoft 365 — ⚪ 0%
@@ -50,7 +56,8 @@ Remaining (the 50%):
 - [x] `executeAgentAction` gate (mode + tier + subscription) — deployed
 - [x] Gemini 3.1 flash-lite wrapper — deployed & verified
 - [ ] Boss / Personal agent (coordinates connection agents) — LAST
-- [ ] `pending_actions` approval flow (test Supervised)
+- [x] `pending_actions` approval flow — `onPendingActionApproved` executes approved actions
+- [x] Approvals page (`/approvals`, sidebar) — full detail + Approve/Reject; dashboard card shows count + links to it
 - [ ] Mode switcher persisted to Firestore
 - [ ] Daily → weekly summaries
 

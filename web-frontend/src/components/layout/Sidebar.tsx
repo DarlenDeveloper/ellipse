@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   Home2,
   Sms,
+  ClipboardTick,
   Hierarchy,
   Cpu,
   Global,
@@ -24,6 +25,7 @@ import { ModeSwitcher } from "./ModeSwitcher";
 const navItems = [
   { icon: Home2, label: "Dashboard", href: "/dashboard" },
   { icon: Sms, label: "Inbox", href: "/inbox" },
+  { icon: ClipboardTick, label: "Approvals", href: "/approvals" },
   { icon: Hierarchy, label: "Integrations", href: "/integrations" },
   { icon: Cpu, label: "Agents", href: "/agents" },
   { icon: Global, label: "Web Agents", href: "/web-agents" },

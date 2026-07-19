@@ -1,4 +1,5 @@
 import { onCall, onRequest, HttpsError } from "firebase-functions/v2/https";
+import { onSchedule } from "firebase-functions/v2/scheduler";
 import { setGlobalOptions } from "firebase-functions/v2";
 import { defineSecret } from "firebase-functions/params";
 import * as logger from "firebase-functions/logger";
@@ -140,6 +141,86 @@ export const syncGmail = onCall(
 );
 
 /**
+ * Auto-sync — pulls new Gmail for every connected account every 5 minutes so
+ * users don't have to press the Sync button. The inbox updates live via
+ * onSnapshot, so new messages just appear.
+ */
+export const scheduledGmailSync = onSchedule(
+  { schedule: "every 5 minutes", secrets: [googleClientId, googleClientSecret] },
+  async () => {
+    const { syncAllConnectedGmail } = await import("./connections/google");
+    const ingested = await syncAllConnectedGmail();
+    logger.info("scheduledGmailSync complete", { ingested });
+  }
+);
+
+/**
+ * TEMPORARY debug trigger — runs the Zoho agent over a conversation without auth,
+ * so we can test the write path via curl. Defaults to the most recent conversation
+ * for the enterprise if no conversationId is given. Remove before ship.
+ */
+export const runZohoAgentDebug = onRequest(
+  { secrets: [geminiKey, zohoClientId, zohoClientSecret, googleClientId, googleClientSecret] },
+  async (req, res) => {
+    const enterpriseId = req.query.enterpriseId as string | undefined;
+    let conversationId = req.query.conversationId as string | undefined;
+    if (!enterpriseId) {
+      res.status(400).json({ ok: false, error: "Missing enterpriseId" });
+      return;
+    }
+    try {
+      const { db } = await import("./admin");
+
+      // Optional: pull fresh Gmail first so a just-sent email is picked up.
+      if (req.query.sync === "1") {
+        const { ingestRecentGmail } = await import("./connections/google");
+        await ingestRecentGmail(enterpriseId);
+      }
+
+      if (!conversationId) {
+        const snap = await db
+          .collection("conversations")
+          .where("enterprise_id", "==", enterpriseId)
+          .get();
+        const latest = snap.docs
+          .map((d) => ({ id: d.id, at: (d.data().last_message_at as any)?.toMillis?.() ?? 0 }))
+          .sort((a, b) => b.at - a.at)[0];
+        if (!latest) {
+          res.status(404).json({ ok: false, error: "No conversations for this enterprise" });
+          return;
+        }
+        conversationId = latest.id;
+      }
+
+      const { runZohoAgent: run } = await import("./agents/zohoAgent");
+      const result = await run(enterpriseId, conversationId);
+      res.json({ ok: true, conversationId, ...result });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: (e as Error).message });
+    }
+  }
+);
+
+/**
+ * Run the Zoho CRM agent over a conversation: enrich from Zoho, draft a reply,
+ * and route any proposed CRM updates through the gate (mode decides suggest/execute).
+ */
+export const runZohoAgent = onCall(
+  { secrets: [geminiKey, zohoClientId, zohoClientSecret] },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+    const enterpriseId = request.data?.enterpriseId as string | undefined;
+    const conversationId = request.data?.conversationId as string | undefined;
+    if (!enterpriseId || !conversationId) {
+      throw new HttpsError("invalid-argument", "Missing enterpriseId or conversationId.");
+    }
+
+    const { runZohoAgent: run } = await import("./agents/zohoAgent");
+    return run(enterpriseId, conversationId);
+  }
+);
+
+/**
  * Step 1 of Zoho connect — returns the Zoho consent URL.
  */
 export const startZohoConnect = onCall(
@@ -183,3 +264,4 @@ export const zohoOAuthCallback = onRequest(
 );
 
 export { executeAgentAction };
+export { onPendingActionApproved } from "./approvals";

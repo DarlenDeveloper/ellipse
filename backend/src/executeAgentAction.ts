@@ -130,7 +130,7 @@ export async function executeAgentAction(
  *
  * Stubbed for now — returns a placeholder external reference.
  */
-async function executeAction(
+export async function executeAction(
   enterpriseId: string,
   targetSystem: string,
   actionType: string,

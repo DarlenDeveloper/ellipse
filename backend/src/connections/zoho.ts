@@ -179,6 +179,66 @@ export async function listModules(enterpriseId: string): Promise<any> {
   return zohoRequest(enterpriseId, "settings/modules");
 }
 
+export type ZohoEnrichment = {
+  found: boolean;
+  type: "contact" | "lead" | null;
+  record: { id: string; name: string; email: string; account?: string } | null;
+  deals: { id: string; name: string; stage: string; amount: number | null }[];
+};
+
+/** Deals related to a contact (related-list endpoint). */
+async function relatedDeals(enterpriseId: string, contactId: string) {
+  const data = await zohoRequest(enterpriseId, `Contacts/${contactId}/Deals`);
+  return (data?.data ?? []).map((d: any) => ({
+    id: d.id,
+    name: d.Deal_Name ?? "(unnamed deal)",
+    stage: d.Stage ?? "unknown",
+    amount: d.Amount ?? null,
+  }));
+}
+
+/**
+ * Look a customer up in Zoho by email and pull the context an agent needs:
+ * the Contact (or Lead fallback) plus any related Deals. This is the "read/enrich"
+ * step that turns a bare inbound email into CRM-aware context.
+ */
+export async function enrichFromZoho(enterpriseId: string, email: string): Promise<ZohoEnrichment> {
+  const empty: ZohoEnrichment = { found: false, type: null, record: null, deals: [] };
+  if (!email) return empty;
+
+  const contact = await searchByEmail(enterpriseId, "Contacts", email);
+  if (contact) {
+    return {
+      found: true,
+      type: "contact",
+      record: {
+        id: contact.id,
+        name: contact.Full_Name ?? `${contact.First_Name ?? ""} ${contact.Last_Name ?? ""}`.trim(),
+        email,
+        account: contact.Account_Name?.name,
+      },
+      deals: await relatedDeals(enterpriseId, contact.id),
+    };
+  }
+
+  const lead = await searchByEmail(enterpriseId, "Leads", email);
+  if (lead) {
+    return {
+      found: true,
+      type: "lead",
+      record: {
+        id: lead.id,
+        name: lead.Full_Name ?? `${lead.First_Name ?? ""} ${lead.Last_Name ?? ""}`.trim(),
+        email,
+        account: lead.Company,
+      },
+      deals: [],
+    };
+  }
+
+  return empty;
+}
+
 // ---- Action executors (routed from executeAgentAction for targetSystem "zoho") ----
 
 /** Look up a record in a module by email — used to enrich inbound conversations. */

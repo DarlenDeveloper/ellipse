@@ -102,6 +102,27 @@ function parseEmailAddress(from: string): string {
 }
 
 /**
+ * Sync every connected Google Workspace account. Used by the scheduled auto-sync
+ * so users don't have to press a refresh button. One account failing doesn't stop
+ * the others. Returns the total number of newly ingested messages.
+ */
+export async function syncAllConnectedGmail(): Promise<number> {
+  const snap = await db.collection("connections").where("type", "==", "google-workspace").get();
+  let total = 0;
+  for (const doc of snap.docs) {
+    const d = doc.data();
+    if (d.status !== "active" || !d.enterprise_id) continue;
+    try {
+      total += await ingestRecentGmail(d.enterprise_id);
+    } catch (e) {
+      // Non-fatal — keep syncing the rest; a bad/expired token shouldn't block others.
+      console.error("scheduled Gmail sync failed", d.enterprise_id, (e as Error).message);
+    }
+  }
+  return total;
+}
+
+/**
  * Pull recent inbox messages and normalize them into Firestore
  * (conversations + messages), plus log analytics_events. This is the "read" step.
  */
