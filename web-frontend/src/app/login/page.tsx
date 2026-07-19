@@ -4,14 +4,41 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Eye, EyeSlash } from "iconsax-react";
 import { AuthLayout } from "@/components/auth/AuthLayout";
+import { useAuth } from "@/lib/auth-context";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { signInWithEmail, signInWithGoogle } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
+  const [form, setForm] = useState({ email: "", password: "" });
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    router.push("/dashboard");
+    setError("");
+    setLoading(true);
+    try {
+      await signInWithEmail(form.email, form.password);
+      router.push("/dashboard");
+    } catch {
+      setError("Invalid email or password.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogle = async () => {
+    setError("");
+    setLoading(true);
+    try {
+      await signInWithGoogle();
+      router.push("/dashboard");
+    } catch {
+      setError("Google sign-in failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const inputClass =
@@ -26,12 +53,22 @@ export default function LoginPage() {
 
       {/* SSO */}
       <div className="grid grid-cols-2 gap-3 mb-6">
-        <button className="flex items-center justify-center gap-2 bg-white/5 border border-white/10 rounded-full py-3 text-sm font-medium text-white hover:bg-white/10 transition-colors">
+        <button
+          type="button"
+          onClick={handleGoogle}
+          disabled={loading}
+          className="flex items-center justify-center gap-2 bg-white/5 border border-white/10 rounded-full py-3 text-sm font-medium text-white hover:bg-white/10 transition-colors disabled:opacity-50"
+        >
           <img src="/logos/google-workspace.svg" alt="" className="w-4 h-4" />
           Google
         </button>
-        <button className="flex items-center justify-center gap-2 bg-white/5 border border-white/10 rounded-full py-3 text-sm font-medium text-white hover:bg-white/10 transition-colors">
-          <img src="/logos/github.svg" alt="" className="w-4 h-4" />
+        <button
+          type="button"
+          disabled
+          title="Coming soon"
+          className="flex items-center justify-center gap-2 bg-white/5 border border-white/10 rounded-full py-3 text-sm font-medium text-white/40 cursor-not-allowed"
+        >
+          <img src="/logos/github.svg" alt="" className="w-4 h-4 opacity-40" />
           GitHub
         </button>
       </div>
@@ -42,12 +79,20 @@ export default function LoginPage() {
         <div className="flex-1 h-px bg-white/10" />
       </div>
 
+      {error && (
+        <div className="mb-4 text-sm text-red-300 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-2.5">
+          {error}
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="text-xs font-medium text-white/60 block mb-1.5">Email</label>
           <input
             required
             type="email"
+            value={form.email}
+            onChange={(e) => setForm({ ...form, email: e.target.value })}
             placeholder="eg. johnfrans@gmail.com"
             className={inputClass}
           />
@@ -62,6 +107,8 @@ export default function LoginPage() {
             <input
               required
               type={showPassword ? "text" : "password"}
+              value={form.password}
+              onChange={(e) => setForm({ ...form, password: e.target.value })}
               placeholder="Enter your password"
               className={inputClass + " pr-11"}
             />
@@ -77,9 +124,10 @@ export default function LoginPage() {
 
         <button
           type="submit"
-          className="w-full bg-white text-black font-semibold rounded-full py-3.5 hover:bg-white/90 transition-colors mt-2"
+          disabled={loading}
+          className="w-full bg-white text-black font-semibold rounded-full py-3.5 hover:bg-white/90 transition-colors mt-2 disabled:opacity-60"
         >
-          Log In
+          {loading ? "Signing in..." : "Log In"}
         </button>
       </form>
 

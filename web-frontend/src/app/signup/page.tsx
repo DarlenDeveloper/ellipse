@@ -4,15 +4,53 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Eye, EyeSlash } from "iconsax-react";
 import { AuthLayout } from "@/components/auth/AuthLayout";
+import { useAuth } from "@/lib/auth-context";
 
 export default function SignupPage() {
   const router = useRouter();
+  const { signUpWithEmail, signInWithGoogle } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [form, setForm] = useState({ firstName: "", lastName: "", email: "", password: "" });
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const mapError = (code: string) => {
+    if (code.includes("email-already-in-use")) return "An account with this email already exists.";
+    if (code.includes("invalid-email")) return "Please enter a valid email address.";
+    if (code.includes("weak-password")) return "Password must be at least 6 characters.";
+    return "Something went wrong. Please try again.";
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    router.push("/onboarding");
+    setError("");
+    if (form.password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const name = `${form.firstName} ${form.lastName}`.trim();
+      await signUpWithEmail(name, form.email, form.password);
+      router.push("/onboarding");
+    } catch (err: unknown) {
+      setError(mapError((err as { code?: string })?.code ?? ""));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogle = async () => {
+    setError("");
+    setLoading(true);
+    try {
+      await signInWithGoogle();
+      router.push("/onboarding");
+    } catch {
+      setError("Google sign-in failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const inputClass =
@@ -27,12 +65,22 @@ export default function SignupPage() {
 
       {/* SSO */}
       <div className="grid grid-cols-2 gap-3 mb-6">
-        <button className="flex items-center justify-center gap-2 bg-white/5 border border-white/10 rounded-full py-3 text-sm font-medium text-white hover:bg-white/10 transition-colors">
+        <button
+          type="button"
+          onClick={handleGoogle}
+          disabled={loading}
+          className="flex items-center justify-center gap-2 bg-white/5 border border-white/10 rounded-full py-3 text-sm font-medium text-white hover:bg-white/10 transition-colors disabled:opacity-50"
+        >
           <img src="/logos/google-workspace.svg" alt="" className="w-4 h-4" />
           Google
         </button>
-        <button className="flex items-center justify-center gap-2 bg-white/5 border border-white/10 rounded-full py-3 text-sm font-medium text-white hover:bg-white/10 transition-colors">
-          <img src="/logos/github.svg" alt="" className="w-4 h-4" />
+        <button
+          type="button"
+          disabled
+          title="Coming soon"
+          className="flex items-center justify-center gap-2 bg-white/5 border border-white/10 rounded-full py-3 text-sm font-medium text-white/40 cursor-not-allowed"
+        >
+          <img src="/logos/github.svg" alt="" className="w-4 h-4 opacity-40" />
           GitHub
         </button>
       </div>
@@ -42,6 +90,12 @@ export default function SignupPage() {
         <span className="text-xs text-white/40">Or</span>
         <div className="flex-1 h-px bg-white/10" />
       </div>
+
+      {error && (
+        <div className="mb-4 text-sm text-red-300 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-2.5">
+          {error}
+        </div>
+      )}
 
       {/* Form */}
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -104,9 +158,10 @@ export default function SignupPage() {
 
         <button
           type="submit"
-          className="w-full bg-white text-black font-semibold rounded-full py-3.5 hover:bg-white/90 transition-colors mt-2"
+          disabled={loading}
+          className="w-full bg-white text-black font-semibold rounded-full py-3.5 hover:bg-white/90 transition-colors mt-2 disabled:opacity-60"
         >
-          Sign Up
+          {loading ? "Creating account..." : "Sign Up"}
         </button>
       </form>
 
