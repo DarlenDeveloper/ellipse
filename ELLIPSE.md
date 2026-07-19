@@ -30,11 +30,13 @@
 - Real-time updates
 
 ### 2. Integrations
-- Gmail (OAuth2)
-- SMTP/IMAP
+- Google Workspace (OAuth2 — Gmail, Calendar, Contacts, Drive)
+- Microsoft 365 (Outlook, Teams, Calendar, OneDrive)
 - WhatsApp Business API
+- Salesforce CRM
 - Zoho CRM/Mail
 - Odoo CRM/Support
+- SMTP/IMAP
 
 ### 3. Channel Agents (Gemini-powered)
 - Per-channel AI agents
@@ -82,7 +84,7 @@
 
 **Evening:**
 - Firebase setup (Auth, Firestore, Functions)
-- Gmail integration backend
+- Google Workspace integration backend
 - Message ingestion + real-time sync
 
 ### Day 2 — Intelligence + Polish

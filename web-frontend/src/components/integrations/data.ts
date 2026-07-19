@@ -9,11 +9,11 @@ export type Integration = {
 
 export const integrations: Integration[] = [
   {
-    id: "gmail",
-    name: "Gmail",
-    description: "Sync and manage your Gmail inbox and threads directly within Ellipse.",
-    logo: "/logos/gmail.svg",
-    tileClass: "bg-red-50",
+    id: "google-workspace",
+    name: "Google Workspace",
+    description: "Connect Gmail, Calendar, Contacts, and Drive in one go with your Google Workspace account.",
+    logo: "/logos/google-workspace.svg",
+    tileClass: "bg-blue-50",
     connected: true,
   },
   {
@@ -39,6 +39,22 @@ export const integrations: Integration[] = [
     logo: "/logos/odoo.svg",
     tileClass: "bg-purple-50",
     connected: true,
+  },
+  {
+    id: "microsoft365",
+    name: "Microsoft 365",
+    description: "Connect Outlook, Teams, Calendar, and OneDrive with your Microsoft 365 account.",
+    logo: "/logos/microsoft365.svg",
+    tileClass: "bg-orange-50",
+    connected: false,
+  },
+  {
+    id: "salesforce",
+    name: "Salesforce",
+    description: "Sync leads, contacts, opportunities, and cases from your Salesforce CRM.",
+    logo: "/logos/salesforce.svg",
+    tileClass: "bg-sky-50",
+    connected: false,
   },
   {
     id: "smtp",
