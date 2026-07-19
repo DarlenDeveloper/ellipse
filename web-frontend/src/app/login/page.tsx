@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Eye, EyeSlash } from "iconsax-react";
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { useAuth } from "@/lib/auth-context";
+import { getLandingRoute } from "@/lib/onboarding";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -19,8 +20,8 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      await signInWithEmail(form.email, form.password);
-      router.push("/dashboard");
+      const cred = await signInWithEmail(form.email, form.password);
+      router.push(await getLandingRoute(cred.user.uid));
     } catch {
       setError("Invalid email or password.");
     } finally {
@@ -32,8 +33,8 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      await signInWithGoogle();
-      router.push("/dashboard");
+      const cred = await signInWithGoogle();
+      router.push(await getLandingRoute(cred.user.uid));
     } catch {
       setError("Google sign-in failed. Please try again.");
     } finally {

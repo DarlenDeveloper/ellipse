@@ -26,6 +26,19 @@ export type OnboardingState = {
   connections: string[];
 };
 
+// Where should a freshly authenticated user land?
+// No enterprise or incomplete onboarding → /onboarding, else → /dashboard
+export async function getLandingRoute(uid: string): Promise<string> {
+  const userSnap = await getDoc(doc(db, "users", uid));
+  const enterpriseId = userSnap.data()?.enterprise_id as string | undefined;
+  if (!enterpriseId) return "/onboarding";
+
+  const entSnap = await getDoc(doc(db, "enterprises", enterpriseId));
+  if (!entSnap.exists() || !entSnap.data()?.onboarding_complete) return "/onboarding";
+
+  return "/dashboard";
+}
+
 const startingWalletBalance: Record<Tier, number> = {
   starter: 0,
   business: 500, // trial credit

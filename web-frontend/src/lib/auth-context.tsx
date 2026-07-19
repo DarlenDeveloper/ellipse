@@ -15,6 +15,7 @@ import {
   updateProfile,
   signOut,
   type User,
+  type UserCredential,
 } from "firebase/auth";
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { auth, db, googleProvider } from "./firebase";
@@ -22,9 +23,9 @@ import { auth, db, googleProvider } from "./firebase";
 type AuthContextType = {
   user: User | null;
   loading: boolean;
-  signUpWithEmail: (name: string, email: string, password: string) => Promise<void>;
-  signInWithEmail: (email: string, password: string) => Promise<void>;
-  signInWithGoogle: () => Promise<void>;
+  signUpWithEmail: (name: string, email: string, password: string) => Promise<UserCredential>;
+  signInWithEmail: (email: string, password: string) => Promise<UserCredential>;
+  signInWithGoogle: () => Promise<UserCredential>;
   logout: () => Promise<void>;
 };
 
@@ -63,15 +64,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const cred = await createUserWithEmailAndPassword(auth, email, password);
     await updateProfile(cred.user, { displayName: name });
     await ensureUserDoc(cred.user, name);
+    return cred;
   };
 
   const signInWithEmail = async (email: string, password: string) => {
-    await signInWithEmailAndPassword(auth, email, password);
+    return signInWithEmailAndPassword(auth, email, password);
   };
 
   const signInWithGoogle = async () => {
     const cred = await signInWithPopup(auth, googleProvider);
     await ensureUserDoc(cred.user);
+    return cred;
   };
 
   const logout = async () => {
