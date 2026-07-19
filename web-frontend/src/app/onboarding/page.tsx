@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import {
@@ -14,9 +14,16 @@ import {
 } from "iconsax-react";
 import { cn } from "@/lib/utils";
 import { integrations } from "@/components/integrations/data";
-
-type Tier = "starter" | "business" | "enterprise";
-type Role = "admin" | "employee";
+import { useAuth } from "@/lib/auth-context";
+import {
+  loadOnboardingState,
+  saveCompany,
+  savePlan,
+  saveConnections,
+  saveTeam,
+  type Tier,
+  type Role,
+} from "@/lib/onboarding";
 
 type Invite = { id: string; email: string; role: Role; canApprove: boolean };
 
@@ -51,7 +58,11 @@ const seatLimits: Record<Tier, number> = { starter: 1, business: 5, enterprise: 
 
 export default function OnboardingPage() {
   const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
   const [step, setStep] = useState(0);
+  const [enterpriseId, setEnterpriseId] = useState<string | null>(null);
+  const [hydrating, setHydrating] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   const [company, setCompany] = useState({ name: "", industry: "SaaS / Technology", size: "1-10" });
   const [tier, setTier] = useState<Tier>("business");
@@ -63,9 +74,63 @@ export default function OnboardingPage() {
   const isStarter = tier === "starter";
   const maxSeats = seatLimits[tier];
 
-  const next = () => setStep((s) => Math.min(s + 1, steps.length - 1));
+  // Redirect if not authenticated
+  useEffect(() => {
+    if (!authLoading && !user) router.replace("/login");
+  }, [authLoading, user, router]);
+
+  // Load existing progress and resume where they left off
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      const state = await loadOnboardingState(user.uid);
+      if (state.complete) {
+        router.replace("/dashboard");
+        return;
+      }
+      setEnterpriseId(state.enterpriseId);
+      setCompany(state.company);
+      setTier(state.tier);
+      setConnected(state.connections);
+      setStep(Math.min(state.step, steps.length - 1));
+      setHydrating(false);
+    })();
+  }, [user, router]);
+
   const back = () => setStep((s) => Math.max(s - 1, 0));
-  const finish = () => router.push("/dashboard");
+
+  // Persist the current step, then advance
+  const next = async () => {
+    if (!user || saving) return;
+    setSaving(true);
+    try {
+      if (step === 0) {
+        const id = await saveCompany(user.uid, company, enterpriseId);
+        setEnterpriseId(id);
+      } else if (step === 1 && enterpriseId) {
+        await savePlan(enterpriseId, tier);
+      } else if (step === 2 && enterpriseId) {
+        await saveConnections(enterpriseId, isStarter ? [] : connected);
+      }
+      setStep((s) => Math.min(s + 1, steps.length - 1));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const finish = async () => {
+    if (!user || !enterpriseId || saving) return;
+    setSaving(true);
+    try {
+      await saveTeam(
+        enterpriseId,
+        isStarter ? [] : invites.map(({ email, role, canApprove }) => ({ email, role, canApprove }))
+      );
+      router.push("/dashboard");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const toggleConnection = (id: string) =>
     setConnected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -82,6 +147,14 @@ export default function OnboardingPage() {
     "w-full bg-white/5 border border-white/10 rounded-full px-5 py-3 text-sm text-white placeholder:text-white/30 outline-none focus:border-emerald-500/50 focus:bg-white/[0.07] transition-colors";
   const selectClass =
     "w-full bg-white/5 border border-white/10 rounded-full px-5 py-3 text-sm text-white outline-none focus:border-emerald-500/50 transition-colors appearance-none [&>option]:text-black";
+
+  if (authLoading || hydrating) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-black flex flex-col relative overflow-hidden">
@@ -362,18 +435,20 @@ export default function OnboardingPage() {
         {step < steps.length - 1 ? (
           <button
             onClick={next}
-            className="flex items-center gap-2 bg-white text-black text-sm font-semibold rounded-full px-6 py-3 hover:bg-white/90"
+            disabled={saving || (step === 0 && !company.name.trim())}
+            className="flex items-center gap-2 bg-white text-black text-sm font-semibold rounded-full px-6 py-3 hover:bg-white/90 disabled:opacity-50"
           >
-            Continue
-            <ArrowRight2 size={16} variant="Linear" color="#000000" />
+            {saving ? "Saving..." : "Continue"}
+            {!saving && <ArrowRight2 size={16} variant="Linear" color="#000000" />}
           </button>
         ) : (
           <button
             onClick={finish}
-            className="flex items-center gap-2 bg-emerald-500 text-black text-sm font-semibold rounded-full px-6 py-3 hover:bg-emerald-400"
+            disabled={saving}
+            className="flex items-center gap-2 bg-emerald-500 text-black text-sm font-semibold rounded-full px-6 py-3 hover:bg-emerald-400 disabled:opacity-50"
           >
-            Finish setup
-            <TickCircle size={16} variant="Bold" color="#000000" />
+            {saving ? "Finishing..." : "Finish setup"}
+            {!saving && <TickCircle size={16} variant="Bold" color="#000000" />}
           </button>
         )}
       </footer>
