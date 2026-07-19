@@ -18,9 +18,10 @@ import {
 } from "iconsax-react";
 import { cn } from "@/lib/utils";
 import { useSidebar } from "./SidebarContext";
+import { ModeSwitcher } from "./ModeSwitcher";
 
 const navItems = [
-  { icon: Home2, label: "Dashboard", href: "/" },
+  { icon: Home2, label: "Dashboard", href: "/dashboard" },
   { icon: Sms, label: "Inbox", href: "/inbox" },
   { icon: Hierarchy, label: "Integrations", href: "/integrations" },
   { icon: Cpu, label: "Agents", href: "/agents" },
@@ -44,7 +45,7 @@ export function Sidebar() {
       )}
     >
       {/* Logo */}
-      <div className={cn("flex items-center mb-10", collapsed ? "justify-center" : "gap-2.5 px-2")}>
+      <div className={cn("flex items-center mb-5", collapsed ? "justify-center" : "gap-2.5 px-2")}>
         <Image
           src="/ellipse-logo.png"
           alt="Ellipse"
@@ -59,10 +60,7 @@ export function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 space-y-1.5">
         {navItems.map((item) => {
-          const active =
-            item.href === "/"
-              ? pathname === "/"
-              : pathname.startsWith(item.href);
+          const active = pathname.startsWith(item.href);
           return (
             <a
               key={item.label}
@@ -86,6 +84,11 @@ export function Sidebar() {
           );
         })}
       </nav>
+
+      {/* Mode switcher */}
+      <div className="mt-4 pt-4 border-t border-gray-100">
+        <ModeSwitcher collapsed={collapsed} />
+      </div>
 
       {/* Collapse toggle */}
       <button
