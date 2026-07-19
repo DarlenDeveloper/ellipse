@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Home2,
@@ -62,7 +63,7 @@ export function Sidebar() {
         {navItems.map((item) => {
           const active = pathname.startsWith(item.href);
           return (
-            <a
+            <Link
               key={item.label}
               href={item.href}
               title={collapsed ? item.label : undefined}
@@ -80,7 +81,7 @@ export function Sidebar() {
                 color={active ? "#ffffff" : "#9ca3af"}
               />
               {!collapsed && item.label}
-            </a>
+            </Link>
           );
         })}
       </nav>

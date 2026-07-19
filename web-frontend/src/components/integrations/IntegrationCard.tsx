@@ -7,10 +7,15 @@ import type { Integration } from "./data";
 
 export function IntegrationCard({
   integration,
-  onToggle,
+  onConnectClick,
+  subtitle,
+  busy,
 }: {
   integration: Integration;
-  onToggle: (id: string) => void;
+  onToggle?: (id: string) => void;
+  onConnectClick?: () => void;
+  subtitle?: string;
+  busy?: boolean;
 }) {
   const { name, description, logo, tileClass, connected } = integration;
 
@@ -38,19 +43,23 @@ export function IntegrationCard({
       {/* Body */}
       <h3 className="text-base font-bold mt-4">{name}</h3>
       <p className="text-sm text-gray-400 mt-1 leading-relaxed flex-1">
-        {description}
+        {subtitle ? <span className="text-gray-600 font-medium">{subtitle}</span> : description}
       </p>
 
       {/* Footer */}
       <div className="flex items-center justify-between mt-5 pt-4 border-t border-gray-100">
-        <button className="flex items-center gap-2 text-sm font-medium border border-gray-200 rounded-lg px-4 py-2 text-gray-700 hover:bg-gray-50">
+        <button
+          onClick={onConnectClick}
+          disabled={busy || (connected && !onConnectClick)}
+          className="flex items-center gap-2 text-sm font-medium border border-gray-200 rounded-lg px-4 py-2 text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+        >
           <ArrowSwapHorizontal size={16} variant="Linear" />
-          {connected ? "Connected" : "Connect"}
+          {busy ? "Connecting..." : connected ? "Connected" : "Connect"}
         </button>
 
-        {/* Toggle */}
-        <button
-          onClick={() => onToggle(integration.id)}
+        {/* Status indicator (reflects connection, not interactive yet) */}
+        <div
+          title={connected ? "Enabled" : "Not connected"}
           className={cn(
             "relative w-11 h-6 rounded-full transition-colors",
             connected ? "bg-blue-500" : "bg-gray-200"
@@ -62,7 +71,7 @@ export function IntegrationCard({
               connected ? "translate-x-[22px]" : "translate-x-0.5"
             )}
           />
-        </button>
+        </div>
       </div>
     </div>
   );

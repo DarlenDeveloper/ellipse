@@ -14,7 +14,7 @@ export const integrations: Integration[] = [
     description: "Connect Gmail, Calendar, Contacts, and Drive in one go with your Google Workspace account.",
     logo: "/logos/google-workspace.svg",
     tileClass: "bg-blue-50",
-    connected: true,
+    connected: false,
   },
   {
     id: "whatsapp",
@@ -22,7 +22,7 @@ export const integrations: Integration[] = [
     description: "Connect WhatsApp Business to message customers in real time.",
     logo: "/logos/whatsapp.svg",
     tileClass: "bg-green-50",
-    connected: true,
+    connected: false,
   },
   {
     id: "zoho",
@@ -38,7 +38,7 @@ export const integrations: Integration[] = [
     description: "Connect Odoo CRM, sales, and support modules to Ellipse.",
     logo: "/logos/odoo.svg",
     tileClass: "bg-purple-50",
-    connected: true,
+    connected: false,
   },
   {
     id: "microsoft365",
