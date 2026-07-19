@@ -39,11 +39,14 @@ Done (agent):
 - [x] Zoho actions registered as Gemini function declarations (create_record, update_record, add_note)
 
 Remaining:
-- [ ] Test `runZohoAgent` on a real conversation (Supervised → check `pending_actions`)
+- [x] Test `runZohoAgent` on a real conversation (verified: Lead written to Zoho after approval)
 - [x] Approval executor (`onPendingActionApproved`): approved pending_action → executes to Zoho
+- [x] Backfill: `backfillZoho` pulls last 30d Leads/Contacts/Deals → analytics_events (on connect; verified 31 records)
+- [x] Analytics page wired to real data (analytics_events + pending_actions)
 - [ ] Real-time: Notification API webhook (subscribe + scheduled renewal)
 - [ ] Move refresh token Firestore → Secret Manager (matches Gmail tech debt)
-- [ ] Remove temporary `pingZoho` debug function before ship
+- [ ] Auto-run `runZohoAgent` on new email ingest (currently manual)
+- [ ] Remove temporary debug fns before ship (`pingZoho`, `zohoSearchDebug`, `zohoBackfillDebug`, `runZohoAgentDebug`)
 
 ### Odoo — ⚪ 0%  (reuse Zoho framework — near-identical OAuth2 + REST)
 ### Microsoft 365 — ⚪ 0%
@@ -57,7 +60,9 @@ Remaining:
 - [x] Gemini 3.1 flash-lite wrapper — deployed & verified
 - [ ] Boss / Personal agent (coordinates connection agents) — LAST
 - [x] `pending_actions` approval flow — `onPendingActionApproved` executes approved actions
-- [x] Approvals page (`/approvals`, sidebar) — full detail + Approve/Reject; dashboard card shows count + links to it
+- [x] Approvals page (`/approvals`, sidebar) — table view, per-agent logos, status column (rows persist), search + filters
+- [x] Agents page — live monitoring from connections + pending_actions (status, counts, last active) + search
+- [x] Verified full Supervised loop: email → sync → agent → pending → approve → Lead written to Zoho ✅
 - [ ] Mode switcher persisted to Firestore
 - [ ] Daily → weekly summaries
 

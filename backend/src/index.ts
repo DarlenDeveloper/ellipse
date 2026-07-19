@@ -155,6 +155,53 @@ export const scheduledGmailSync = onSchedule(
 );
 
 /**
+ * TEMPORARY — triggers the Zoho backfill for an already-connected account.
+ * Call with ?enterpriseId=...&days=30. Remove before ship.
+ */
+export const zohoBackfillDebug = onRequest(
+  { secrets: [zohoClientId, zohoClientSecret] },
+  async (req, res) => {
+    const enterpriseId = req.query.enterpriseId as string | undefined;
+    const days = Number(req.query.days ?? 30);
+    if (!enterpriseId) {
+      res.status(400).json({ ok: false, error: "Missing enterpriseId" });
+      return;
+    }
+    try {
+      const { backfillZoho } = await import("./connections/zoho");
+      const result = await backfillZoho(enterpriseId, days);
+      res.json({ ok: true, ...result });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: (e as Error).message });
+    }
+  }
+);
+
+/**
+ * TEMPORARY — searches Zoho for a record by email to confirm a write landed.
+ * Call with ?enterpriseId=...&email=... Remove before ship.
+ */
+export const zohoSearchDebug = onRequest(
+  { secrets: [zohoClientId, zohoClientSecret] },
+  async (req, res) => {
+    const enterpriseId = req.query.enterpriseId as string | undefined;
+    const email = req.query.email as string | undefined;
+    if (!enterpriseId || !email) {
+      res.status(400).json({ ok: false, error: "Missing enterpriseId or email" });
+      return;
+    }
+    try {
+      const { searchByEmail } = await import("./connections/zoho");
+      const lead = await searchByEmail(enterpriseId, "Leads", email);
+      const contact = lead ? null : await searchByEmail(enterpriseId, "Contacts", email);
+      res.json({ ok: true, lead, contact });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: (e as Error).message });
+    }
+  }
+);
+
+/**
  * TEMPORARY debug trigger — runs the Zoho agent over a conversation without auth,
  * so we can test the write path via curl. Defaults to the most recent conversation
  * for the enterprise if no conversationId is given. Remove before ship.

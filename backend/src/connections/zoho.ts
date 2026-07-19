@@ -99,6 +99,13 @@ export async function handleCallback(
     { merge: true }
   );
 
+  // Backfill the last 30 days of records so analytics aren't empty after connect.
+  try {
+    await backfillZoho(enterpriseId, 30);
+  } catch {
+    // non-fatal — a manual backfill can retry
+  }
+
   return apiDomain;
 }
 
@@ -159,7 +166,7 @@ export async function authedClientFor(
 async function zohoRequest(
   enterpriseId: string,
   path: string,
-  init: { method?: string; body?: unknown } = {}
+  init: { method?: string; body?: unknown; headers?: Record<string, string> } = {}
 ): Promise<any> {
   const { accessToken, apiDomain } = await authedClientFor(enterpriseId);
   const res = await fetch(`${apiDomain}/crm/v8/${path}`, {
@@ -167,10 +174,11 @@ async function zohoRequest(
     headers: {
       Authorization: `Zoho-oauthtoken ${accessToken}`,
       "Content-Type": "application/json",
+      ...(init.headers ?? {}),
     },
     body: init.body ? JSON.stringify(init.body) : undefined,
   });
-  if (res.status === 204) return null; // Zoho returns 204 for empty search results
+  if (res.status === 204 || res.status === 304) return null; // 204 empty, 304 nothing modified
   return res.json();
 }
 
@@ -237,6 +245,69 @@ export async function enrichFromZoho(enterpriseId: string, email: string): Promi
   }
 
   return empty;
+}
+
+// Modules we backfill + the fields we pull for each.
+const BACKFILL_MODULES: Record<string, string> = {
+  Leads: "Full_Name,Email,Company,Lead_Status,Created_Time",
+  Contacts: "Full_Name,Email,Account_Name,Created_Time",
+  Deals: "Deal_Name,Stage,Amount,Closing_Date,Created_Time",
+};
+
+/**
+ * Backfill recent Zoho records into analytics_events so analytics/enrichment
+ * aren't starting from zero. Pulls records modified within the last `sinceDays`
+ * for Leads/Contacts/Deals (via the If-Modified-Since header) and logs one
+ * analytics_event per record, timestamped by the record's own creation time so
+ * historical charts reflect real history.
+ *
+ * Idempotent: each record's event doc is keyed by module+id, so re-running
+ * overwrites rather than duplicating.
+ */
+export async function backfillZoho(
+  enterpriseId: string,
+  sinceDays = 30
+): Promise<{ total: number; byModule: Record<string, number> }> {
+  const sinceIso = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString();
+  const byModule: Record<string, number> = {};
+  let total = 0;
+
+  for (const [module, fields] of Object.entries(BACKFILL_MODULES)) {
+    let count = 0;
+    try {
+      const data = await zohoRequest(
+        enterpriseId,
+        `${module}?fields=${encodeURIComponent(fields)}&per_page=200&sort_by=Created_Time&sort_order=desc`,
+        { headers: { "If-Modified-Since": sinceIso } }
+      );
+      const records: any[] = data?.data ?? [];
+
+      for (const r of records) {
+        const created = r.Created_Time ? new Date(r.Created_Time) : new Date();
+        await db.doc(`analytics_events/zoho_${module}_${r.id}`).set({
+          source: "zoho_record",
+          workspace_id: enterpriseId,
+          payload: {
+            channel: "zoho",
+            module,
+            record_id: r.id,
+            name: r.Full_Name ?? r.Deal_Name ?? null,
+            email: r.Email ?? null,
+            stage: r.Stage ?? null,
+            amount: r.Amount ?? null,
+          },
+          timestamp: created,
+        });
+        count++;
+      }
+    } catch (e) {
+      console.error("backfillZoho module failed", module, (e as Error).message);
+    }
+    byModule[module] = count;
+    total += count;
+  }
+
+  return { total, byModule };
 }
 
 // ---- Action executors (routed from executeAgentAction for targetSystem "zoho") ----
