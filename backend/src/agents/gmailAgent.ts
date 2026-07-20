@@ -69,6 +69,7 @@ export async function runGmailAgent(
     customer_ref?: string;
     subject?: string;
     thread_id?: string;
+    channel?: string;
   };
 
   // Org name for the signature.
@@ -131,9 +132,11 @@ export async function runGmailAgent(
   const call = gemini.functionCalls.find((c) => c.name === "send_reply");
   if (call) {
     const body = (call.args.body as string) ?? "";
+    // Route to the right channel: SMTP conversations send via SMTP, else Gmail.
+    const isSmtp = conv.channel === "smtp";
     const result = await executeAgentAction({
       enterpriseId,
-      agentId: "gmail-agent",
+      agentId: isSmtp ? "smtp-agent" : "gmail-agent",
       domain: "inbox",
       actionType: "send_reply",
       // Threading/recipient/subject come from the conversation, body from the agent.
@@ -143,7 +146,7 @@ export async function runGmailAgent(
         subject: conv.subject ?? "",
         body,
       },
-      targetSystem: "gmail",
+      targetSystem: isSmtp ? "smtp" : "gmail",
       reasoning: gemini.text || "Suggested reply to the customer.",
     });
     action = { actionType: "send_reply", result };

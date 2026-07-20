@@ -6,6 +6,7 @@ export type AgentDomain = "inbox" | "assistant" | "calendar";
 export type TargetSystem =
   | "internal"
   | "gmail"
+  | "smtp"
   | "zoho"
   | "odoo"
   | "whatsapp"

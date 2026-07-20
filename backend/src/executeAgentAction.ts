@@ -142,6 +142,9 @@ export async function executeAction(
   if (targetSystem === "gmail") {
     return executeGmailAction(enterpriseId, actionType, params);
   }
+  if (targetSystem === "smtp") {
+    return executeSmtpAction(enterpriseId, actionType, params);
+  }
   // TODO: internal handlers + other connections (odoo, whatsapp, ...)
   logger.info("executeAction (stub)", { targetSystem, actionType });
   return `${targetSystem}:stub:${Date.now()}`;
@@ -197,6 +200,27 @@ async function executeGmailAction(
       );
     default:
       logger.warn("Unknown Gmail action", { actionType });
+      return null;
+  }
+}
+
+/** Routes an SMTP action to the connection's executors. Currently: send_reply. */
+async function executeSmtpAction(
+  enterpriseId: string,
+  actionType: string,
+  params: Record<string, unknown>
+): Promise<string | null> {
+  const smtp = await import("./connections/smtp");
+  switch (actionType) {
+    case "send_reply":
+      return smtp.sendSmtpReply(
+        enterpriseId,
+        params.to as string,
+        (params.subject as string) ?? "",
+        (params.body as string) ?? ""
+      );
+    default:
+      logger.warn("Unknown SMTP action", { actionType });
       return null;
   }
 }

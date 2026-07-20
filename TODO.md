@@ -21,7 +21,17 @@ Remaining (the 30%):
 - [ ] Move refresh token from Firestore → Secret Manager (security)
 - [ ] Handle Calendar + Contacts (Workspace is more than Gmail)
 
-### WhatsApp — ⚪ 0%
+### WhatsApp — ⚪ 0%  (blocked: Meta account too new to create a Business app)
+
+### SMTP / IMAP — 🟡 80%
+Done:
+- [x] `connections/smtp.ts` — config store, connection test, IMAP ingest, SMTP send
+- [x] `connectSmtp` (test + save) + `syncSmtp` callables; credentials form modal on Integrations
+- [x] Auto-sync `scheduledImapSync` (every 5 min) + `smtp` target routing in gate
+- [x] Email agent is channel-aware — SMTP convos reply via SMTP, Gmail via Gmail
+Remaining:
+- [ ] Test end-to-end with a real mailbox (need IMAP/SMTP creds)
+- [ ] Move credentials Firestore → Secret Manager (security, later)
 
 ### Zoho CRM — 🟡 50%
 Done:

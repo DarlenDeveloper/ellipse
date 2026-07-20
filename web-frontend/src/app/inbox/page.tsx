@@ -1,14 +1,26 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Image from "next/image";
 import { collection, query, where, onSnapshot, doc, getDoc } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
-import { RotateLeft, Sms, RefreshCircle } from "iconsax-react";
+import { DirectInbox, RefreshCircle } from "iconsax-react";
 import { db, functions } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 import { InboxTopBar } from "@/components/inbox/InboxTopBar";
 import { ReadingPane } from "@/components/inbox/ReadingPane";
 import { cn } from "@/lib/utils";
+
+// Channel → display name + logo. logo null falls back to a mailbox icon.
+const CHANNEL_META: Record<string, { name: string; logo: string | null }> = {
+  "google-workspace": { name: "Gmail", logo: "/logos/gmail.svg" },
+  smtp: { name: "SMTP / IMAP", logo: null },
+  whatsapp: { name: "WhatsApp", logo: "/logos/whatsapp.svg" },
+};
+
+function channelInfo(channel?: string) {
+  return CHANNEL_META[channel ?? ""] ?? { name: channel ?? "Unknown", logo: null };
+}
 
 type Conversation = {
   id: string;
@@ -28,14 +40,6 @@ type Message = {
   sender_type: "us" | "customer";
   timestamp?: { toDate: () => Date };
 };
-
-const avatarColors = [
-  "bg-emerald-100 text-emerald-700",
-  "bg-purple-200 text-purple-700",
-  "bg-amber-100 text-amber-700",
-  "bg-pink-100 text-pink-700",
-  "bg-blue-100 text-blue-700",
-];
 
 function fmtTime(ts?: { toDate: () => Date }): string {
   if (!ts) return "";
@@ -90,12 +94,12 @@ export default function InboxPage() {
   const sync = useCallback(async () => {
     if (!enterpriseId || syncing) return;
     setSyncing(true);
-    try {
-      const fn = httpsCallable(functions, "syncGmail");
-      await fn({ enterpriseId });
-    } finally {
-      setSyncing(false);
-    }
+    // Pull every connected channel; ignore ones that aren't connected.
+    await Promise.allSettled([
+      httpsCallable(functions, "syncGmail")({ enterpriseId }),
+      httpsCallable(functions, "syncSmtp")({ enterpriseId }),
+    ]);
+    setSyncing(false);
   }, [enterpriseId, syncing]);
 
   const selectedConv = conversations.find((c) => c.id === selectedId) ?? null;
@@ -111,7 +115,7 @@ export default function InboxPage() {
             <button
               onClick={sync}
               disabled={syncing}
-              title="Sync Gmail"
+              title="Sync all channels"
               className="text-gray-400 hover:text-gray-700 disabled:opacity-50"
             >
               <RefreshCircle size={18} variant="Linear" className={syncing ? "animate-spin" : ""} />
@@ -121,12 +125,12 @@ export default function InboxPage() {
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
             {conversations.length === 0 && (
               <div className="text-center text-sm text-gray-400 mt-10 px-6">
-                {syncing ? "Syncing your mail…" : "No messages yet. Hit sync to pull your Gmail."}
+                {syncing ? "Syncing your mail…" : "No messages yet. Hit sync to pull your channels."}
               </div>
             )}
-            {conversations.map((conv, i) => {
+            {conversations.map((conv) => {
               const active = conv.id === selectedId;
-              const initial = (conv.customer_ref?.[0] ?? "?").toUpperCase();
+              const ch = channelInfo(conv.channel);
               return (
                 <button
                   key={conv.id}
@@ -137,8 +141,12 @@ export default function InboxPage() {
                   )}
                 >
                   <div className="flex items-start gap-3">
-                    <div className={cn("w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold shrink-0", avatarColors[i % avatarColors.length])}>
-                      {initial}
+                    <div className="w-9 h-9 rounded-full bg-gray-50 flex items-center justify-center shrink-0 overflow-hidden">
+                      {ch.logo ? (
+                        <Image src={ch.logo} alt={ch.name} width={20} height={20} className="w-5 h-5" />
+                      ) : (
+                        <DirectInbox size={18} variant="Bold" color="#475569" />
+                      )}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">
@@ -146,8 +154,13 @@ export default function InboxPage() {
                         <span className="text-xs text-gray-400 shrink-0">{fmtTime(conv.last_message_at)}</span>
                       </div>
                       <p className="text-sm font-medium text-gray-800 truncate mt-0.5">{conv.subject}</p>
-                      <p className="text-xs text-gray-400 truncate mt-0.5 flex items-center gap-1">
-                        <Sms size={12} variant="Bold" /> Gmail
+                      <p className="text-xs text-gray-400 truncate mt-0.5 flex items-center gap-1.5">
+                        {ch.logo ? (
+                          <Image src={ch.logo} alt="" width={12} height={12} className="w-3 h-3" />
+                        ) : (
+                          <DirectInbox size={12} variant="Bold" color="#9ca3af" />
+                        )}
+                        {ch.name}
                       </p>
                     </div>
                   </div>

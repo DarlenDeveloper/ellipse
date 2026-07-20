@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { SearchNormal1, More, Cpu, Setting2 } from "iconsax-react";
+import { SearchNormal1, More, Cpu, Setting2, DirectInbox } from "iconsax-react";
 import {
   collection,
   query,
@@ -15,10 +15,11 @@ import { cn } from "@/lib/utils";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 
-// Connection type → the agent that runs it.
-const AGENT_META: Record<string, { name: string; agentId: string; channel: string; logo: string }> = {
+// Connection type → the agent that runs it. logo null → falls back to an icon.
+const AGENT_META: Record<string, { name: string; agentId: string; channel: string; logo: string | null }> = {
   "google-workspace": { name: "Gmail Agent", agentId: "gmail-agent", channel: "Gmail", logo: "/logos/gmail.svg" },
   zoho: { name: "Zoho Agent", agentId: "zoho-agent", channel: "Zoho CRM", logo: "/logos/zoho.svg" },
+  smtp: { name: "SMTP Agent", agentId: "smtp-agent", channel: "SMTP / IMAP", logo: null },
   whatsapp: { name: "WhatsApp Agent", agentId: "whatsapp-agent", channel: "WhatsApp", logo: "/logos/whatsapp.svg" },
   odoo: { name: "Odoo Agent", agentId: "odoo-agent", channel: "Odoo", logo: "/logos/odoo.svg" },
   salesforce: { name: "Salesforce Agent", agentId: "salesforce-agent", channel: "Salesforce", logo: "/logos/salesforce.svg" },
@@ -32,7 +33,7 @@ type AgentView = {
   name: string;
   agentId: string;
   channel: string;
-  logo: string;
+  logo: string | null;
   connected: boolean;
   executed: number;
   pending: number;
@@ -168,7 +169,11 @@ export default function AgentsPage() {
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center gap-3">
                   <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center">
-                    <Image src={agent.logo} alt={agent.name} width={24} height={24} className="w-6 h-6" />
+                    {agent.logo ? (
+                      <Image src={agent.logo} alt={agent.name} width={24} height={24} className="w-6 h-6" />
+                    ) : (
+                      <DirectInbox size={24} variant="Bold" color="#475569" />
+                    )}
                   </div>
                   <div>
                     <h3 className="text-base font-bold">{agent.name}</h3>

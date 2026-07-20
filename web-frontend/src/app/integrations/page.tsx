@@ -6,6 +6,7 @@ import { httpsCallable } from "firebase/functions";
 import { doc, getDoc } from "firebase/firestore";
 import { integrations as seed } from "@/components/integrations/data";
 import { IntegrationCard } from "@/components/integrations/IntegrationCard";
+import { SmtpConnectModal } from "@/components/integrations/SmtpConnectModal";
 import { functions, db } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 
@@ -16,6 +17,8 @@ export default function IntegrationsPage() {
   const [enterpriseId, setEnterpriseId] = useState<string | null>(null);
   const [googleEmail, setGoogleEmail] = useState<string | null>(null);
   const [zohoConnected, setZohoConnected] = useState(false);
+  const [smtpConnected, setSmtpConnected] = useState(false);
+  const [showSmtpModal, setShowSmtpModal] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [connectingZoho, setConnectingZoho] = useState(false);
   const [banner, setBanner] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -38,6 +41,12 @@ export default function IntegrationsPage() {
     if (zohoSnap.exists() && zohoSnap.data()?.status === "active") {
       setZohoConnected(true);
       setItems((prev) => prev.map((it) => (it.id === "zoho" ? { ...it, connected: true } : it)));
+    }
+
+    const smtpSnap = await getDoc(doc(db, "connections", `${entId}_smtp`));
+    if (smtpSnap.exists() && smtpSnap.data()?.status === "active") {
+      setSmtpConnected(true);
+      setItems((prev) => prev.map((it) => (it.id === "smtp" ? { ...it, connected: true } : it)));
     }
   }, [user]);
 
@@ -152,18 +161,50 @@ export default function IntegrationsPage() {
         {filtered.map((integration) => {
           const isGoogle = integration.id === "google-workspace";
           const isZoho = integration.id === "zoho";
+          const isSmtp = integration.id === "smtp";
           return (
             <IntegrationCard
               key={integration.id}
               integration={integration}
               onToggle={toggle}
-              onConnectClick={isGoogle ? connectGoogle : isZoho ? connectZoho : undefined}
-              subtitle={isZoho && zohoConnected ? "Connected" : undefined}
+              onConnectClick={
+                isGoogle
+                  ? connectGoogle
+                  : isZoho
+                  ? connectZoho
+                  : isSmtp
+                  ? () => {
+                      if (!enterpriseId) {
+                        setBanner({ type: "error", text: "No workspace found. Finish onboarding first." });
+                        return;
+                      }
+                      setShowSmtpModal(true);
+                    }
+                  : undefined
+              }
+              subtitle={
+                isZoho && zohoConnected
+                  ? "Connected"
+                  : isSmtp && smtpConnected
+                  ? "Connected"
+                  : undefined
+              }
               busy={(isGoogle && connecting) || (isZoho && connectingZoho)}
             />
           );
         })}
       </div>
+
+      {showSmtpModal && enterpriseId && (
+        <SmtpConnectModal
+          enterpriseId={enterpriseId}
+          onClose={() => setShowSmtpModal(false)}
+          onConnected={() => {
+            setBanner({ type: "success", text: "SMTP / IMAP connected successfully." });
+            refresh();
+          }}
+        />
+      )}
     </main>
   );
 }

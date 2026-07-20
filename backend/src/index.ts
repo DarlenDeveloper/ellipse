@@ -154,6 +154,58 @@ export const scheduledGmailSync = onSchedule(
   }
 );
 
+/** Auto-sync all connected SMTP/IMAP mailboxes every 5 minutes. */
+export const scheduledImapSync = onSchedule({ schedule: "every 5 minutes" }, async () => {
+  const { syncAllConnectedImap } = await import("./connections/smtp");
+  const ingested = await syncAllConnectedImap();
+  logger.info("scheduledImapSync complete", { ingested });
+});
+
+/**
+ * Connect an SMTP/IMAP mailbox — verifies the credentials, then stores them.
+ */
+export const connectSmtp = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const d = request.data ?? {};
+  const enterpriseId = d.enterpriseId as string | undefined;
+  if (!enterpriseId || !d.imap_host || !d.smtp_host || !d.username || !d.password) {
+    throw new HttpsError("invalid-argument", "Missing connection fields.");
+  }
+  const cfg = {
+    imap_host: d.imap_host,
+    imap_port: Number(d.imap_port) || 993,
+    smtp_host: d.smtp_host,
+    smtp_port: Number(d.smtp_port) || 465,
+    username: d.username,
+    password: d.password,
+    from_email: d.from_email || d.username,
+  };
+
+  const { testSmtpConnection, saveSmtpConnection, ingestRecentImap } = await import("./connections/smtp");
+  try {
+    await testSmtpConnection(cfg);
+  } catch (e) {
+    throw new HttpsError("failed-precondition", `Connection failed: ${(e as Error).message}`);
+  }
+  await saveSmtpConnection(enterpriseId, cfg);
+  try {
+    await ingestRecentImap(enterpriseId);
+  } catch {
+    // non-fatal
+  }
+  return { ok: true };
+});
+
+/** Manually pull recent mail from a connected SMTP/IMAP mailbox. */
+export const syncSmtp = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const enterpriseId = request.data?.enterpriseId as string | undefined;
+  if (!enterpriseId) throw new HttpsError("invalid-argument", "Missing enterpriseId.");
+  const { ingestRecentImap } = await import("./connections/smtp");
+  const count = await ingestRecentImap(enterpriseId);
+  return { ingested: count };
+});
+
 /**
  * TEMPORARY — triggers the Zoho backfill for an already-connected account.
  * Call with ?enterpriseId=...&days=30. Remove before ship.
