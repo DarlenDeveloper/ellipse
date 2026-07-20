@@ -9,7 +9,7 @@ Business automation software with AI. A unified inbox brings every channel into 
 ## Mental model (corrected)
 
 - **One agent per connection** — Zoho agent, WhatsApp agent, Gmail agent, etc. Each understands its own platform's specifics. Routing is automatic (a message from WhatsApp goes to the WhatsApp agent).
-- **Boss / Personal agent** sits on top, talks to all connection agents, and oversees actions. **Built LAST.**
+- **Ivy (personal agent)** sits on top, talks to all connection agents, and oversees actions. **Built LAST.**
 - **Agent behavior by mode:**
   - **Off** → read only + enrich analytics. No suggestions, no actions.
   - **Supervised** → read → analyze → **suggest** an action, wait for human approval.
@@ -20,14 +20,14 @@ Business automation software with AI. A unified inbox brings every channel into 
 
 ## Build order (24-hour push)
 
-Connections first (CRM → communication → marketing much later), boss agent last.
+Connections first (CRM → communication → marketing much later), Ivy (personal agent) last.
 
 1. **Connection agent framework** — how a connection registers, ingests, and runs its agent through the gate.
 2. **First connection end-to-end** — CRM (Zoho) OR a communication channel feeding the inbox (TBD, see open questions).
 3. `pending_actions` approval flow (test Supervised).
 4. Unified inbox reads real ingested messages + send-from-within.
 5. Next connections: WhatsApp, Gmail/Workspace, SMTP.
-6. **Boss / Personal agent** (oversees + coordinates connection agents).
+6. **Ivy (personal agent)** (oversees + coordinates connection agents).
 7. Marketing connections (Instagram, etc.) — much later.
 8. Web widget (Intercom-style, text + calls) — later.
 
@@ -53,6 +53,6 @@ Connections first (CRM → communication → marketing much later), boss agent l
 - Web widget
 
 ## Corrections to `ellipse-desk-architecture.md` (AI-drafted, partly wrong)
-- Agents are **per-connection + a boss agent**, NOT domain agents (Inbox/Assistant/Calendar).
-- Personal Assistant = the **boss agent**, built **last** (doc said build it first).
+- Agents are **per-connection + Ivy (personal agent)**, NOT domain agents (Inbox/Assistant/Calendar).
+- Personal Assistant = **Ivy**, built **last** (doc said build it first).
 - Wallet is **subscription dates only**, NOT a credit balance debited by token usage.

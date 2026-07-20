@@ -1,104 +1,136 @@
 "use client";
 
-import { More, ArrowDown2, ExportSquare, Sms, Message, DirectInbox } from "iconsax-react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import Image from "next/image";
+import { ArrowRight2, Sms } from "iconsax-react";
+import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { cn } from "@/lib/utils";
+import { db } from "@/lib/firebase";
+import { useEnterpriseId } from "@/lib/use-enterprise";
 
-const threads = [
-  {
-    subject: "Order Inquiry #4521",
-    channel: "Gmail",
-    channelIcon: Sms,
-    customer: "Acme Corp",
-    status: "Pending",
-    date: "Jul 10 03:20 GMT",
-  },
-  {
-    subject: "Support Request",
-    channel: "WhatsApp",
-    channelIcon: Message,
-    customer: "TechStart Inc",
-    status: "Active",
-    date: "Jul 08 04:30 GMT",
-  },
-  {
-    subject: "Invoice Follow-up",
-    channel: "SMTP",
-    channelIcon: DirectInbox,
-    customer: "Global Ltd",
-    status: "Expired",
-    date: "Jul 02 05:40 GMT",
-  },
-];
-
-const statusStyles: Record<string, string> = {
-  Pending: "bg-yellow-50 text-yellow-700",
-  Active: "bg-green-50 text-green-700",
-  Expired: "bg-red-50 text-red-600",
+type Conversation = {
+  id: string;
+  subject?: string;
+  customer_ref?: string;
+  channel?: string;
+  status?: string;
+  last_message_at?: { toDate: () => Date };
 };
 
+const channelLogo: Record<string, string> = {
+  "google-workspace": "/logos/gmail.svg",
+  zoho: "/logos/zoho.svg",
+  whatsapp: "/logos/whatsapp.svg",
+};
+
+const channelName: Record<string, string> = {
+  "google-workspace": "Gmail",
+  zoho: "Zoho",
+  whatsapp: "WhatsApp",
+};
+
+const statusStyles: Record<string, string> = {
+  open: "bg-green-50 text-green-700",
+  pending: "bg-yellow-50 text-yellow-700",
+  closed: "bg-gray-100 text-gray-500",
+};
+
+function fmtDate(ts?: { toDate: () => Date }): string {
+  if (!ts?.toDate) return "";
+  return ts.toDate().toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export function RecentThreads() {
+  const { enterpriseId } = useEnterpriseId();
+  const [threads, setThreads] = useState<Conversation[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!enterpriseId) return;
+    const unsub = onSnapshot(
+      query(collection(db, "conversations"), where("enterprise_id", "==", enterpriseId)),
+      (snap) => {
+        const rows = snap.docs
+          .map((d) => ({ id: d.id, ...(d.data() as Omit<Conversation, "id">) }))
+          .sort(
+            (a, b) =>
+              (b.last_message_at?.toDate?.().getTime() ?? 0) -
+              (a.last_message_at?.toDate?.().getTime() ?? 0)
+          )
+          .slice(0, 6);
+        setThreads(rows);
+        setLoading(false);
+      }
+    );
+    return () => unsub();
+  }, [enterpriseId]);
+
   return (
     <div className="bg-white rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-bold tracking-tight">Manage Threads</h2>
-        <div className="flex items-center gap-2">
-          <button className="flex items-center gap-2 text-sm font-medium border border-gray-200 rounded-full px-4 py-2 text-gray-600 hover:bg-gray-50">
-            Status
-            <ArrowDown2 size={14} variant="Linear" color="#6b7280" />
-          </button>
-          <button className="flex items-center gap-2 text-sm font-medium bg-black text-white rounded-full px-4 py-2 hover:bg-gray-800">
-            Export
-            <ExportSquare size={14} variant="Linear" color="#ffffff" />
-          </button>
-        </div>
+        <h2 className="text-xl font-bold tracking-tight">Recent Threads</h2>
+        <Link
+          href="/inbox"
+          className="flex items-center gap-1 text-sm font-medium text-gray-600 hover:text-black"
+        >
+          View inbox
+          <ArrowRight2 size={14} variant="Linear" />
+        </Link>
       </div>
 
-      {/* Table Header */}
-      <div className="grid grid-cols-[1.4fr_1fr_1fr_0.8fr_1fr_40px] gap-4 px-3 py-3 text-xs text-gray-400 font-medium">
+      <div className="grid grid-cols-[1.6fr_1fr_1.2fr_0.8fr_1fr] gap-4 px-3 py-3 text-xs text-gray-400 font-medium">
         <span>Subject</span>
         <span>Channel</span>
         <span>Customer</span>
         <span>Status</span>
-        <span>Date</span>
-        <span></span>
+        <span>Last activity</span>
       </div>
 
-      {/* Table Rows */}
-      <div className="space-y-1">
-        {threads.map((thread) => (
-          <div
-            key={thread.subject}
-            className="grid grid-cols-[1.4fr_1fr_1fr_0.8fr_1fr_40px] gap-4 px-3 py-3.5 items-center hover:bg-gray-50 rounded-2xl transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <input
-                type="checkbox"
-                className="w-4 h-4 rounded-md border-gray-300 accent-black"
-              />
-              <span className="text-sm font-semibold">{thread.subject}</span>
-            </div>
-            <div className="flex items-center gap-2.5 text-sm text-gray-700">
-              <div className="w-7 h-7 rounded-lg bg-gray-50 flex items-center justify-center">
-                <thread.channelIcon size={16} variant="Bold" color="#1a1a1a" />
+      {loading ? (
+        <p className="text-sm text-gray-400 px-3 py-6">Loading…</p>
+      ) : threads.length === 0 ? (
+        <p className="text-sm text-gray-400 px-3 py-6">No threads yet. Connect a channel to get started.</p>
+      ) : (
+        <div className="space-y-1">
+          {threads.map((t) => {
+            const logo = t.channel ? channelLogo[t.channel] : undefined;
+            return (
+              <div
+                key={t.id}
+                className="grid grid-cols-[1.6fr_1fr_1.2fr_0.8fr_1fr] gap-4 px-3 py-3.5 items-center hover:bg-gray-50 rounded-2xl transition-colors"
+              >
+                <span className="text-sm font-semibold truncate">{t.subject || "(no subject)"}</span>
+                <div className="flex items-center gap-2.5 text-sm text-gray-700">
+                  <div className="w-7 h-7 rounded-lg bg-gray-50 flex items-center justify-center">
+                    {logo ? (
+                      <Image src={logo} alt="" width={16} height={16} className="w-4 h-4" />
+                    ) : (
+                      <Sms size={16} variant="Bold" color="#1a1a1a" />
+                    )}
+                  </div>
+                  {t.channel ? channelName[t.channel] ?? t.channel : "—"}
+                </div>
+                <span className="text-sm text-gray-600 truncate">{t.customer_ref || "—"}</span>
+                <span
+                  className={cn(
+                    "text-xs font-medium rounded-full px-3 py-1 w-fit",
+                    statusStyles[t.status ?? ""] ?? "bg-gray-50 text-gray-500"
+                  )}
+                >
+                  {t.status ? t.status.charAt(0).toUpperCase() + t.status.slice(1) : "—"}
+                </span>
+                <span className="text-sm text-gray-400">{fmtDate(t.last_message_at)}</span>
               </div>
-              {thread.channel}
-            </div>
-            <span className="text-sm text-gray-600">{thread.customer}</span>
-            <span
-              className={cn(
-                "text-xs font-medium rounded-full px-3 py-1 w-fit",
-                statusStyles[thread.status]
-              )}
-            >
-              {thread.status}
-            </span>
-            <span className="text-sm text-gray-400">{thread.date}</span>
-            <button className="text-gray-300 hover:text-gray-500 flex justify-center">
-              <More size={18} variant="Bold" />
-            </button>
-          </div>
-        ))}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

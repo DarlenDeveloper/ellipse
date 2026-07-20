@@ -3,7 +3,14 @@
 export type Mode = "supervised" | "unsupervised" | "off";
 export type Tier = "starter" | "business" | "enterprise";
 export type AgentDomain = "inbox" | "assistant" | "calendar";
-export type TargetSystem = "internal" | "zoho" | "odoo" | "whatsapp" | "salesforce" | "microsoft365";
+export type TargetSystem =
+  | "internal"
+  | "gmail"
+  | "zoho"
+  | "odoo"
+  | "whatsapp"
+  | "salesforce"
+  | "microsoft365";
 
 export type ActionStatus =
   | "pending"

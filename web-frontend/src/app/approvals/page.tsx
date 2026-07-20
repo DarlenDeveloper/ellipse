@@ -31,12 +31,13 @@ type PendingAction = {
 
 // target_system → connection logo (falls back to a generic chip icon).
 const systemLogo: Record<string, string> = {
+  gmail: "/logos/gmail.svg",
+  "google-workspace": "/logos/gmail.svg",
   zoho: "/logos/zoho.svg",
   odoo: "/logos/odoo.svg",
   whatsapp: "/logos/whatsapp.svg",
   salesforce: "/logos/salesforce.svg",
   microsoft365: "/logos/microsoft365.svg",
-  "google-workspace": "/logos/gmail.svg",
 };
 
 const statusStyles: Record<string, string> = {

@@ -207,14 +207,14 @@ export default function AgentsPage() {
             </div>
           ))}
 
-          {/* Boss agent — orchestrator, built last */}
+          {/* Ivy — personal agent / orchestrator, built last */}
           <div className="bg-white rounded-2xl border border-dashed border-gray-200 p-6 flex items-center gap-3 opacity-70">
             <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center">
               <Setting2 size={24} variant="Bold" color="#9ca3af" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-gray-500">Boss Agent</h3>
-              <p className="text-xs text-gray-400">Coordinates all agents · coming soon</p>
+              <h3 className="text-base font-bold text-gray-500">Ivy</h3>
+              <p className="text-xs text-gray-400">Your personal agent, coordinates all others · coming soon</p>
             </div>
           </div>
         </div>

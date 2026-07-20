@@ -202,6 +202,62 @@ export const zohoSearchDebug = onRequest(
 );
 
 /**
+ * Run the Gmail agent over a conversation: draft a reply (CRM-aware if the sender
+ * is in Zoho) and route it through the gate as a send_reply action.
+ */
+export const runGmailAgent = onCall(
+  { secrets: [geminiKey, googleClientId, googleClientSecret, zohoClientId, zohoClientSecret] },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+    const enterpriseId = request.data?.enterpriseId as string | undefined;
+    const conversationId = request.data?.conversationId as string | undefined;
+    if (!enterpriseId || !conversationId) {
+      throw new HttpsError("invalid-argument", "Missing enterpriseId or conversationId.");
+    }
+    const { runGmailAgent: run } = await import("./agents/gmailAgent");
+    return run(enterpriseId, conversationId);
+  }
+);
+
+/**
+ * TEMPORARY debug trigger for the Gmail agent. ?enterpriseId=&conversationId=
+ * (defaults to latest conversation). Remove before ship.
+ */
+export const runGmailAgentDebug = onRequest(
+  { secrets: [geminiKey, googleClientId, googleClientSecret, zohoClientId, zohoClientSecret] },
+  async (req, res) => {
+    const enterpriseId = req.query.enterpriseId as string | undefined;
+    let conversationId = req.query.conversationId as string | undefined;
+    if (!enterpriseId) {
+      res.status(400).json({ ok: false, error: "Missing enterpriseId" });
+      return;
+    }
+    try {
+      const { db } = await import("./admin");
+      if (!conversationId) {
+        const snap = await db
+          .collection("conversations")
+          .where("enterprise_id", "==", enterpriseId)
+          .get();
+        const latest = snap.docs
+          .map((d) => ({ id: d.id, at: (d.data().last_message_at as any)?.toMillis?.() ?? 0 }))
+          .sort((a, b) => b.at - a.at)[0];
+        if (!latest) {
+          res.status(404).json({ ok: false, error: "No conversations for this enterprise" });
+          return;
+        }
+        conversationId = latest.id;
+      }
+      const { runGmailAgent: run } = await import("./agents/gmailAgent");
+      const result = await run(enterpriseId, conversationId);
+      res.json({ ok: true, conversationId, ...result });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: (e as Error).message });
+    }
+  }
+);
+
+/**
  * TEMPORARY debug trigger — runs the Zoho agent over a conversation without auth,
  * so we can test the write path via curl. Defaults to the most recent conversation
  * for the enterprise if no conversationId is given. Remove before ship.
@@ -312,3 +368,4 @@ export const zohoOAuthCallback = onRequest(
 
 export { executeAgentAction };
 export { onPendingActionApproved } from "./approvals";
+export { onMessageCreated } from "./onMessage";

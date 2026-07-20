@@ -66,6 +66,64 @@ export async function handleCallback(code: string, enterpriseId: string): Promis
   return email;
 }
 
+/**
+ * Send a reply within an existing Gmail thread. Fetches the thread's latest
+ * message to set proper In-Reply-To / References headers so it threads correctly,
+ * then sends a plain-text reply. Returns the new Gmail message id.
+ */
+export async function sendGmailReply(
+  enterpriseId: string,
+  threadId: string,
+  to: string,
+  subject: string,
+  body: string
+): Promise<string> {
+  const { client } = await authedClientFor(enterpriseId);
+  const gmail = google.gmail({ version: "v1", auth: client });
+
+  // Pull the latest message's Message-ID/References for threading.
+  let inReplyTo = "";
+  let references = "";
+  try {
+    const thread = await gmail.users.threads.get({
+      userId: "me",
+      id: threadId,
+      format: "metadata",
+      metadataHeaders: ["Message-ID", "References"],
+    });
+    const msgs = thread.data.messages ?? [];
+    const last = msgs[msgs.length - 1];
+    const h = last?.payload?.headers ?? [];
+    inReplyTo = header(h, "Message-ID");
+    references = header(h, "References") || inReplyTo;
+  } catch {
+    // threading headers are best-effort
+  }
+
+  const subjectLine = subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`;
+  const lines = [
+    `To: ${to}`,
+    `Subject: ${subjectLine}`,
+    inReplyTo ? `In-Reply-To: ${inReplyTo}` : "",
+    references ? `References: ${references}` : "",
+    `Content-Type: text/plain; charset="UTF-8"`,
+    "",
+    body,
+  ].filter(Boolean);
+
+  const raw = Buffer.from(lines.join("\r\n"))
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+
+  const res = await gmail.users.messages.send({
+    userId: "me",
+    requestBody: { raw, threadId },
+  });
+  return res.data.id ?? "sent";
+}
+
 /** Return an authed OAuth client for a connected enterprise (for API calls). */
 export async function authedClientFor(enterpriseId: string) {
   const snap = await db.doc(`connections/${enterpriseId}_google-workspace`).get();

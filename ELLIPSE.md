@@ -52,7 +52,7 @@
 - Embed via script tag or iframe
 - Configurable escalation to human agents
 
-### 5. Boss Agent
+### 5. Ivy (Personal Agent)
 - Orchestrates all channel agents + web agents
 - Cross-channel decisions (consolidate threads, escalate, follow-up)
 - Configurable playbooks and rules
@@ -91,7 +91,7 @@
 
 **Morning:**
 - Channel agent (Gemini integration via Cloud Functions)
-- Boss Agent orchestration logic
+- Ivy (personal agent) orchestration logic
 - Web Agent infrastructure
 
 **Afternoon:**
@@ -126,8 +126,8 @@ orgs/{orgId}/
 
 ```
 ┌─────────────────────────────────────┐
-│            BOSS AGENT               │
-│   (Orchestrator — Gemini)           │
+│               IVY                   │
+│   (Personal Agent — Gemini)         │
 ├─────────┬─────────┬────────┬────────┤
 │ Gmail   │WhatsApp │ SMTP   │  Web   │
 │ Agent   │ Agent   │ Agent  │ Agent  │

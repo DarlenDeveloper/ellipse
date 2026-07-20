@@ -272,33 +272,46 @@ export async function backfillZoho(
   const byModule: Record<string, number> = {};
   let total = 0;
 
+  const PER_PAGE = 200;
+  const MAX_PAGES = 25; // safety cap: up to 5000 records/module
+
   for (const [module, fields] of Object.entries(BACKFILL_MODULES)) {
     let count = 0;
+    let page = 1;
     try {
-      const data = await zohoRequest(
-        enterpriseId,
-        `${module}?fields=${encodeURIComponent(fields)}&per_page=200&sort_by=Created_Time&sort_order=desc`,
-        { headers: { "If-Modified-Since": sinceIso } }
-      );
-      const records: any[] = data?.data ?? [];
+      while (page <= MAX_PAGES) {
+        const data = await zohoRequest(
+          enterpriseId,
+          `${module}?fields=${encodeURIComponent(fields)}&per_page=${PER_PAGE}&page=${page}&sort_by=Created_Time&sort_order=desc`,
+          { headers: { "If-Modified-Since": sinceIso } }
+        );
+        const records: any[] = data?.data ?? [];
+        if (records.length === 0) break;
 
-      for (const r of records) {
-        const created = r.Created_Time ? new Date(r.Created_Time) : new Date();
-        await db.doc(`analytics_events/zoho_${module}_${r.id}`).set({
-          source: "zoho_record",
-          workspace_id: enterpriseId,
-          payload: {
-            channel: "zoho",
-            module,
-            record_id: r.id,
-            name: r.Full_Name ?? r.Deal_Name ?? null,
-            email: r.Email ?? null,
-            stage: r.Stage ?? null,
-            amount: r.Amount ?? null,
-          },
-          timestamp: created,
-        });
-        count++;
+        // Firestore batched writes (max 500 ops per batch; PER_PAGE is 200, safe).
+        const batch = db.batch();
+        for (const r of records) {
+          const created = r.Created_Time ? new Date(r.Created_Time) : new Date();
+          batch.set(db.doc(`analytics_events/zoho_${module}_${r.id}`), {
+            source: "zoho_record",
+            workspace_id: enterpriseId,
+            payload: {
+              channel: "zoho",
+              module,
+              record_id: r.id,
+              name: r.Full_Name ?? r.Deal_Name ?? null,
+              email: r.Email ?? null,
+              stage: r.Stage ?? null,
+              amount: r.Amount ?? null,
+            },
+            timestamp: created,
+          });
+        }
+        await batch.commit();
+        count += records.length;
+
+        if (!data?.info?.more_records) break;
+        page++;
       }
     } catch (e) {
       console.error("backfillZoho module failed", module, (e as Error).message);

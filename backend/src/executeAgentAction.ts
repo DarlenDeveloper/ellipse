@@ -139,6 +139,9 @@ export async function executeAction(
   if (targetSystem === "zoho") {
     return executeZohoAction(enterpriseId, actionType, params);
   }
+  if (targetSystem === "gmail") {
+    return executeGmailAction(enterpriseId, actionType, params);
+  }
   // TODO: internal handlers + other connections (odoo, whatsapp, ...)
   logger.info("executeAction (stub)", { targetSystem, actionType });
   return `${targetSystem}:stub:${Date.now()}`;
@@ -170,6 +173,30 @@ async function executeZohoAction(
       return zoho.addNote(enterpriseId, module, params.recordId as string, params.content as string);
     default:
       logger.warn("Unknown Zoho action", { actionType });
+      return null;
+  }
+}
+
+/**
+ * Routes a Gmail action to the connection's executors. Currently: send_reply.
+ */
+async function executeGmailAction(
+  enterpriseId: string,
+  actionType: string,
+  params: Record<string, unknown>
+): Promise<string | null> {
+  const gmail = await import("./connections/google");
+  switch (actionType) {
+    case "send_reply":
+      return gmail.sendGmailReply(
+        enterpriseId,
+        params.threadId as string,
+        params.to as string,
+        (params.subject as string) ?? "",
+        (params.body as string) ?? ""
+      );
+    default:
+      logger.warn("Unknown Gmail action", { actionType });
       return null;
   }
 }

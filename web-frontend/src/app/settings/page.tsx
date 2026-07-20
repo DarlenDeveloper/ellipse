@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Building, Notification, ShieldTick, Paintbucket, Trash, Profile2User } from "iconsax-react";
+import { Building, Notification, ShieldTick, Paintbucket, Trash, Book1 } from "iconsax-react";
 import { cn } from "@/lib/utils";
+import { KnowledgeBase } from "@/components/settings/KnowledgeBase";
 
 const tabs = [
   { id: "general", label: "General", icon: Building },
+  { id: "knowledge", label: "Knowledge Base", icon: Book1 },
   { id: "notifications", label: "Notifications", icon: Notification },
   { id: "security", label: "Security", icon: ShieldTick },
   { id: "appearance", label: "Appearance", icon: Paintbucket },
@@ -121,6 +123,8 @@ export default function SettingsPage() {
               </div>
             </div>
           )}
+
+          {activeTab === "knowledge" && <KnowledgeBase />}
 
           {activeTab === "notifications" && (
             <div className="bg-white rounded-2xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">

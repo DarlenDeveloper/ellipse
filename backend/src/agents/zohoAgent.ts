@@ -3,6 +3,7 @@ import { db, FieldValue } from "../admin";
 import { callGemini } from "../gemini";
 import { executeAgentAction } from "../executeAgentAction";
 import { enrichFromZoho, ZohoEnrichment } from "../connections/zoho";
+import { loadKnowledgeBase } from "./knowledge";
 
 /**
  * The Zoho CRM agent.
@@ -146,6 +147,8 @@ export async function runZohoAgent(
     .map((m) => `[${m.sender_type ?? "unknown"}] ${(m.body || m.snippet || "").slice(0, 1500)}`)
     .join("\n\n");
 
+  const knowledge = await loadKnowledgeBase(enterpriseId);
+
   const prompt = [
     `Subject: ${conv.subject ?? "(none)"}`,
     ``,
@@ -153,6 +156,7 @@ export async function runZohoAgent(
     `email: ${email || "(unknown)"}`,
     `name: ${senderName || "(not provided — infer from signature, else leave blank)"}`,
     ``,
+    knowledge ? `--- Company knowledge base (use these facts; don't contradict them) ---\n${knowledge}\n` : "",
     `--- Zoho context ---`,
     renderContext(context),
     ``,
@@ -160,7 +164,9 @@ export async function runZohoAgent(
     transcript,
     ``,
     `Decide the reply and any CRM updates.`,
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   const gemini = await callGemini({ system: SYSTEM, prompt, tools: TOOLS });
 

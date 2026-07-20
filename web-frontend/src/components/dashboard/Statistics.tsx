@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import {
   BarChart,
   Bar,
@@ -7,71 +8,117 @@ import {
   YAxis,
   CartesianGrid,
   ResponsiveContainer,
+  Tooltip,
 } from "recharts";
+import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { cn } from "@/lib/utils";
+import { db } from "@/lib/firebase";
+import { useEnterpriseId } from "@/lib/use-enterprise";
 
-const data = [
-  { month: "Jan", messages: 4200, agentActions: 3100 },
-  { month: "Feb", messages: 3800, agentActions: 2900 },
-  { month: "Mar", messages: 5100, agentActions: 4200 },
-  { month: "Apr", messages: 4600, agentActions: 3800 },
-  { month: "May", messages: 5800, agentActions: 4900 },
-  { month: "Jun", messages: 7200, agentActions: 6400 },
-  { month: "Jul", messages: 6800, agentActions: 5900 },
-  { month: "Aug", messages: 4900, agentActions: 4100 },
-  { month: "Sep", messages: 5200, agentActions: 4400 },
-  { month: "Oct", messages: 4800, agentActions: 3900 },
-  { month: "Nov", messages: 5500, agentActions: 4600 },
-  { month: "Dec", messages: 6100, agentActions: 5200 },
-];
+type Ev = { source?: string; timestamp?: { toDate: () => Date } };
+type Action = { status?: string; created_at?: { toDate: () => Date } };
+
+function monthKey(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function monthShort(key: string) {
+  const [y, m] = key.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleString(undefined, { month: "short" });
+}
 
 export function Statistics() {
+  const { enterpriseId } = useEnterpriseId();
+  const [events, setEvents] = useState<Ev[]>([]);
+  const [actions, setActions] = useState<Action[]>([]);
+  const [metric, setMetric] = useState<"messages" | "agentActions">("messages");
+
+  useEffect(() => {
+    if (!enterpriseId) return;
+    const unsubs: (() => void)[] = [];
+    unsubs.push(
+      onSnapshot(
+        query(collection(db, "analytics_events"), where("workspace_id", "==", enterpriseId)),
+        (snap) => setEvents(snap.docs.map((d) => d.data() as Ev))
+      )
+    );
+    unsubs.push(
+      onSnapshot(
+        query(collection(db, "pending_actions"), where("enterprise_id", "==", enterpriseId)),
+        (snap) => setActions(snap.docs.map((d) => d.data() as Action))
+      )
+    );
+    return () => unsubs.forEach((u) => u());
+  }, [enterpriseId]);
+
+  const data = useMemo(() => {
+    const buckets: Record<string, { messages: number; agentActions: number }> = {};
+    for (const e of events) {
+      if (e.source !== "message") continue;
+      const d = e.timestamp?.toDate?.();
+      if (!d) continue;
+      (buckets[monthKey(d)] ??= { messages: 0, agentActions: 0 }).messages++;
+    }
+    for (const a of actions) {
+      const d = a.created_at?.toDate?.();
+      if (!d) continue;
+      (buckets[monthKey(d)] ??= { messages: 0, agentActions: 0 }).agentActions++;
+    }
+    return Object.keys(buckets)
+      .sort()
+      .slice(-8)
+      .map((k) => ({ month: monthShort(k), ...buckets[k] }));
+  }, [events, actions]);
+
   return (
     <div className="bg-white rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-xl font-bold tracking-tight">Statistics</h2>
         <div className="flex items-center gap-2 text-xs font-medium">
-          <span className="flex items-center gap-1.5 bg-gray-900 text-white rounded-full px-3 py-1.5">
-            <span className="w-2 h-2 bg-white rounded-full" />
+          <button
+            onClick={() => setMetric("messages")}
+            className={cn(
+              "flex items-center gap-1.5 rounded-full px-3 py-1.5 transition-colors",
+              metric === "messages" ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            )}
+          >
+            <span className={cn("w-2 h-2 rounded-full", metric === "messages" ? "bg-white" : "bg-gray-400")} />
             Messages
-          </span>
-          <span className="flex items-center gap-1.5 bg-gray-100 text-gray-600 rounded-full px-3 py-1.5">
-            <span className="w-2 h-2 bg-gray-400 rounded-full" />
+          </button>
+          <button
+            onClick={() => setMetric("agentActions")}
+            className={cn(
+              "flex items-center gap-1.5 rounded-full px-3 py-1.5 transition-colors",
+              metric === "agentActions" ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+            )}
+          >
+            <span className={cn("w-2 h-2 rounded-full", metric === "agentActions" ? "bg-white" : "bg-gray-400")} />
             Agent Actions
-          </span>
+          </button>
         </div>
       </div>
 
-      <div className="relative">
-        {/* Floating tooltip bubble */}
-        <div className="absolute left-[45%] top-[2%] z-10">
-          <div className="bg-black text-white text-xs font-semibold rounded-full px-3 py-1.5 shadow-lg">
-            6.4K
-          </div>
-          <div className="w-2 h-2 bg-black rounded-full mx-auto mt-1" />
-        </div>
-
+      {data.length === 0 ? (
+        <p className="text-sm text-gray-400 py-20 text-center">No activity yet.</p>
+      ) : (
         <ResponsiveContainer width="100%" height={240}>
           <BarChart data={data} barGap={3} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="0" vertical={false} stroke="#f3f3f3" />
-            <XAxis
-              dataKey="month"
-              axisLine={false}
-              tickLine={false}
-              fontSize={11}
-              tick={{ fill: "#9ca3af" }}
+            <XAxis dataKey="month" axisLine={false} tickLine={false} fontSize={11} tick={{ fill: "#9ca3af" }} />
+            <YAxis axisLine={false} tickLine={false} fontSize={11} tick={{ fill: "#9ca3af" }} />
+            <Tooltip
+              cursor={false}
+              contentStyle={{ borderRadius: "12px", border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.1)" }}
             />
-            <YAxis
-              axisLine={false}
-              tickLine={false}
-              fontSize={11}
-              tick={{ fill: "#9ca3af" }}
-              ticks={[0, 2000, 4000, 6000, 8000]}
+            <Bar
+              dataKey={metric}
+              name={metric === "messages" ? "Messages" : "Agent Actions"}
+              fill={metric === "messages" ? "#111111" : "#9ca3af"}
+              radius={[6, 6, 0, 0]}
+              barSize={14}
             />
-            <Bar dataKey="messages" fill="#111111" radius={[6, 6, 0, 0]} barSize={10} />
-            <Bar dataKey="agentActions" fill="#e5e7eb" radius={[6, 6, 0, 0]} barSize={10} />
           </BarChart>
         </ResponsiveContainer>
-      </div>
+      )}
     </div>
   );
 }

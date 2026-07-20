@@ -75,14 +75,7 @@ export function PendingApprovals() {
   return (
     <div className="bg-white rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-bold tracking-tight">
-          Pending Approvals
-          {items.length > 0 && (
-            <span className="ml-2 text-sm font-semibold text-white bg-black rounded-full px-2 py-0.5">
-              {items.length}
-            </span>
-          )}
-        </h2>
+        <h2 className="text-xl font-bold tracking-tight">Pending Approvals</h2>
         <Link href="/approvals" className="text-gray-400 hover:text-gray-700" title="View all">
           <ArrowRight2 size={20} variant="Linear" />
         </Link>

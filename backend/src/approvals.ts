@@ -6,6 +6,8 @@ import { executeAction } from "./executeAgentAction";
 
 const zohoClientId = defineSecret("ZOHO_CLIENT_ID");
 const zohoClientSecret = defineSecret("ZOHO_CLIENT_SECRET");
+const googleClientId = defineSecret("GOOGLE_OAUTH_CLIENT_ID");
+const googleClientSecret = defineSecret("GOOGLE_OAUTH_CLIENT_SECRET");
 
 /**
  * Executes a pending action once a human approves it (Supervised mode).
@@ -16,7 +18,10 @@ const zohoClientSecret = defineSecret("ZOHO_CLIENT_SECRET");
  * does not re-trigger the approved branch, so there's no loop.
  */
 export const onPendingActionApproved = onDocumentUpdated(
-  { document: "pending_actions/{id}", secrets: [zohoClientId, zohoClientSecret] },
+  {
+    document: "pending_actions/{id}",
+    secrets: [zohoClientId, zohoClientSecret, googleClientId, googleClientSecret],
+  },
   async (event) => {
     const before = event.data?.before.data();
     const after = event.data?.after.data();
