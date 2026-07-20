@@ -1,5 +1,6 @@
 import { ImapFlow } from "imapflow";
 import nodemailer from "nodemailer";
+import { simpleParser } from "mailparser";
 import { db, FieldValue } from "../admin";
 
 /**
@@ -118,7 +119,17 @@ export async function ingestRecentImap(enterpriseId: string, max = 15): Promise<
       const timestamp = env?.date ? new Date(env.date) : new Date();
       const threadId = messageId;
       const senderType = fromEmail === account ? "us" : "customer";
-      const body = msg.source ? msg.source.toString("utf-8").slice(0, 20000) : "";
+
+      // Parse the raw MIME source into a clean text body (fall back to snippet).
+      let body = "";
+      if (msg.source) {
+        try {
+          const parsed = await simpleParser(msg.source);
+          body = (parsed.text || parsed.html || "").toString().slice(0, 20000);
+        } catch {
+          body = "";
+        }
+      }
 
       await db.doc(`conversations/${enterpriseId}_${docId}`).set(
         {
