@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { SearchNormal1, TickCircle, CloseCircle } from "iconsax-react";
 import { httpsCallable } from "firebase/functions";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, deleteDoc, collection, getDocs, query as fsQuery, where } from "firebase/firestore";
 import { integrations as seed } from "@/components/integrations/data";
 import { IntegrationCard } from "@/components/integrations/IntegrationCard";
 import { SmtpConnectModal } from "@/components/integrations/SmtpConnectModal";
@@ -27,11 +27,24 @@ export default function IntegrationsPage() {
   const [showWebsiteModal, setShowWebsiteModal] = useState(false);
   const [msConnected, setMsConnected] = useState(false);
   const [connectingMs, setConnectingMs] = useState(false);
+  const [disconnectTarget, setDisconnectTarget] = useState<{ id: string; name: string } | null>(null);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [connectingZoho, setConnectingZoho] = useState(false);
   const [banner, setBanner] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
-  // Load enterprise + real google connection status
+  // Apply a set of active connection types to the UI state.
+  const applyActive = useCallback((active: Set<string>, googleEmailValue: string | null) => {
+    setGoogleEmail(active.has("google-workspace") ? googleEmailValue ?? "connected" : null);
+    setZohoConnected(active.has("zoho"));
+    setSmtpConnected(active.has("smtp"));
+    setWhatsappConnected(active.has("whatsapp"));
+    setWebsiteConnected(active.has("website"));
+    setMsConnected(active.has("microsoft365"));
+    setItems((prev) => prev.map((it) => ({ ...it, connected: active.has(it.id) })));
+  }, []);
+
+  // Load enterprise + all connection statuses in ONE query.
   const refresh = useCallback(async () => {
     if (!user) return;
     const userSnap = await getDoc(doc(db, "users", user.uid));
@@ -39,46 +52,40 @@ export default function IntegrationsPage() {
     if (!entId) return;
     setEnterpriseId(entId);
 
-    const connSnap = await getDoc(doc(db, "connections", `${entId}_google-workspace`));
-    if (connSnap.exists() && connSnap.data()?.status === "active") {
-      setGoogleEmail(connSnap.data()?.account_email ?? "connected");
-      setItems((prev) => prev.map((it) => (it.id === "google-workspace" ? { ...it, connected: true } : it)));
-    }
+    const snap = await getDocs(fsQuery(collection(db, "connections"), where("enterprise_id", "==", entId)));
+    const active = new Set<string>();
+    let gEmail: string | null = null;
+    snap.forEach((d) => {
+      const data = d.data();
+      if (data.status === "active" && data.type) {
+        active.add(data.type);
+        if (data.type === "google-workspace") gEmail = data.account_email ?? "connected";
+      }
+    });
+    applyActive(active, gEmail);
 
-    const zohoSnap = await getDoc(doc(db, "connections", `${entId}_zoho`));
-    if (zohoSnap.exists() && zohoSnap.data()?.status === "active") {
-      setZohoConnected(true);
-      setItems((prev) => prev.map((it) => (it.id === "zoho" ? { ...it, connected: true } : it)));
+    // Cache for instant paint next load.
+    try {
+      localStorage.setItem(`ellipse_conns_${user.uid}`, JSON.stringify({ active: [...active], gEmail }));
+    } catch {
+      /* ignore */
     }
+  }, [user, applyActive]);
 
-    const smtpSnap = await getDoc(doc(db, "connections", `${entId}_smtp`));
-    if (smtpSnap.exists() && smtpSnap.data()?.status === "active") {
-      setSmtpConnected(true);
-      setItems((prev) => prev.map((it) => (it.id === "smtp" ? { ...it, connected: true } : it)));
-    }
-
-    const waSnap = await getDoc(doc(db, "connections", `${entId}_whatsapp`));
-    if (waSnap.exists() && waSnap.data()?.status === "active") {
-      setWhatsappConnected(true);
-      setItems((prev) => prev.map((it) => (it.id === "whatsapp" ? { ...it, connected: true } : it)));
-    }
-
-    const webSnap = await getDoc(doc(db, "connections", `${entId}_website`));
-    if (webSnap.exists() && webSnap.data()?.status === "active") {
-      setWebsiteConnected(true);
-      setItems((prev) => prev.map((it) => (it.id === "website" ? { ...it, connected: true } : it)));
-    }
-
-    const msSnap = await getDoc(doc(db, "connections", `${entId}_microsoft365`));
-    if (msSnap.exists() && msSnap.data()?.status === "active") {
-      setMsConnected(true);
-      setItems((prev) => prev.map((it) => (it.id === "microsoft365" ? { ...it, connected: true } : it)));
-    }
-  }, [user]);
-
+  // Instant paint from cache, then refresh from Firestore.
   useEffect(() => {
+    if (!user) return;
+    try {
+      const cached = localStorage.getItem(`ellipse_conns_${user.uid}`);
+      if (cached) {
+        const { active, gEmail } = JSON.parse(cached) as { active: string[]; gEmail: string | null };
+        applyActive(new Set(active), gEmail);
+      }
+    } catch {
+      /* ignore */
+    }
     refresh();
-  }, [refresh]);
+  }, [user, refresh, applyActive]);
 
   // Handle the OAuth redirect result
   useEffect(() => {
@@ -159,6 +166,40 @@ export default function IntegrationsPage() {
     } catch {
       setBanner({ type: "error", text: "Could not start Zoho connect." });
       setConnectingZoho(false);
+    }
+  };
+
+  const doDisconnect = async () => {
+    if (!enterpriseId || !disconnectTarget) return;
+    setDisconnecting(true);
+    const id = disconnectTarget.id;
+    try {
+      await deleteDoc(doc(db, "connections", `${enterpriseId}_${id}`));
+      setItems((prev) => prev.map((it) => (it.id === id ? { ...it, connected: false } : it)));
+      if (id === "google-workspace") setGoogleEmail(null);
+      if (id === "zoho") setZohoConnected(false);
+      if (id === "smtp") setSmtpConnected(false);
+      if (id === "whatsapp") setWhatsappConnected(false);
+      if (id === "website") setWebsiteConnected(false);
+      if (id === "microsoft365") setMsConnected(false);
+      // Keep the instant-paint cache in sync.
+      try {
+        if (user) {
+          const cached = localStorage.getItem(`ellipse_conns_${user.uid}`);
+          const parsed = cached ? JSON.parse(cached) : { active: [], gEmail: null };
+          parsed.active = (parsed.active ?? []).filter((t: string) => t !== id);
+          if (id === "google-workspace") parsed.gEmail = null;
+          localStorage.setItem(`ellipse_conns_${user.uid}`, JSON.stringify(parsed));
+        }
+      } catch {
+        /* ignore */
+      }
+      setBanner({ type: "success", text: `${disconnectTarget.name} disconnected.` });
+      setDisconnectTarget(null);
+    } catch {
+      setBanner({ type: "error", text: "Could not disconnect. Try again." });
+    } finally {
+      setDisconnecting(false);
     }
   };
 
@@ -244,6 +285,7 @@ export default function IntegrationsPage() {
                   ? connectMicrosoft
                   : undefined
               }
+              onDisconnect={() => setDisconnectTarget({ id: integration.id, name: integration.name })}
               subtitle={
                 isZoho && zohoConnected
                   ? "Connected"
@@ -294,6 +336,35 @@ export default function IntegrationsPage() {
             refresh();
           }}
         />
+      )}
+
+      {/* Disconnect confirmation */}
+      {disconnectTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-xl">
+            <h3 className="text-xl font-bold">Disconnect {disconnectTarget.name}?</h3>
+            <p className="text-sm text-gray-500 mt-2">
+              This removes the connection and stops syncing. You can reconnect anytime — but stored
+              credentials/tokens will be cleared.
+            </p>
+            <div className="flex items-center justify-end gap-3 mt-6">
+              <button
+                onClick={() => setDisconnectTarget(null)}
+                disabled={disconnecting}
+                className="text-sm font-medium text-gray-600 rounded-full px-5 py-2.5 hover:bg-gray-100 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={doDisconnect}
+                disabled={disconnecting}
+                className="text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-full px-5 py-2.5 disabled:opacity-50"
+              >
+                {disconnecting ? "Disconnecting…" : "Disconnect"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </main>
   );
