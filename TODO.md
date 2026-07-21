@@ -70,25 +70,28 @@ Remaining:
 - [ ] Remove temporary debug fns before ship (`pingZoho`, `zohoSearchDebug`, `zohoBackfillDebug`, `runZohoAgentDebug`)
 
 ### Odoo — ⚪ 0%  (reuse Zoho framework — near-identical OAuth2 + REST)
-### Microsoft 365 — 🟡 30% (connection working)
+### Microsoft 365 — 🟡 45% (Outlook channel working)
 Done:
 - [x] Azure app registration (multi-tenant + personal accounts) + secrets `MS_CLIENT_ID` / `MS_CLIENT_SECRET`
 - [x] OAuth connect (`startMicrosoftConnect` → consent → `microsoftOAuthCallback`), Graph `common` authority
 - [x] Token store + refresh (rotated refresh token handled); verified via `pingMicrosoft` (read /me)
 - [x] Integrations card wired (redirect flow)
 Done (Outlook channel):
-- [x] Scopes added: Mail.ReadWrite, Mail.Send, Files.ReadWrite (Files up-front, no re-consent later) — REQUIRES reconnect
+- [x] Scopes added: Mail.ReadWrite, Mail.Send, Files.ReadWrite (Files up-front, no re-consent later) — user reconnected ✅
 - [x] Outlook ingest (`ingestRecentOutlook`) → unified inbox (channel `microsoft365`) + auto-sync (`scheduledOutlookSync`)
 - [x] Threaded reply (`sendOutlookReply` via Graph reply endpoint) routed through gate as `microsoft365` `send_reply`
-- [x] Dedicated `outlookAgent` (per-connection); inbox/agents/approvals show Outlook logo
+- [x] Dedicated `microsoftAgent` (renamed from outlookAgent, agentId `microsoft365-agent`); inbox/agents/approvals show Outlook logo
+- [x] FIXED: dedup id collision (Outlook ids share a long prefix) — now hashed (sha256); ingest works
 Remaining:
+- [ ] Verify live Outlook ingest count after fix (was 0 due to collision)
 - [ ] File generation (after WhatsApp): `save_document` (Word), `create_spreadsheet`/`read`/`append` (Excel) → OneDrive
 - [ ] Move refresh token → Secret Manager (security)
 - [ ] Remove temporary `pingMicrosoft` before ship
 
 ### Agents refactor
-- [x] Split shared channel-aware agent into per-connection agents (gmail/smtp/outlook/whatsapp) sharing `replyBase`
+- [x] Split shared channel-aware agent into per-connection agents (gmail/smtp/microsoft/whatsapp) sharing `replyBase`
 - [x] `onMessageCreated` dispatches to the connection's own agent by channel
+- [x] Zoho remains a separate CRM agent (runs alongside the channel agent on inbound)
 ### Salesforce — ⚪ 0%
 
 ## Core platform
@@ -96,8 +99,9 @@ Remaining:
 - [x] Onboarding (enterprise, subscription wallet, connections, invites, owner role) — incremental/resumable
 - [x] `executeAgentAction` gate (mode + tier + subscription) — deployed
 - [x] Gemini 3.1 flash-lite wrapper — deployed & verified
-- [x] Auto-trigger: `onMessageCreated` runs Gmail + Zoho agents on new inbound message (mode-aware)
+- [x] Auto-trigger: `onMessageCreated` dispatches to the channel's own agent (gmail/smtp/outlook/whatsapp) + Zoho, mode-aware
 - [x] Agent replies sign off with the enterprise name (no placeholder)
+- [x] KB injected into all channel agents (via shared `replyBase`)
 - [ ] Ivy (personal agent, coordinates connection agents) — LAST
 - [x] `pending_actions` approval flow — `onPendingActionApproved` executes approved actions
 - [x] Approvals page (`/approvals`, sidebar) — table view, per-agent logos, status column (rows persist), search + filters
@@ -123,6 +127,16 @@ Remaining:
 - [x] Settings → Knowledge Base tab (CRUD, live Firestore `knowledge_base`)
 - [x] KB injected into Gmail + Zoho agent prompts (facts shape replies)
 - [ ] Chunk/embed KB for retrieval when it grows large (currently full dump into prompt)
+
+## UI / branding polish
+- [x] Real per-connection logos (transparent PNGs): gmail, google-workspace, outlook, microsoft, zoho, whatsapp, odoo, salesforce, smtp
+- [x] Removed colored tile containers — logos render standalone/transparent (Integrations, inbox, threads, approvals, dashboard approvals)
+- [x] Inbox list: large standalone channel logo, dropped redundant channel-name line, active state → blue
+- [x] Dashboard Statistics: Hourly / Daily / Weekly / Monthly granularity toggle (+ Messages/Agent Actions)
+- [x] Website Analytics: Nolito-style layout (KPIs + real-time hero, trend area charts w/ range 7/14/30D, bar-lists), zero-filled series for "body"
+- [ ] Google Workspace logo may still show old blue "G" — confirm cache/asset
+- [ ] Strip logo containers on Agents page cards for full consistency (optional)
+- [ ] Wire inbox "Summarise" button (currently placeholder)
 
 ## Deferred / flagged
 - [ ] Firestore security rules (still test mode ⚠️)
