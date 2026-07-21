@@ -147,12 +147,20 @@ export default function WebsitePage() {
       viewsByDay[k] = (viewsByDay[k] ?? 0) + 1;
       (visByDay[k] ??= new Set()).add(e.payload?.visitor_id ?? "");
     }
-    const days = Object.keys({ ...viewsByDay }).sort().slice(-rangeDays);
-    const series = days.map((k) => ({
-      day: dayLabel(k),
-      views: viewsByDay[k] ?? 0,
-      visitors: visByDay[k]?.size ?? 0,
-    }));
+    // Zero-fill every day in the range so the chart has a proper baseline/body
+    // (not a single floating point on day one).
+    const series: { day: string; views: number; visitors: number }[] = [];
+    for (let i = rangeDays - 1; i >= 0; i--) {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - i);
+      const k = dayKey(d);
+      series.push({
+        day: dayLabel(k),
+        views: viewsByDay[k] ?? 0,
+        visitors: visByDay[k]?.size ?? 0,
+      });
+    }
 
     const tally = (key: "country" | "city") => {
       const m: Record<string, number> = {};
