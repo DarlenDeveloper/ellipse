@@ -21,6 +21,7 @@ import {
   savePlan,
   saveConnections,
   saveTeam,
+  detectTimezone,
   type Tier,
   type Role,
 } from "@/lib/onboarding";
@@ -56,6 +57,37 @@ const tiers: { id: Tier; name: string; price: string; seats: string; features: s
 
 const seatLimits: Record<Tier, number> = { starter: 1, business: 5, enterprise: 999 };
 
+// Full IANA list when the browser supports it, with a sensible fallback.
+function timezoneOptions(): string[] {
+  try {
+    const supported = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] })
+      .supportedValuesOf?.("timeZone");
+    if (supported && supported.length) return supported;
+  } catch {
+    /* fall through */
+  }
+  return [
+    "UTC",
+    "Africa/Nairobi",
+    "Africa/Lagos",
+    "Africa/Johannesburg",
+    "Europe/London",
+    "Europe/Paris",
+    "Europe/Berlin",
+    "America/New_York",
+    "America/Chicago",
+    "America/Denver",
+    "America/Los_Angeles",
+    "Asia/Dubai",
+    "Asia/Kolkata",
+    "Asia/Singapore",
+    "Asia/Tokyo",
+    "Australia/Sydney",
+  ];
+}
+
+const TIMEZONES = timezoneOptions();
+
 export default function OnboardingPage() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
@@ -64,7 +96,7 @@ export default function OnboardingPage() {
   const [hydrating, setHydrating] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const [company, setCompany] = useState({ name: "", industry: "SaaS / Technology", size: "1-10" });
+  const [company, setCompany] = useState({ name: "", industry: "SaaS / Technology", size: "1-10", timezone: detectTimezone() });
   const [tier, setTier] = useState<Tier>("business");
   const [connected, setConnected] = useState<string[]>([]);
   const [invites, setInvites] = useState<Invite[]>([
@@ -248,6 +280,23 @@ export default function OnboardingPage() {
                     <option>200+</option>
                   </select>
                 </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-white/60 block mb-1.5">Time zone</label>
+                <select
+                  value={company.timezone}
+                  onChange={(e) => setCompany({ ...company, timezone: e.target.value })}
+                  className={selectClass}
+                >
+                  {TIMEZONES.map((tz) => (
+                    <option key={tz} value={tz}>
+                      {tz.replace(/_/g, " ")}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-white/40 mt-1.5">
+                  Used for scheduling, daily reports, and agent activity times.
+                </p>
               </div>
             </div>
           </div>

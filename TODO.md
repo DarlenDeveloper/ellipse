@@ -2,6 +2,20 @@
 
 Progress tracker. See `IMPLEMENTATION.md` for the full plan and `ellipse-desk-architecture.md` for reference.
 
+## 🎯 Next major milestones (in order)
+
+Connections are done (Gmail, WhatsApp, Outlook, Zoho, SMTP, Website all live). The next phase is **agent capabilities + orchestration**:
+
+1. **Microsoft 365 file creation** — the "agents create & save documents" capability.
+   - `create_spreadsheet` / `read` / `append_row` (Excel via Graph workbook API) → OneDrive
+   - `save_document` — Word docs + **quotation PDFs** (generate → upload)
+   - Cross-cutting: any agent can call these (e.g. Zoho agent logs leads to Excel, agent emails a quote PDF)
+   - Scopes already granted (`Files.ReadWrite`); `exceljs` already installed
+2. **Daily reports per agent** — each agent summarizes its day (Gemini) → stored `summaries/{enterprise}/daily/{date}`; Website agent reports traffic, Zoho agent reports CRM activity, etc.
+3. **Ivy (personal/boss agent)** — orchestrator that talks to all connection agents, rolls their daily reports into one briefing, and coordinates cross-channel actions. Surfaced as a global slide-over + dashboard briefing. Built LAST (depends on 1 + 2).
+
+Supporting work to slot in: mode-switcher persistence, then the security pass (Firestore rules, tokens → Secret Manager, remove debug fns) before production.
+
 ## Connections
 
 ### Google Workspace (Gmail) — 🟡 70%
@@ -21,15 +35,16 @@ Remaining (the 30%):
 - [ ] Move refresh token from Firestore → Secret Manager (security)
 - [ ] Handle Calendar + Contacts (Workspace is more than Gmail)
 
-### WhatsApp — ⏸️ ON HOLD (code built; blocked on Meta app publishing / Business Verification)
-Built & deployed:
+### WhatsApp — ✅ WORKING (Meta Cloud API, production)
 - [x] `connections/whatsapp.ts` — config store, connection test, Graph API send, inbound webhook parser
 - [x] `whatsappWebhook` (verified) + `connectWhatsapp` callable; connect modal on Integrations
-- [x] `whatsapp` target routing in gate; email agent is channel-aware (WhatsApp tone)
-- [x] Verified pipeline end-to-end via simulated Meta payload (ingest + agent fired)
-On hold (Meta-side blocker):
-- [ ] Meta won't deliver REAL inbound on an unpublished app → needs Business Verification + publish
-- [ ] Alternative if Meta stalls: 360dialog adapter (sandbox key already obtained)
+- [x] `whatsapp` target routing in gate; dedicated `whatsappAgent` (casual chat tone)
+- [x] Meta Business Verification done + app Live → REAL inbound delivered
+- [x] Verified end-to-end: inbound WhatsApp → inbox → agent drafts reply → Approvals → send
+Remaining (later):
+- [ ] Store WhatsApp access token in Secret Manager (currently Firestore)
+- [ ] Handle non-text message types (media, buttons) beyond current text handling
+- [ ] 24h-window awareness: outside it, send requires an approved template
 
 ### SMTP / IMAP — 🟡 80%
 Done:

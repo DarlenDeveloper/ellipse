@@ -14,7 +14,16 @@ import { db } from "./firebase";
 
 export type Tier = "starter" | "business" | "enterprise";
 export type Role = "admin" | "employee";
-export type Company = { name: string; industry: string; size: string };
+export type Company = { name: string; industry: string; size: string; timezone: string };
+
+// Best-effort default from the browser; falls back to UTC.
+export function detectTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
 export type Invite = { email: string; role: Role; canApprove: boolean };
 
 export type OnboardingState = {
@@ -48,7 +57,7 @@ export async function loadOnboardingState(uid: string): Promise<OnboardingState>
     enterpriseId: null,
     step: 0,
     complete: false,
-    company: { name: "", industry: "SaaS / Technology", size: "1-10" },
+    company: { name: "", industry: "SaaS / Technology", size: "1-10", timezone: detectTimezone() },
     tier: "business",
     connections: [],
   };
@@ -75,6 +84,7 @@ export async function loadOnboardingState(uid: string): Promise<OnboardingState>
       name: ent.name ?? "",
       industry: ent.industry ?? "SaaS / Technology",
       size: ent.size ?? "1-10",
+      timezone: ent.timezone ?? detectTimezone(),
     },
     tier: (ent.subscription_tier as Tier) ?? "business",
     connections,
@@ -92,6 +102,7 @@ export async function saveCompany(
       name: company.name,
       industry: company.industry,
       size: company.size,
+      timezone: company.timezone || detectTimezone(),
       onboarding_step: 1,
       updated_at: serverTimestamp(),
     });
@@ -103,6 +114,7 @@ export async function saveCompany(
     name: company.name,
     industry: company.industry,
     size: company.size,
+    timezone: company.timezone || detectTimezone(),
     subscription_tier: null,
     wallet_id: null,
     owner_id: uid,
