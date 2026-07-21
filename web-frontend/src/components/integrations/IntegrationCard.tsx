@@ -23,16 +23,11 @@ export function IntegrationCard({
     <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-[0_2px_12px_rgba(0,0,0,0.03)] flex flex-col">
       {/* Header */}
       <div className="flex items-start justify-between">
-        <div
-          className={cn(
-            "w-14 h-14 rounded-2xl flex items-center justify-center",
-            tileClass
-          )}
-        >
+        <div className="w-14 h-14 flex items-center justify-center">
           {logo ? (
-            <Image src={logo} alt={name} width={28} height={28} className="w-7 h-7" />
+            <Image src={logo} alt={name} width={48} height={48} className="w-12 h-12 object-contain" />
           ) : (
-            <DirectInbox size={28} variant="Bold" color="#475569" />
+            <DirectInbox size={40} variant="Bold" color="#475569" />
           )}
         </div>
         <button className="text-gray-300 hover:text-gray-500">

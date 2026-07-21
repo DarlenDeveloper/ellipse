@@ -148,6 +148,9 @@ export async function executeAction(
   if (targetSystem === "whatsapp") {
     return executeWhatsappAction(enterpriseId, actionType, params);
   }
+  if (targetSystem === "microsoft365") {
+    return executeMicrosoftAction(enterpriseId, actionType, params);
+  }
   // TODO: internal handlers + other connections (odoo, ...)
   logger.info("executeAction (stub)", { targetSystem, actionType });
   return `${targetSystem}:stub:${Date.now()}`;
@@ -240,6 +243,27 @@ async function executeWhatsappAction(
       return wa.sendWhatsAppMessage(enterpriseId, params.to as string, (params.body as string) ?? "");
     default:
       logger.warn("Unknown WhatsApp action", { actionType });
+      return null;
+  }
+}
+
+/** Routes a Microsoft 365 (Outlook) action. Currently: send_reply. */
+async function executeMicrosoftAction(
+  enterpriseId: string,
+  actionType: string,
+  params: Record<string, unknown>
+): Promise<string | null> {
+  const ms = await import("./connections/microsoft365");
+  switch (actionType) {
+    case "send_reply":
+      return ms.sendOutlookReply(enterpriseId, {
+        conversationId: params.conversationId as string,
+        to: params.to as string,
+        subject: params.subject as string,
+        body: (params.body as string) ?? "",
+      });
+    default:
+      logger.warn("Unknown Microsoft action", { actionType });
       return null;
   }
 }

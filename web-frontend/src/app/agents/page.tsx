@@ -17,14 +17,14 @@ import { useAuth } from "@/lib/auth-context";
 
 // Connection type → the agent that runs it. logo null → falls back to an icon.
 const AGENT_META: Record<string, { name: string; agentId: string; channel: string; logo: string | null }> = {
-  "google-workspace": { name: "Gmail Agent", agentId: "gmail-agent", channel: "Gmail", logo: "/logos/gmail.svg" },
-  zoho: { name: "Zoho Agent", agentId: "zoho-agent", channel: "Zoho CRM", logo: "/logos/zoho.svg" },
-  smtp: { name: "SMTP Agent", agentId: "smtp-agent", channel: "SMTP / IMAP", logo: null },
+  "google-workspace": { name: "Gmail Agent", agentId: "gmail-agent", channel: "Gmail", logo: "/logos/gmail.png" },
+  zoho: { name: "Zoho Agent", agentId: "zoho-agent", channel: "Zoho CRM", logo: "/logos/zoho.png" },
+  smtp: { name: "SMTP Agent", agentId: "smtp-agent", channel: "SMTP / IMAP", logo: "/logos/smtp.png" },
   website: { name: "Website Agent", agentId: "website-agent", channel: "Website Analytics", logo: null },
-  whatsapp: { name: "WhatsApp Agent", agentId: "whatsapp-agent", channel: "WhatsApp", logo: "/logos/whatsapp.svg" },
-  odoo: { name: "Odoo Agent", agentId: "odoo-agent", channel: "Odoo", logo: "/logos/odoo.svg" },
-  salesforce: { name: "Salesforce Agent", agentId: "salesforce-agent", channel: "Salesforce", logo: "/logos/salesforce.svg" },
-  microsoft365: { name: "Microsoft 365 Agent", agentId: "microsoft365-agent", channel: "Microsoft 365", logo: "/logos/microsoft365.svg" },
+  whatsapp: { name: "WhatsApp Agent", agentId: "whatsapp-agent", channel: "WhatsApp", logo: "/logos/whatsapp.png" },
+  odoo: { name: "Odoo Agent", agentId: "odoo-agent", channel: "Odoo", logo: "/logos/odoo.png" },
+  salesforce: { name: "Salesforce Agent", agentId: "salesforce-agent", channel: "Salesforce", logo: "/logos/salesforce.png" },
+  microsoft365: { name: "Microsoft 365 Agent", agentId: "microsoft365-agent", channel: "Outlook · Word · Excel", logo: "/logos/microsoft.png" },
 };
 
 type Connection = { type: string; status: string };

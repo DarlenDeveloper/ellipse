@@ -13,9 +13,10 @@ import { cn } from "@/lib/utils";
 
 // Channel → display name + logo. logo null falls back to a mailbox icon.
 const CHANNEL_META: Record<string, { name: string; logo: string | null }> = {
-  "google-workspace": { name: "Gmail", logo: "/logos/gmail.svg" },
-  smtp: { name: "SMTP / IMAP", logo: null },
-  whatsapp: { name: "WhatsApp", logo: "/logos/whatsapp.svg" },
+  "google-workspace": { name: "Gmail", logo: "/logos/gmail.png" },
+  smtp: { name: "SMTP / IMAP", logo: "/logos/smtp.png" },
+  whatsapp: { name: "WhatsApp", logo: "/logos/whatsapp.png" },
+  microsoft365: { name: "Outlook", logo: "/logos/outlook.png" },
 };
 
 function channelInfo(channel?: string) {
@@ -98,6 +99,7 @@ export default function InboxPage() {
     await Promise.allSettled([
       httpsCallable(functions, "syncGmail")({ enterpriseId }),
       httpsCallable(functions, "syncSmtp")({ enterpriseId }),
+      httpsCallable(functions, "syncOutlook")({ enterpriseId }),
     ]);
     setSyncing(false);
   }, [enterpriseId, syncing]);
@@ -137,15 +139,15 @@ export default function InboxPage() {
                   onClick={() => setSelectedId(conv.id)}
                   className={cn(
                     "w-full text-left rounded-2xl p-4 transition-colors border",
-                    active ? "bg-purple-50 border-purple-200" : "bg-white border-transparent hover:bg-gray-50"
+                    active ? "bg-blue-50 border-blue-200" : "bg-white border-transparent hover:bg-gray-50"
                   )}
                 >
                   <div className="flex items-start gap-3">
-                    <div className="w-9 h-9 rounded-full bg-gray-50 flex items-center justify-center shrink-0 overflow-hidden">
+                    <div className="w-9 h-9 flex items-center justify-center shrink-0">
                       {ch.logo ? (
-                        <Image src={ch.logo} alt={ch.name} width={20} height={20} className="w-5 h-5" />
+                        <Image src={ch.logo} alt={ch.name} width={32} height={32} className="w-8 h-8 object-contain" />
                       ) : (
-                        <DirectInbox size={18} variant="Bold" color="#475569" />
+                        <DirectInbox size={26} variant="Bold" color="#475569" />
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
@@ -154,14 +156,6 @@ export default function InboxPage() {
                         <span className="text-xs text-gray-400 shrink-0">{fmtTime(conv.last_message_at)}</span>
                       </div>
                       <p className="text-sm font-medium text-gray-800 truncate mt-0.5">{conv.subject}</p>
-                      <p className="text-xs text-gray-400 truncate mt-0.5 flex items-center gap-1.5">
-                        {ch.logo ? (
-                          <Image src={ch.logo} alt="" width={12} height={12} className="w-3 h-3" />
-                        ) : (
-                          <DirectInbox size={12} variant="Bold" color="#9ca3af" />
-                        )}
-                        {ch.name}
-                      </p>
                     </div>
                   </div>
                 </button>

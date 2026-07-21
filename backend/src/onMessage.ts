@@ -8,6 +8,8 @@ const googleClientId = defineSecret("GOOGLE_OAUTH_CLIENT_ID");
 const googleClientSecret = defineSecret("GOOGLE_OAUTH_CLIENT_SECRET");
 const zohoClientId = defineSecret("ZOHO_CLIENT_ID");
 const zohoClientSecret = defineSecret("ZOHO_CLIENT_SECRET");
+const msClientId = defineSecret("MS_CLIENT_ID");
+const msClientSecret = defineSecret("MS_CLIENT_SECRET");
 
 /**
  * Auto-runs the connection agents when a new inbound (customer) message lands.
@@ -24,7 +26,7 @@ const zohoClientSecret = defineSecret("ZOHO_CLIENT_SECRET");
 export const onMessageCreated = onDocumentCreated(
   {
     document: "messages/{id}",
-    secrets: [geminiKey, googleClientId, googleClientSecret, zohoClientId, zohoClientSecret],
+    secrets: [geminiKey, googleClientId, googleClientSecret, zohoClientId, zohoClientSecret, msClientId, msClientSecret],
   },
   async (event) => {
     const msg = event.data?.data();
@@ -43,12 +45,24 @@ export const onMessageCreated = onDocumentCreated(
       return;
     }
 
-    // Gmail agent → suggest/send a reply.
+    // Dispatch to the connection's own agent based on the message channel.
     try {
-      const { runGmailAgent } = await import("./agents/gmailAgent");
-      await runGmailAgent(enterpriseId, conversationId);
+      const channel = msg.channel as string | undefined;
+      if (channel === "google-workspace") {
+        const { runGmailAgent } = await import("./agents/gmailAgent");
+        await runGmailAgent(enterpriseId, conversationId);
+      } else if (channel === "smtp") {
+        const { runSmtpAgent } = await import("./agents/smtpAgent");
+        await runSmtpAgent(enterpriseId, conversationId);
+      } else if (channel === "microsoft365") {
+        const { runMicrosoftAgent } = await import("./agents/microsoftAgent");
+        await runMicrosoftAgent(enterpriseId, conversationId);
+      } else if (channel === "whatsapp") {
+        const { runWhatsappAgent } = await import("./agents/whatsappAgent");
+        await runWhatsappAgent(enterpriseId, conversationId);
+      }
     } catch (e) {
-      logger.error("onMessageCreated: gmail agent failed", { conversationId, error: (e as Error).message });
+      logger.error("onMessageCreated: channel agent failed", { conversationId, error: (e as Error).message });
     }
 
     // Zoho agent → CRM enrich/update — only if Zoho is connected.

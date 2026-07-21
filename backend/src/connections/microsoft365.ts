@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { db, FieldValue } from "../admin";
 
 /**
@@ -13,9 +14,18 @@ import { db, FieldValue } from "../admin";
 const REDIRECT_URI = "https://us-central1-ellipse-desk.cloudfunctions.net/microsoftOAuthCallback";
 const AUTHORITY = "https://login.microsoftonline.com/common";
 
-// Minimal scopes to establish + verify the connection. Add Files.ReadWrite /
-// Mail.* later when we build those capabilities.
-const SCOPES = ["openid", "profile", "email", "offline_access", "User.Read"];
+// Scopes: profile + Outlook mail (read/write/send) now, and Files.ReadWrite
+// requested up-front so file creation (later) needs no re-consent.
+const SCOPES = [
+  "openid",
+  "profile",
+  "email",
+  "offline_access",
+  "User.Read",
+  "Mail.ReadWrite",
+  "Mail.Send",
+  "Files.ReadWrite",
+];
 
 function connDoc(enterpriseId: string) {
   return db.doc(`connections/${enterpriseId}_microsoft365`);
@@ -137,16 +147,185 @@ export async function authedTokenFor(enterpriseId: string): Promise<string> {
   return tokens.access_token;
 }
 
-/** Verify the connection by reading the signed-in user's profile. */
-export async function verifyConnection(enterpriseId: string): Promise<{ ok: boolean; email?: string; error?: string }> {
+function sanitizeId(id: string): string {
+  // Full-id hash — Outlook ids share a long common prefix, so slicing collided.
+  return createHash("sha256").update(id).digest("hex").slice(0, 40);
+}
+
+/**
+ * Pull recent Outlook inbox messages into the unified inbox
+ * (conversations + messages + analytics_events, channel "microsoft365").
+ * Mirrors the Gmail ingest so the inbox stays uniform.
+ */
+export async function ingestRecentOutlook(enterpriseId: string, max = 15): Promise<number> {
+  const token = await authedTokenFor(enterpriseId);
+  const snap = await connDoc(enterpriseId).get();
+  const account = (snap.data()?.account_email as string | undefined)?.toLowerCase() ?? "";
+
+  const url =
+    `https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages` +
+    `?$top=${max}&$select=id,conversationId,subject,from,toRecipients,bodyPreview,body,receivedDateTime&$orderby=receivedDateTime desc`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  const data = (await res.json()) as any;
+  if (data.error) throw new Error(data.error.message);
+
+  const messages: any[] = data.value ?? [];
+  let count = 0;
+  const stamped = new Set<string>();
+
+  for (const m of messages) {
+    const docId = `ms_${sanitizeId(m.id)}`;
+    const msgRef = db.doc(`messages/${docId}`);
+    if ((await msgRef.get()).exists) continue;
+
+    const fromEmail = (m.from?.emailAddress?.address ?? "").toLowerCase();
+    const fromName = m.from?.emailAddress?.name ?? fromEmail;
+    const toEmail = (m.toRecipients?.[0]?.emailAddress?.address ?? "").toLowerCase();
+    const convGraphId = m.conversationId ?? m.id;
+    const convId = `${enterpriseId}_ms_${sanitizeId(convGraphId)}`;
+    const senderType = account && fromEmail === account ? "us" : "customer";
+    const timestamp = m.receivedDateTime ? new Date(m.receivedDateTime) : new Date();
+
+    const convPatch: Record<string, unknown> = {
+      enterprise_id: enterpriseId,
+      channel: "microsoft365",
+      thread_id: convGraphId,
+      subject: m.subject || "(no subject)",
+      customer_ref: senderType === "customer" ? fromEmail : toEmail,
+      status: "open",
+      last_message_at: timestamp,
+      updated_at: FieldValue.serverTimestamp(),
+    };
+    // Stamp the newest inbound message id (we iterate newest-first) for replies.
+    if (senderType === "customer" && !stamped.has(convId)) {
+      convPatch.outlook_last_message_id = m.id;
+      stamped.add(convId);
+    }
+    await db.doc(`conversations/${convId}`).set(convPatch, { merge: true });
+
+    await msgRef.set({
+      conversation_id: convId,
+      enterprise_id: enterpriseId,
+      channel: "microsoft365",
+      thread_id: convGraphId,
+      message_id: m.id,
+      sender_type: senderType,
+      from: fromName,
+      from_email: fromEmail,
+      subject: m.subject ?? "",
+      snippet: m.bodyPreview ?? "",
+      body: (m.body?.content ?? m.bodyPreview ?? "").slice(0, 20000),
+      timestamp,
+      created_at: FieldValue.serverTimestamp(),
+    });
+
+    await db.collection("analytics_events").add({
+      source: "message",
+      workspace_id: enterpriseId,
+      payload: { channel: "microsoft365", from: fromEmail, subject: m.subject },
+      timestamp: FieldValue.serverTimestamp(),
+    });
+
+    count++;
+  }
+  return count;
+}
+
+/** Sync every connected Outlook account (used by scheduled auto-sync). */
+export async function syncAllConnectedOutlook(): Promise<number> {
+  const snap = await db.collection("connections").where("type", "==", "microsoft365").get();
+  let total = 0;
+  for (const doc of snap.docs) {
+    const d = doc.data();
+    if (d.status !== "active" || !d.enterprise_id) continue;
+    try {
+      total += await ingestRecentOutlook(d.enterprise_id);
+    } catch (e) {
+      console.error("scheduled Outlook sync failed", d.enterprise_id, (e as Error).message);
+    }
+  }
+  return total;
+}
+
+/**
+ * Reply within an Outlook conversation. Uses the reply endpoint on the latest
+ * inbound message (proper threading); falls back to a fresh sendMail.
+ */
+export async function sendOutlookReply(
+  enterpriseId: string,
+  opts: { conversationId?: string; to?: string; subject?: string; body: string }
+): Promise<string> {
+  const token = await authedTokenFor(enterpriseId);
+
+  let messageId: string | undefined;
+  if (opts.conversationId) {
+    const conv = await db.doc(`conversations/${opts.conversationId}`).get();
+    messageId = conv.data()?.outlook_last_message_id as string | undefined;
+  }
+
+  if (messageId) {
+    const res = await fetch(
+      `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(messageId)}/reply`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ comment: opts.body }),
+      }
+    );
+    if (res.status === 202) return "replied";
+    const d = (await res.json()) as any;
+    if (d?.error) throw new Error(d.error.message);
+    return "replied";
+  }
+
+  // Fallback: brand-new message.
+  const res = await fetch("https://graph.microsoft.com/v1.0/me/sendMail", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message: {
+        subject: opts.subject?.toLowerCase().startsWith("re:") ? opts.subject : `Re: ${opts.subject ?? ""}`,
+        body: { contentType: "Text", content: opts.body },
+        toRecipients: opts.to ? [{ emailAddress: { address: opts.to } }] : [],
+      },
+    }),
+  });
+  if (res.status === 202) return "sent";
+  const d = (await res.json()) as any;
+  if (d?.error) throw new Error(d.error.message);
+  return "sent";
+}
+
+/** Verify the connection + peek at the inbox to diagnose ingestion. */
+export async function verifyConnection(
+  enterpriseId: string
+): Promise<{ ok: boolean; email?: string; error?: string; inbox?: any }> {
   try {
     const token = await authedTokenFor(enterpriseId);
-    const res = await fetch("https://graph.microsoft.com/v1.0/me", {
+    const me = await fetch("https://graph.microsoft.com/v1.0/me", {
       headers: { Authorization: `Bearer ${token}` },
     });
-    const d = (await res.json()) as any;
+    const d = (await me.json()) as any;
     if (d.error) return { ok: false, error: d.error.message };
-    return { ok: true, email: d.mail || d.userPrincipalName };
+
+    // Peek at the inbox so we can see what Graph actually returns.
+    const inboxRes = await fetch(
+      "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top=10&$select=id,subject,from,receivedDateTime&$orderby=receivedDateTime desc",
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const inboxData = (await inboxRes.json()) as any;
+    const inbox = inboxData.error
+      ? { error: inboxData.error.message }
+      : {
+          count: (inboxData.value ?? []).length,
+          subjects: (inboxData.value ?? []).map((m: any) => ({
+            subject: m.subject,
+            from: m.from?.emailAddress?.address,
+            at: m.receivedDateTime,
+          })),
+        };
+
+    return { ok: true, email: d.mail || d.userPrincipalName, inbox };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }

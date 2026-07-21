@@ -76,12 +76,19 @@ Done:
 - [x] OAuth connect (`startMicrosoftConnect` → consent → `microsoftOAuthCallback`), Graph `common` authority
 - [x] Token store + refresh (rotated refresh token handled); verified via `pingMicrosoft` (read /me)
 - [x] Integrations card wired (redirect flow)
+Done (Outlook channel):
+- [x] Scopes added: Mail.ReadWrite, Mail.Send, Files.ReadWrite (Files up-front, no re-consent later) — REQUIRES reconnect
+- [x] Outlook ingest (`ingestRecentOutlook`) → unified inbox (channel `microsoft365`) + auto-sync (`scheduledOutlookSync`)
+- [x] Threaded reply (`sendOutlookReply` via Graph reply endpoint) routed through gate as `microsoft365` `send_reply`
+- [x] Dedicated `outlookAgent` (per-connection); inbox/agents/approvals show Outlook logo
 Remaining:
-- [ ] File generation capability (parked): `save_document`, `create_spreadsheet` (exceljs) → OneDrive/SharePoint
-- [ ] Outlook as a channel (mail ingest + send) — optional, reuse email agent
-- [ ] Decide save location (OneDrive vs SharePoint) + add Files/Mail scopes (may need admin consent)
+- [ ] File generation (after WhatsApp): `save_document` (Word), `create_spreadsheet`/`read`/`append` (Excel) → OneDrive
 - [ ] Move refresh token → Secret Manager (security)
 - [ ] Remove temporary `pingMicrosoft` before ship
+
+### Agents refactor
+- [x] Split shared channel-aware agent into per-connection agents (gmail/smtp/outlook/whatsapp) sharing `replyBase`
+- [x] `onMessageCreated` dispatches to the connection's own agent by channel
 ### Salesforce — ⚪ 0%
 
 ## Core platform

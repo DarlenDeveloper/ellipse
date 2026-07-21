@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Sms, ArrowRight2 } from "iconsax-react";
+import Image from "next/image";
+import { Cpu, ArrowRight2 } from "iconsax-react";
 import { collection, query, where, onSnapshot, doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
@@ -13,6 +14,15 @@ type PendingAction = {
   action_type?: string;
   status?: string;
   created_at?: { toDate: () => Date };
+};
+
+// agent_id → connection logo.
+const agentLogos: Record<string, string> = {
+  "gmail-agent": "/logos/gmail.png",
+  "microsoft365-agent": "/logos/outlook.png",
+  "smtp-agent": "/logos/smtp.png",
+  "whatsapp-agent": "/logos/whatsapp.png",
+  "zoho-agent": "/logos/zoho.png",
 };
 
 function agentLabel(agentId?: string): string {
@@ -90,8 +100,18 @@ export function PendingApprovals() {
           {items.slice(0, 4).map((item) => (
             <div key={item.id} className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
-                <div className="w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center shrink-0">
-                  <Sms size={20} variant="Bold" color="#1a1a1a" />
+                <div className="w-10 h-10 flex items-center justify-center shrink-0">
+                  {item.agent_id && agentLogos[item.agent_id] ? (
+                    <Image
+                      src={agentLogos[item.agent_id]}
+                      alt={agentLabel(item.agent_id)}
+                      width={32}
+                      height={32}
+                      className="w-8 h-8 object-contain"
+                    />
+                  ) : (
+                    <Cpu size={20} variant="Bold" color="#1a1a1a" />
+                  )}
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-semibold truncate">{agentLabel(item.agent_id)}</p>

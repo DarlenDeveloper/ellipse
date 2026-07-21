@@ -19,15 +19,17 @@ type Conversation = {
 };
 
 const channelLogo: Record<string, string> = {
-  "google-workspace": "/logos/gmail.svg",
-  zoho: "/logos/zoho.svg",
-  whatsapp: "/logos/whatsapp.svg",
+  "google-workspace": "/logos/gmail.png",
+  zoho: "/logos/zoho.png",
+  whatsapp: "/logos/whatsapp.png",
+  microsoft365: "/logos/outlook.png",
 };
 
 const channelName: Record<string, string> = {
   "google-workspace": "Gmail",
   zoho: "Zoho",
   whatsapp: "WhatsApp",
+  microsoft365: "Outlook",
 };
 
 const statusStyles: Record<string, string> = {
@@ -107,11 +109,11 @@ export function RecentThreads() {
               >
                 <span className="text-sm font-semibold truncate">{t.subject || "(no subject)"}</span>
                 <div className="flex items-center gap-2.5 text-sm text-gray-700">
-                  <div className="w-7 h-7 rounded-lg bg-gray-50 flex items-center justify-center">
+                  <div className="w-6 h-6 flex items-center justify-center shrink-0">
                     {logo ? (
-                      <Image src={logo} alt="" width={16} height={16} className="w-4 h-4" />
+                      <Image src={logo} alt="" width={22} height={22} className="w-[22px] h-[22px] object-contain" />
                     ) : (
-                      <Sms size={16} variant="Bold" color="#1a1a1a" />
+                      <Sms size={18} variant="Bold" color="#1a1a1a" />
                     )}
                   </div>
                   {t.channel ? channelName[t.channel] ?? t.channel : "—"}

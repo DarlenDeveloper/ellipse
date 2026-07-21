@@ -164,6 +164,25 @@ export const scheduledImapSync = onSchedule({ schedule: "every 5 minutes" }, asy
   logger.info("scheduledImapSync complete", { ingested });
 });
 
+/** Manually pull recent Outlook mail into the unified inbox. */
+export const syncOutlook = onCall({ secrets: [msClientId, msClientSecret] }, async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const enterpriseId = request.data?.enterpriseId as string | undefined;
+  if (!enterpriseId) throw new HttpsError("invalid-argument", "Missing enterpriseId.");
+  const { ingestRecentOutlook } = await import("./connections/microsoft365");
+  return { ingested: await ingestRecentOutlook(enterpriseId) };
+});
+
+/** Auto-sync all connected Outlook accounts every 5 minutes. */
+export const scheduledOutlookSync = onSchedule(
+  { schedule: "every 5 minutes", secrets: [msClientId, msClientSecret] },
+  async () => {
+    const { syncAllConnectedOutlook } = await import("./connections/microsoft365");
+    const ingested = await syncAllConnectedOutlook();
+    logger.info("scheduledOutlookSync complete", { ingested });
+  }
+);
+
 /**
  * Connect an SMTP/IMAP mailbox — verifies the credentials, then stores them.
  */
@@ -428,7 +447,7 @@ export const zohoSearchDebug = onRequest(
  * is in Zoho) and route it through the gate as a send_reply action.
  */
 export const runGmailAgent = onCall(
-  { secrets: [geminiKey, googleClientId, googleClientSecret, zohoClientId, zohoClientSecret] },
+  { secrets: [geminiKey, googleClientId, googleClientSecret, zohoClientId, zohoClientSecret, msClientId, msClientSecret] },
   async (request) => {
     if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
     const enterpriseId = request.data?.enterpriseId as string | undefined;
@@ -446,7 +465,7 @@ export const runGmailAgent = onCall(
  * (defaults to latest conversation). Remove before ship.
  */
 export const runGmailAgentDebug = onRequest(
-  { secrets: [geminiKey, googleClientId, googleClientSecret, zohoClientId, zohoClientSecret] },
+  { secrets: [geminiKey, googleClientId, googleClientSecret, zohoClientId, zohoClientSecret, msClientId, msClientSecret] },
   async (req, res) => {
     const enterpriseId = req.query.enterpriseId as string | undefined;
     let conversationId = req.query.conversationId as string | undefined;
@@ -470,9 +489,20 @@ export const runGmailAgentDebug = onRequest(
         }
         conversationId = latest.id;
       }
-      const { runGmailAgent: run } = await import("./agents/gmailAgent");
-      const result = await run(enterpriseId, conversationId);
-      res.json({ ok: true, conversationId, ...result });
+      // Dispatch to the connection's own agent based on the conversation channel.
+      const convSnap = await db.doc(`conversations/${conversationId}`).get();
+      const channel = convSnap.data()?.channel as string | undefined;
+      let result;
+      if (channel === "smtp") {
+        result = await (await import("./agents/smtpAgent")).runSmtpAgent(enterpriseId, conversationId);
+      } else if (channel === "microsoft365") {
+        result = await (await import("./agents/microsoftAgent")).runMicrosoftAgent(enterpriseId, conversationId);
+      } else if (channel === "whatsapp") {
+        result = await (await import("./agents/whatsappAgent")).runWhatsappAgent(enterpriseId, conversationId);
+      } else {
+        result = await (await import("./agents/gmailAgent")).runGmailAgent(enterpriseId, conversationId);
+      }
+      res.json({ ok: true, conversationId, channel, ...result });
     } catch (e) {
       res.status(500).json({ ok: false, error: (e as Error).message });
     }

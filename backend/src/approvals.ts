@@ -8,6 +8,8 @@ const zohoClientId = defineSecret("ZOHO_CLIENT_ID");
 const zohoClientSecret = defineSecret("ZOHO_CLIENT_SECRET");
 const googleClientId = defineSecret("GOOGLE_OAUTH_CLIENT_ID");
 const googleClientSecret = defineSecret("GOOGLE_OAUTH_CLIENT_SECRET");
+const msClientId = defineSecret("MS_CLIENT_ID");
+const msClientSecret = defineSecret("MS_CLIENT_SECRET");
 
 /**
  * Executes a pending action once a human approves it (Supervised mode).
@@ -20,7 +22,7 @@ const googleClientSecret = defineSecret("GOOGLE_OAUTH_CLIENT_SECRET");
 export const onPendingActionApproved = onDocumentUpdated(
   {
     document: "pending_actions/{id}",
-    secrets: [zohoClientId, zohoClientSecret, googleClientId, googleClientSecret],
+    secrets: [zohoClientId, zohoClientSecret, googleClientId, googleClientSecret, msClientId, msClientSecret],
   },
   async (event) => {
     const before = event.data?.before.data();
