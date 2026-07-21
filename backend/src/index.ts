@@ -14,6 +14,7 @@ const googleClientId = defineSecret("GOOGLE_OAUTH_CLIENT_ID");
 const googleClientSecret = defineSecret("GOOGLE_OAUTH_CLIENT_SECRET");
 const zohoClientId = defineSecret("ZOHO_CLIENT_ID");
 const zohoClientSecret = defineSecret("ZOHO_CLIENT_SECRET");
+const whatsappVerifyToken = defineSecret("WHATSAPP_VERIFY_TOKEN");
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 
@@ -194,6 +195,126 @@ export const connectSmtp = onCall(async (request) => {
     // non-fatal
   }
   return { ok: true };
+});
+
+/**
+ * WhatsApp webhook.
+ *  - GET: Meta's verification handshake (echoes hub.challenge if the token matches).
+ *  - POST: inbound messages → normalized into the unified inbox.
+ */
+export const whatsappWebhook = onRequest({ secrets: [whatsappVerifyToken] }, async (req, res) => {
+  if (req.method === "GET") {
+    const mode = req.query["hub.mode"];
+    const token = req.query["hub.verify_token"];
+    const challenge = req.query["hub.challenge"];
+    if (mode === "subscribe" && token === process.env.WHATSAPP_VERIFY_TOKEN) {
+      res.status(200).send(challenge);
+    } else {
+      res.sendStatus(403);
+    }
+    return;
+  }
+
+  // POST — acknowledge fast, then process.
+  logger.info("WhatsApp webhook POST received", {
+    body: JSON.stringify(req.body ?? {}).slice(0, 3000),
+  });
+  try {
+    const { handleInboundWebhook } = await import("./connections/whatsapp");
+    const n = await handleInboundWebhook(req.body);
+    logger.info("WhatsApp webhook processed", { ingested: n });
+  } catch (e) {
+    logger.error("WhatsApp webhook processing failed", e);
+  }
+  res.sendStatus(200);
+});
+
+/** Connect WhatsApp — verifies the token/phone, then stores the config. */
+export const connectWhatsapp = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const d = request.data ?? {};
+  const enterpriseId = d.enterpriseId as string | undefined;
+  if (!enterpriseId || !d.phone_number_id || !d.access_token) {
+    throw new HttpsError("invalid-argument", "Missing enterpriseId, phone_number_id, or access_token.");
+  }
+  const cfg = {
+    phone_number_id: String(d.phone_number_id),
+    access_token: String(d.access_token),
+    waba_id: d.waba_id ? String(d.waba_id) : undefined,
+    display_phone_number: d.display_phone_number ? String(d.display_phone_number) : undefined,
+  };
+
+  const { testWhatsappConnection, saveWhatsappConnection } = await import("./connections/whatsapp");
+  try {
+    await testWhatsappConnection(cfg);
+  } catch (e) {
+    throw new HttpsError("failed-precondition", `Connection failed: ${(e as Error).message}`);
+  }
+  await saveWhatsappConnection(enterpriseId, cfg);
+  return { ok: true };
+});
+
+/** Generate (or fetch) the website tracking site key for an enterprise. */
+export const registerWebsite = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const enterpriseId = request.data?.enterpriseId as string | undefined;
+  const domain = request.data?.domain as string | undefined;
+  if (!enterpriseId) throw new HttpsError("invalid-argument", "Missing enterpriseId.");
+  const { registerWebsite: reg } = await import("./connections/web");
+  return reg(enterpriseId, domain);
+});
+
+/** Verify the tracking tag is live on the given URL, then activate the connection. */
+export const verifyWebsiteInstall = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const enterpriseId = request.data?.enterpriseId as string | undefined;
+  const url = request.data?.url as string | undefined;
+  if (!enterpriseId || !url) throw new HttpsError("invalid-argument", "Missing enterpriseId or url.");
+  const { verifyWebsiteInstall: verify } = await import("./connections/web");
+  return verify(enterpriseId, url);
+});
+
+/** Serves the tracker JS that customer websites embed. */
+export const webTag = onRequest(async (_req, res) => {
+  const { trackerScript } = await import("./connections/web");
+  res.set("Content-Type", "application/javascript; charset=utf-8");
+  res.set("Cache-Control", "public, max-age=3600");
+  res.send(trackerScript());
+});
+
+/** Public endpoint the tracker beacons to. CORS-open; keyed by site key. */
+export const collectWebEvent = onRequest(async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.set("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") {
+    res.status(204).send("");
+    return;
+  }
+  try {
+    // Body may arrive as text (sendBeacon) or parsed JSON.
+    let body = req.body;
+    if (typeof body === "string") {
+      try { body = JSON.parse(body); } catch { body = {}; }
+    }
+    const fwd = ((req.headers["x-forwarded-for"] as string) || "").split(",")[0].trim();
+    const ip = fwd || req.ip || "";
+    const { recordWebEvent, geoLookup } = await import("./connections/web");
+    const geo = await geoLookup(ip);
+    await recordWebEvent(body?.site, {
+      type: body?.type,
+      url: body?.url,
+      ref: body?.ref,
+      vid: body?.vid,
+      sid: body?.sid,
+      nv: body?.nv,
+      country: geo.country,
+      city: geo.city,
+    });
+  } catch (e) {
+    logger.error("collectWebEvent failed", e);
+  }
+  res.status(200).send("ok");
 });
 
 /** Manually pull recent mail from a connected SMTP/IMAP mailbox. */

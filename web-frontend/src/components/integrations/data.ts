@@ -64,4 +64,12 @@ export const integrations: Integration[] = [
     tileClass: "bg-slate-100",
     connected: false,
   },
+  {
+    id: "website",
+    name: "Website",
+    description: "Add a tracking tag for visitor analytics — plus a web chat agent for your site.",
+    logo: null,
+    tileClass: "bg-indigo-50",
+    connected: false,
+  },
 ];

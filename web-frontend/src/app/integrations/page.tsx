@@ -7,6 +7,8 @@ import { doc, getDoc } from "firebase/firestore";
 import { integrations as seed } from "@/components/integrations/data";
 import { IntegrationCard } from "@/components/integrations/IntegrationCard";
 import { SmtpConnectModal } from "@/components/integrations/SmtpConnectModal";
+import { WhatsAppConnectModal } from "@/components/integrations/WhatsAppConnectModal";
+import { WebsiteConnectModal } from "@/components/integrations/WebsiteConnectModal";
 import { functions, db } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 
@@ -19,6 +21,10 @@ export default function IntegrationsPage() {
   const [zohoConnected, setZohoConnected] = useState(false);
   const [smtpConnected, setSmtpConnected] = useState(false);
   const [showSmtpModal, setShowSmtpModal] = useState(false);
+  const [whatsappConnected, setWhatsappConnected] = useState(false);
+  const [showWhatsappModal, setShowWhatsappModal] = useState(false);
+  const [websiteConnected, setWebsiteConnected] = useState(false);
+  const [showWebsiteModal, setShowWebsiteModal] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [connectingZoho, setConnectingZoho] = useState(false);
   const [banner, setBanner] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -47,6 +53,18 @@ export default function IntegrationsPage() {
     if (smtpSnap.exists() && smtpSnap.data()?.status === "active") {
       setSmtpConnected(true);
       setItems((prev) => prev.map((it) => (it.id === "smtp" ? { ...it, connected: true } : it)));
+    }
+
+    const waSnap = await getDoc(doc(db, "connections", `${entId}_whatsapp`));
+    if (waSnap.exists() && waSnap.data()?.status === "active") {
+      setWhatsappConnected(true);
+      setItems((prev) => prev.map((it) => (it.id === "whatsapp" ? { ...it, connected: true } : it)));
+    }
+
+    const webSnap = await getDoc(doc(db, "connections", `${entId}_website`));
+    if (webSnap.exists() && webSnap.data()?.status === "active") {
+      setWebsiteConnected(true);
+      setItems((prev) => prev.map((it) => (it.id === "website" ? { ...it, connected: true } : it)));
     }
   }, [user]);
 
@@ -162,6 +180,15 @@ export default function IntegrationsPage() {
           const isGoogle = integration.id === "google-workspace";
           const isZoho = integration.id === "zoho";
           const isSmtp = integration.id === "smtp";
+          const isWhatsapp = integration.id === "whatsapp";
+          const isWebsite = integration.id === "website";
+          const openModal = (setter: (v: boolean) => void) => () => {
+            if (!enterpriseId) {
+              setBanner({ type: "error", text: "No workspace found. Finish onboarding first." });
+              return;
+            }
+            setter(true);
+          };
           return (
             <IntegrationCard
               key={integration.id}
@@ -173,19 +200,21 @@ export default function IntegrationsPage() {
                   : isZoho
                   ? connectZoho
                   : isSmtp
-                  ? () => {
-                      if (!enterpriseId) {
-                        setBanner({ type: "error", text: "No workspace found. Finish onboarding first." });
-                        return;
-                      }
-                      setShowSmtpModal(true);
-                    }
+                  ? openModal(setShowSmtpModal)
+                  : isWhatsapp
+                  ? openModal(setShowWhatsappModal)
+                  : isWebsite
+                  ? openModal(setShowWebsiteModal)
                   : undefined
               }
               subtitle={
                 isZoho && zohoConnected
                   ? "Connected"
                   : isSmtp && smtpConnected
+                  ? "Connected"
+                  : isWhatsapp && whatsappConnected
+                  ? "Connected"
+                  : isWebsite && websiteConnected
                   ? "Connected"
                   : undefined
               }
@@ -201,6 +230,28 @@ export default function IntegrationsPage() {
           onClose={() => setShowSmtpModal(false)}
           onConnected={() => {
             setBanner({ type: "success", text: "SMTP / IMAP connected successfully." });
+            refresh();
+          }}
+        />
+      )}
+
+      {showWhatsappModal && enterpriseId && (
+        <WhatsAppConnectModal
+          enterpriseId={enterpriseId}
+          onClose={() => setShowWhatsappModal(false)}
+          onConnected={() => {
+            setBanner({ type: "success", text: "WhatsApp connected successfully." });
+            refresh();
+          }}
+        />
+      )}
+
+      {showWebsiteModal && enterpriseId && (
+        <WebsiteConnectModal
+          enterpriseId={enterpriseId}
+          onClose={() => setShowWebsiteModal(false)}
+          onConnected={() => {
+            setBanner({ type: "success", text: "Website connected — tag verified." });
             refresh();
           }}
         />

@@ -21,7 +21,15 @@ Remaining (the 30%):
 - [ ] Move refresh token from Firestore → Secret Manager (security)
 - [ ] Handle Calendar + Contacts (Workspace is more than Gmail)
 
-### WhatsApp — ⚪ 0%  (blocked: Meta account too new to create a Business app)
+### WhatsApp — ⏸️ ON HOLD (code built; blocked on Meta app publishing / Business Verification)
+Built & deployed:
+- [x] `connections/whatsapp.ts` — config store, connection test, Graph API send, inbound webhook parser
+- [x] `whatsappWebhook` (verified) + `connectWhatsapp` callable; connect modal on Integrations
+- [x] `whatsapp` target routing in gate; email agent is channel-aware (WhatsApp tone)
+- [x] Verified pipeline end-to-end via simulated Meta payload (ingest + agent fired)
+On hold (Meta-side blocker):
+- [ ] Meta won't deliver REAL inbound on an unpublished app → needs Business Verification + publish
+- [ ] Alternative if Meta stalls: 360dialog adapter (sandbox key already obtained)
 
 ### SMTP / IMAP — 🟡 80%
 Done:
@@ -64,7 +72,6 @@ Remaining:
 ### Odoo — ⚪ 0%  (reuse Zoho framework — near-identical OAuth2 + REST)
 ### Microsoft 365 — ⚪ 0%
 ### Salesforce — ⚪ 0%
-### SMTP / IMAP — ⚪ 0%
 
 ## Core platform
 - [x] Auth (email + Google) + route protection
@@ -80,6 +87,19 @@ Remaining:
 - [x] Verified full Supervised loop: email → sync → agent → pending → approve → Lead written to Zoho ✅
 - [ ] Mode switcher persisted to Firestore
 - [ ] Daily → weekly summaries
+
+## Website analytics
+- [x] Tracker script served via `webTag`; snippet generated in the Website integration Connect modal
+- [x] `collectWebEvent` public endpoint (CORS, sendBeacon) → writes `web` events to analytics_events
+- [x] `registerWebsite` callable generates/returns a site key per enterprise
+- [x] Install checker: `verifyWebsiteInstall` fetches the URL, confirms tag present + site live, then activates connection
+- [x] Website integration card (Connect → generate snippet + verify); marks Connected
+- [x] `/website` page is analytics-only, now with: real-time online, bounce rate, new vs returning, top countries + cities, top pages
+- [x] Tag enriched (session id + new-visitor flag); collector does server-side IP geo (country/city, cached)
+- [ ] Rate-limit collect endpoint per site/IP (abuse protection) — later
+- [ ] Surface `web` channel on the main Analytics page volume chart
+- [ ] Search Console integration (SEO: queries, impressions, clicks, position) — reuse Google connection + webmasters scope
+- [ ] Website chat agent (lives on the connected website) — later
 
 ## Knowledge base
 - [x] Settings → Knowledge Base tab (CRUD, live Firestore `knowledge_base`)

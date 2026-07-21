@@ -145,7 +145,10 @@ export async function executeAction(
   if (targetSystem === "smtp") {
     return executeSmtpAction(enterpriseId, actionType, params);
   }
-  // TODO: internal handlers + other connections (odoo, whatsapp, ...)
+  if (targetSystem === "whatsapp") {
+    return executeWhatsappAction(enterpriseId, actionType, params);
+  }
+  // TODO: internal handlers + other connections (odoo, ...)
   logger.info("executeAction (stub)", { targetSystem, actionType });
   return `${targetSystem}:stub:${Date.now()}`;
 }
@@ -221,6 +224,22 @@ async function executeSmtpAction(
       );
     default:
       logger.warn("Unknown SMTP action", { actionType });
+      return null;
+  }
+}
+
+/** Routes a WhatsApp action to the connection's executors. Currently: send_reply. */
+async function executeWhatsappAction(
+  enterpriseId: string,
+  actionType: string,
+  params: Record<string, unknown>
+): Promise<string | null> {
+  const wa = await import("./connections/whatsapp");
+  switch (actionType) {
+    case "send_reply":
+      return wa.sendWhatsAppMessage(enterpriseId, params.to as string, (params.body as string) ?? "");
+    default:
+      logger.warn("Unknown WhatsApp action", { actionType });
       return null;
   }
 }

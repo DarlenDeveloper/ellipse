@@ -42,14 +42,18 @@ function renderContext(e: ZohoEnrichment): string {
   }. Deals: ${deals}.`;
 }
 
-function buildSystem(orgName: string): string {
-  return `You are the Gmail agent for ${orgName}, acting inside Ellipse, a business automation platform.
-You read a customer email thread and draft a professional reply on ${orgName}'s behalf.
-- Match a professional, helpful email tone.
+function buildSystem(orgName: string, channel: string): string {
+  const isWhatsapp = channel === "whatsapp";
+  const toneLine = isWhatsapp
+    ? `- This is WhatsApp: keep the reply short, friendly, and conversational. No email formalities, no subject line. A brief sign-off like "— ${orgName}" is fine but keep it light.`
+    : `- Match a professional, helpful email tone.
+- ALWAYS sign off as "The ${orgName} Team". NEVER use placeholders like [Your Name] or [Company Name].`;
+  return `You are the ${isWhatsapp ? "WhatsApp" : "Gmail"} agent for ${orgName}, acting inside Ellipse, a business automation platform.
+You read a customer ${isWhatsapp ? "WhatsApp chat" : "email thread"} and draft a reply on ${orgName}'s behalf.
+${toneLine}
 - Use any CRM context and company knowledge base provided to personalize the reply.
 - Only call send_reply when the latest message actually needs a response (a question, request, or follow-up). If no reply is needed, respond with plain text explaining why and do not call the tool.
-- Keep replies concise and specific. Do not invent facts, prices, or commitments you weren't given.
-- ALWAYS sign off as "The ${orgName} Team". NEVER use placeholders like [Your Name] or [Company Name].`;
+- Keep replies concise and specific. Do not invent facts, prices, or commitments you weren't given.`;
 }
 
 export type GmailAgentResult = {
@@ -126,27 +130,31 @@ export async function runGmailAgent(
     .filter(Boolean)
     .join("\n");
 
-  const gemini = await callGemini({ system: buildSystem(orgName), prompt, tools: TOOLS });
+  const gemini = await callGemini({ system: buildSystem(orgName, conv.channel ?? "gmail"), prompt, tools: TOOLS });
 
   let action: GmailAgentResult["action"] = null;
   const call = gemini.functionCalls.find((c) => c.name === "send_reply");
   if (call) {
     const body = (call.args.body as string) ?? "";
-    // Route to the right channel: SMTP conversations send via SMTP, else Gmail.
-    const isSmtp = conv.channel === "smtp";
+    // Route to the right channel.
+    const channel = conv.channel ?? "gmail";
+    const targetSystem =
+      channel === "smtp" ? "smtp" : channel === "whatsapp" ? "whatsapp" : "gmail";
+    const agentId =
+      channel === "smtp" ? "smtp-agent" : channel === "whatsapp" ? "whatsapp-agent" : "gmail-agent";
     const result = await executeAgentAction({
       enterpriseId,
-      agentId: isSmtp ? "smtp-agent" : "gmail-agent",
+      agentId,
       domain: "inbox",
       actionType: "send_reply",
-      // Threading/recipient/subject come from the conversation, body from the agent.
+      // For WhatsApp `to` is the phone number; for email it's the address.
       params: {
         threadId: conv.thread_id ?? conversationId.split("_").slice(1).join("_"),
         to: email,
         subject: conv.subject ?? "",
         body,
       },
-      targetSystem: isSmtp ? "smtp" : "gmail",
+      targetSystem,
       reasoning: gemini.text || "Suggested reply to the customer.",
     });
     action = { actionType: "send_reply", result };
