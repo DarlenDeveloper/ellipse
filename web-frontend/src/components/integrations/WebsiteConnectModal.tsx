@@ -87,13 +87,15 @@ export function WebsiteConnectModal({
               1. Paste this in your site&apos;s &lt;head&gt;
             </label>
             <div className="relative">
-              <pre className="bg-gray-900 text-gray-100 text-xs rounded-xl p-4 overflow-x-auto">
-                <code>{snippet || "Generating…"}</code>
-              </pre>
+              <div className="bg-gray-900 rounded-xl p-4 pr-24 overflow-hidden">
+                <code className="block text-gray-100 text-xs whitespace-nowrap overflow-hidden text-ellipsis">
+                  {snippet || "Generating…"}
+                </code>
+              </div>
               {snippet && (
                 <button
                   onClick={copy}
-                  className="absolute top-2.5 right-2.5 flex items-center gap-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white rounded-lg px-2.5 py-1.5"
+                  className="absolute top-1/2 -translate-y-1/2 right-2.5 flex items-center gap-1.5 text-xs font-medium bg-white/10 hover:bg-white/20 text-white rounded-lg px-2.5 py-1.5"
                 >
                   {copied ? <TickCircle size={13} variant="Bold" /> : <Copy size={13} variant="Linear" />}
                   {copied ? "Copied" : "Copy"}
