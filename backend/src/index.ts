@@ -15,6 +15,8 @@ const googleClientSecret = defineSecret("GOOGLE_OAUTH_CLIENT_SECRET");
 const zohoClientId = defineSecret("ZOHO_CLIENT_ID");
 const zohoClientSecret = defineSecret("ZOHO_CLIENT_SECRET");
 const whatsappVerifyToken = defineSecret("WHATSAPP_VERIFY_TOKEN");
+const msClientId = defineSecret("MS_CLIENT_ID");
+const msClientSecret = defineSecret("MS_CLIENT_SECRET");
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 
@@ -316,6 +318,53 @@ export const collectWebEvent = onRequest(async (req, res) => {
   }
   res.status(200).send("ok");
 });
+
+/** Step 1 of Microsoft 365 connect — returns the consent URL. */
+export const startMicrosoftConnect = onCall(
+  { secrets: [msClientId, msClientSecret] },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+    const enterpriseId = request.data?.enterpriseId as string | undefined;
+    if (!enterpriseId) throw new HttpsError("invalid-argument", "Missing enterpriseId.");
+    const { buildConsentUrl } = await import("./connections/microsoft365");
+    return { url: buildConsentUrl(enterpriseId) };
+  }
+);
+
+/** Step 2 — Microsoft redirects here with ?code & ?state(enterpriseId). */
+export const microsoftOAuthCallback = onRequest(
+  { secrets: [msClientId, msClientSecret] },
+  async (req, res) => {
+    const code = req.query.code as string | undefined;
+    const enterpriseId = req.query.state as string | undefined;
+    if (!code || !enterpriseId) {
+      res.redirect(`${FRONTEND_URL}/integrations?ms=error`);
+      return;
+    }
+    try {
+      const { handleCallback } = await import("./connections/microsoft365");
+      await handleCallback(code, enterpriseId);
+      res.redirect(`${FRONTEND_URL}/integrations?ms=connected`);
+    } catch (e) {
+      logger.error("Microsoft OAuth callback failed", e);
+      res.redirect(`${FRONTEND_URL}/integrations?ms=error`);
+    }
+  }
+);
+
+/** TEMPORARY — verify the MS365 connection. ?enterpriseId=... Remove before ship. */
+export const pingMicrosoft = onRequest(
+  { secrets: [msClientId, msClientSecret] },
+  async (req, res) => {
+    const enterpriseId = req.query.enterpriseId as string | undefined;
+    if (!enterpriseId) {
+      res.status(400).json({ ok: false, error: "Missing enterpriseId" });
+      return;
+    }
+    const { verifyConnection } = await import("./connections/microsoft365");
+    res.json(await verifyConnection(enterpriseId));
+  }
+);
 
 /** Manually pull recent mail from a connected SMTP/IMAP mailbox. */
 export const syncSmtp = onCall(async (request) => {

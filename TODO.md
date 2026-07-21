@@ -70,7 +70,18 @@ Remaining:
 - [ ] Remove temporary debug fns before ship (`pingZoho`, `zohoSearchDebug`, `zohoBackfillDebug`, `runZohoAgentDebug`)
 
 ### Odoo — ⚪ 0%  (reuse Zoho framework — near-identical OAuth2 + REST)
-### Microsoft 365 — ⚪ 0%
+### Microsoft 365 — 🟡 30% (connection working)
+Done:
+- [x] Azure app registration (multi-tenant + personal accounts) + secrets `MS_CLIENT_ID` / `MS_CLIENT_SECRET`
+- [x] OAuth connect (`startMicrosoftConnect` → consent → `microsoftOAuthCallback`), Graph `common` authority
+- [x] Token store + refresh (rotated refresh token handled); verified via `pingMicrosoft` (read /me)
+- [x] Integrations card wired (redirect flow)
+Remaining:
+- [ ] File generation capability (parked): `save_document`, `create_spreadsheet` (exceljs) → OneDrive/SharePoint
+- [ ] Outlook as a channel (mail ingest + send) — optional, reuse email agent
+- [ ] Decide save location (OneDrive vs SharePoint) + add Files/Mail scopes (may need admin consent)
+- [ ] Move refresh token → Secret Manager (security)
+- [ ] Remove temporary `pingMicrosoft` before ship
 ### Salesforce — ⚪ 0%
 
 ## Core platform

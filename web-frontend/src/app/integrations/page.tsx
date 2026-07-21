@@ -25,6 +25,8 @@ export default function IntegrationsPage() {
   const [showWhatsappModal, setShowWhatsappModal] = useState(false);
   const [websiteConnected, setWebsiteConnected] = useState(false);
   const [showWebsiteModal, setShowWebsiteModal] = useState(false);
+  const [msConnected, setMsConnected] = useState(false);
+  const [connectingMs, setConnectingMs] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [connectingZoho, setConnectingZoho] = useState(false);
   const [banner, setBanner] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -66,6 +68,12 @@ export default function IntegrationsPage() {
       setWebsiteConnected(true);
       setItems((prev) => prev.map((it) => (it.id === "website" ? { ...it, connected: true } : it)));
     }
+
+    const msSnap = await getDoc(doc(db, "connections", `${entId}_microsoft365`));
+    if (msSnap.exists() && msSnap.data()?.status === "active") {
+      setMsConnected(true);
+      setItems((prev) => prev.map((it) => (it.id === "microsoft365" ? { ...it, connected: true } : it)));
+    }
   }, [user]);
 
   useEffect(() => {
@@ -94,6 +102,16 @@ export default function IntegrationsPage() {
       setBanner({ type: "error", text: "Zoho connection failed. Please try again." });
       window.history.replaceState({}, "", "/integrations");
     }
+
+    const ms = params.get("ms");
+    if (ms === "connected") {
+      setBanner({ type: "success", text: "Microsoft 365 connected successfully." });
+      refresh();
+      window.history.replaceState({}, "", "/integrations");
+    } else if (ms === "error") {
+      setBanner({ type: "error", text: "Microsoft 365 connection failed. Please try again." });
+      window.history.replaceState({}, "", "/integrations");
+    }
   }, [refresh]);
 
   const connectGoogle = async () => {
@@ -109,6 +127,22 @@ export default function IntegrationsPage() {
     } catch {
       setBanner({ type: "error", text: "Could not start Google connect." });
       setConnecting(false);
+    }
+  };
+
+  const connectMicrosoft = async () => {
+    if (!enterpriseId) {
+      setBanner({ type: "error", text: "No workspace found. Finish onboarding first." });
+      return;
+    }
+    setConnectingMs(true);
+    try {
+      const start = httpsCallable(functions, "startMicrosoftConnect");
+      const res = (await start({ enterpriseId })) as { data: { url: string } };
+      window.location.href = res.data.url;
+    } catch {
+      setBanner({ type: "error", text: "Could not start Microsoft connect." });
+      setConnectingMs(false);
     }
   };
 
@@ -182,6 +216,7 @@ export default function IntegrationsPage() {
           const isSmtp = integration.id === "smtp";
           const isWhatsapp = integration.id === "whatsapp";
           const isWebsite = integration.id === "website";
+          const isMicrosoft = integration.id === "microsoft365";
           const openModal = (setter: (v: boolean) => void) => () => {
             if (!enterpriseId) {
               setBanner({ type: "error", text: "No workspace found. Finish onboarding first." });
@@ -205,6 +240,8 @@ export default function IntegrationsPage() {
                   ? openModal(setShowWhatsappModal)
                   : isWebsite
                   ? openModal(setShowWebsiteModal)
+                  : isMicrosoft
+                  ? connectMicrosoft
                   : undefined
               }
               subtitle={
@@ -216,9 +253,11 @@ export default function IntegrationsPage() {
                   ? "Connected"
                   : isWebsite && websiteConnected
                   ? "Connected"
+                  : isMicrosoft && msConnected
+                  ? "Connected"
                   : undefined
               }
-              busy={(isGoogle && connecting) || (isZoho && connectingZoho)}
+              busy={(isGoogle && connecting) || (isZoho && connectingZoho) || (isMicrosoft && connectingMs)}
             />
           );
         })}
