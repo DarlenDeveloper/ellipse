@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Send2, CloseCircle, Maximize4 } from "iconsax-react";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "@/lib/firebase";
+import { useEnterpriseId } from "@/lib/use-enterprise";
 import { IvyOrb } from "./IvyOrb";
 import { cn } from "@/lib/utils";
 
@@ -26,28 +29,30 @@ export function IvyBubble() {
   const [thinking, setThinking] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
+  const { enterpriseId } = useEnterpriseId();
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, open]);
 
-  const send = (text?: string) => {
+  const send = async (text?: string) => {
     const q = (text ?? input).trim();
-    if (!q) return;
+    if (!q || thinking) return;
+    const history = messages.map((m) => ({ role: m.role, text: m.text }));
     setMessages((m) => [...m, { role: "user", text: q }]);
     setInput("");
     setThinking(true);
-    // Placeholder until the Ivy backend is wired up.
-    setTimeout(() => {
+    try {
+      const fn = httpsCallable(functions, "askAgent");
+      const res = await fn({ enterpriseId, agentId: "ivy", message: q, history });
+      const reply = (res.data as { reply?: string })?.reply ?? "…";
+      setMessages((m) => [...m, { role: "ivy", text: reply }]);
+    } catch (e) {
+      setMessages((m) => [...m, { role: "ivy", text: "Something went wrong. Please try again." }]);
+      console.error(e);
+    } finally {
       setThinking(false);
-      setMessages((m) => [
-        ...m,
-        {
-          role: "ivy",
-          text: "I'm still being trained to handle that. Once I'm live, I'll pull this straight from your agents and reports.",
-        },
-      ]);
-    }, 900);
+    }
   };
 
   return (

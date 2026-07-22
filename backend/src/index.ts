@@ -647,6 +647,38 @@ export const generateReportsNow = onCall(
   return gen(enterpriseId, period as any);
 });
 
+/**
+ * Conversational chat with an agent (or Ivy). Ivy can read across all agents and
+ * delegate actions; a specific agentId scopes to that connection. Any action the
+ * chat takes routes through the gate, so approval rules are respected.
+ * data: { enterpriseId, agentId, message, history? }
+ */
+export const askAgent = onCall(
+  {
+    secrets: [
+      geminiKey,
+      googleClientId,
+      googleClientSecret,
+      zohoClientId,
+      zohoClientSecret,
+      msClientId,
+      msClientSecret,
+    ],
+  },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+    const enterpriseId = request.data?.enterpriseId as string | undefined;
+    const agentId = (request.data?.agentId as string | undefined) ?? "ivy";
+    const message = (request.data?.message as string | undefined)?.trim();
+    const history = (request.data?.history as { role: "user" | "ivy"; text: string }[] | undefined) ?? [];
+    if (!enterpriseId || !message) {
+      throw new HttpsError("invalid-argument", "Missing enterpriseId or message.");
+    }
+    const { chatWithAgent } = await import("./agentChat");
+    return chatWithAgent(enterpriseId, agentId, message, history);
+  }
+);
+
 export { executeAgentAction };
 export { onPendingActionApproved } from "./approvals";
 export { onMessageCreated } from "./onMessage";

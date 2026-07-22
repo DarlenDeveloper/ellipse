@@ -12,15 +12,34 @@ import {
   SearchNormal1,
   TickCircle,
   Clock,
+  CloseCircle,
 } from "iconsax-react";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import {
+  collection,
+  query,
+  where,
+  onSnapshot,
+  addDoc,
+  updateDoc,
+  doc,
+  serverTimestamp,
+} from "firebase/firestore";
+import { httpsCallable } from "firebase/functions";
+import { db, functions } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 import { useEnterpriseId } from "@/lib/use-enterprise";
 import { IvyOrb } from "@/components/ivy/IvyOrb";
 import { cn } from "@/lib/utils";
 
 type Msg = { role: "ivy" | "user"; text: string };
+
+type ChatSummary = {
+  id: string;
+  title: string;
+  agent_id: string;
+  messages: Msg[];
+  updated_at?: { toMillis: () => number };
+};
 
 type AgentOption = { id: string; name: string; logo: string | null };
 
@@ -46,6 +65,25 @@ function greeting(): string {
   return "Good evening";
 }
 
+// Group chats into Today / Yesterday / Earlier buckets for the history panel.
+function groupChats(chats: ChatSummary[]): { label: string; items: ChatSummary[] }[] {
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfYesterday = startOfToday - 86400000;
+  const buckets: Record<string, ChatSummary[]> = { Today: [], Yesterday: [], Earlier: [] };
+  for (const c of chats) {
+    const t = c.updated_at?.toMillis?.() ?? 0;
+    if (t >= startOfToday) buckets.Today.push(c);
+    else if (t >= startOfYesterday) buckets.Yesterday.push(c);
+    else buckets.Earlier.push(c);
+  }
+  return [
+    { label: "Today", items: buckets.Today },
+    { label: "Yesterday", items: buckets.Yesterday },
+    { label: "Earlier", items: buckets.Earlier },
+  ].filter((g) => g.items.length > 0);
+}
+
 export default function IvyPage() {
   const { user } = useAuth();
   const { enterpriseId } = useEnterpriseId();
@@ -57,6 +95,8 @@ export default function IvyPage() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Msg[]>([]);
   const [thinking, setThinking] = useState(false);
+  const [chatId, setChatId] = useState<string | null>(null);
+  const [chats, setChats] = useState<ChatSummary[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -83,36 +123,84 @@ export default function IvyPage() {
   );
   const active = agents.find((a) => a.id === agentId) ?? agents[0];
 
+  // Live list of this user's past chats (sorted client-side to avoid a composite index).
+  useEffect(() => {
+    if (!user) return;
+    return onSnapshot(query(collection(db, "ivy_chats"), where("user_id", "==", user.uid)), (snap) => {
+      const rows = snap.docs
+        .map((d) => ({ id: d.id, ...(d.data() as Omit<ChatSummary, "id">) }))
+        .filter((c) => !enterpriseId || (c as unknown as { enterprise_id?: string }).enterprise_id === enterpriseId)
+        .sort((a, b) => (b.updated_at?.toMillis?.() ?? 0) - (a.updated_at?.toMillis?.() ?? 0));
+      setChats(rows);
+    });
+  }, [user, enterpriseId]);
+
   const firstName = (user?.displayName || user?.email?.split("@")[0] || "there").split(" ")[0];
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
-  const send = (text?: string) => {
+  const send = async (text?: string) => {
     const q = (text ?? input).trim();
-    if (!q) return;
-    setMessages((m) => [...m, { role: "user", text: q }]);
+    if (!q || thinking) return;
+    const history = messages.map((m) => ({ role: m.role, text: m.text }));
+    const withUser: Msg[] = [...messages, { role: "user", text: q }];
+    setMessages(withUser);
     setInput("");
     setThinking(true);
-    setTimeout(() => {
-      setThinking(false);
-      const who = agentId === "ivy" ? "I" : `The ${active.name}`;
+
+    // Create the chat doc on the first message so it shows up in history immediately.
+    let cid = chatId;
+    try {
+      if (!cid && user && enterpriseId) {
+        const ref = await addDoc(collection(db, "ivy_chats"), {
+          enterprise_id: enterpriseId,
+          user_id: user.uid,
+          agent_id: agentId,
+          title: q.slice(0, 60),
+          messages: withUser,
+          created_at: serverTimestamp(),
+          updated_at: serverTimestamp(),
+        });
+        cid = ref.id;
+        setChatId(cid);
+      }
+
+      const fn = httpsCallable(functions, "askAgent");
+      const res = await fn({ enterpriseId, agentId, message: q, history });
+      const reply = (res.data as { reply?: string })?.reply ?? "…";
+      const full: Msg[] = [...withUser, { role: "ivy", text: reply }];
+      setMessages(full);
+      if (cid) {
+        await updateDoc(doc(db, "ivy_chats", cid), {
+          messages: full,
+          agent_id: agentId,
+          updated_at: serverTimestamp(),
+        });
+      }
+    } catch (e) {
       setMessages((m) => [
         ...m,
-        {
-          role: "ivy",
-          text: `${who} will be able to answer that once Ivy is fully online — pulling live from ${
-            agentId === "ivy" ? "every connected agent, your reports and CRM" : active.name
-          }.`,
-        },
+        { role: "ivy", text: "Something went wrong reaching the agent. Please try again." },
       ]);
-    }, 900);
+      console.error(e);
+    } finally {
+      setThinking(false);
+    }
   };
 
   const newChat = () => {
     setMessages([]);
     setInput("");
+    setChatId(null);
+  };
+
+  const loadChat = (c: ChatSummary) => {
+    setMessages(c.messages ?? []);
+    setChatId(c.id);
+    setAgentId(c.agent_id ?? "ivy");
+    setHistoryOpen(false);
   };
 
   const empty = messages.length === 0;
@@ -122,28 +210,6 @@ export default function IvyPage() {
       {/* Top bar */}
       <div className="flex items-center justify-between px-6 py-4">
         <div className="flex items-center gap-2">
-        {/* History */}
-        <div className="relative">
-          <button
-            onClick={() => setHistoryOpen((o) => !o)}
-            title="Chat history"
-            className="w-10 h-10 rounded-full bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] flex items-center justify-center hover:shadow-md transition-shadow"
-          >
-            <Clock size={19} variant="Linear" color="#6b7280" />
-          </button>
-          {historyOpen && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={() => setHistoryOpen(false)} />
-              <div className="absolute left-0 mt-2 w-64 bg-white rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.15)] border border-gray-100 p-1.5 z-20">
-                <p className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-gray-300">
-                  Recent chats
-                </p>
-                <p className="px-3 py-6 text-sm text-gray-400 text-center">No previous chats yet.</p>
-              </div>
-            </>
-          )}
-        </div>
-
         {/* Agent selector */}
         <div className="relative">
           <button
@@ -197,13 +263,22 @@ export default function IvyPage() {
         </div>
         </div>
 
-        <button
-          onClick={newChat}
-          className="flex items-center gap-2 bg-black text-white text-sm font-semibold rounded-full px-4 py-2 hover:bg-gray-800"
-        >
-          <Add size={18} variant="Linear" color="#ffffff" />
-          New Chat
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={newChat}
+            className="flex items-center gap-2 bg-black text-white text-sm font-semibold rounded-full px-4 py-2 hover:bg-gray-800"
+          >
+            <Add size={18} variant="Linear" color="#ffffff" />
+            New Chat
+          </button>
+          <button
+            onClick={() => setHistoryOpen(true)}
+            title="Chat history"
+            className="w-10 h-10 rounded-full bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] flex items-center justify-center hover:shadow-md transition-shadow"
+          >
+            <Clock size={19} variant="Linear" color="#6b7280" />
+          </button>
+        </div>
       </div>
 
       {/* Body */}
@@ -279,6 +354,77 @@ export default function IvyPage() {
             </div>
           </div>
         </>
+      )}
+
+      {/* History side panel (slide-out from the right) */}
+      {historyOpen && (
+        <div className="fixed inset-0 z-[60]">
+          <div
+            className="absolute inset-0 bg-black/30"
+            style={{ animation: "ivy-fade-in 0.2s ease-out" }}
+            onClick={() => setHistoryOpen(false)}
+          />
+          <aside
+            className="absolute top-0 right-0 h-full w-[380px] max-w-[92vw] bg-white shadow-[0_0_60px_rgba(0,0,0,0.2)] rounded-l-3xl flex flex-col"
+            style={{ animation: "ivy-slide-in 0.28s cubic-bezier(0.22,1,0.36,1)" }}
+          >
+            <div className="flex items-center justify-between px-6 pt-6 pb-4">
+              <h3 className="text-xl font-bold">History</h3>
+              <button
+                onClick={() => setHistoryOpen(false)}
+                className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-400 hover:text-gray-700"
+              >
+                <CloseCircle size={22} variant="Linear" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-3 pb-4">
+              {chats.length === 0 ? (
+                <div className="flex flex-col items-center text-center px-6 py-20">
+                  <div className="w-14 h-14 rounded-2xl bg-gray-50 flex items-center justify-center mb-4">
+                    <Clock size={26} variant="Bold" color="#d1d5db" />
+                  </div>
+                  <p className="text-sm font-semibold text-gray-600">No chats yet</p>
+                  <p className="text-sm text-gray-400 mt-1">Your conversations with Ivy and the agents will appear here.</p>
+                </div>
+              ) : (
+                groupChats(chats).map((group) => (
+                  <div key={group.label} className="mb-2">
+                    <p className="px-3 pt-3 pb-1.5 text-xs font-semibold text-gray-400">{group.label}</p>
+                    {group.items.map((c) => {
+                      const isAgent = c.agent_id !== "ivy" && CONNECTION_AGENTS[c.agent_id];
+                      const lastMsg = c.messages?.[c.messages.length - 1]?.text ?? "";
+                      return (
+                        <button
+                          key={c.id}
+                          onClick={() => loadChat(c)}
+                          className={cn(
+                            "w-full flex items-start gap-3 px-3 py-3 rounded-2xl text-left transition-colors",
+                            c.id === chatId ? "bg-gray-100" : "hover:bg-gray-50"
+                          )}
+                        >
+                          <span className="w-9 h-9 rounded-xl overflow-hidden flex items-center justify-center bg-gray-50 shrink-0 mt-0.5">
+                            {isAgent ? (
+                              <Image src={CONNECTION_AGENTS[c.agent_id].logo} alt="" width={22} height={22} className="object-contain" />
+                            ) : (
+                              <IvyOrb size={30} />
+                            )}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-sm font-semibold truncate">{c.title || "Untitled chat"}</span>
+                            <span className="block text-xs text-gray-400 truncate">
+                              {lastMsg || (c.agent_id === "ivy" ? "Ivy" : CONNECTION_AGENTS[c.agent_id]?.name ?? c.agent_id)}
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))
+              )}
+            </div>
+          </aside>
+        </div>
       )}
     </div>
   );

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { SearchNormal1, More, Cpu, Setting2, DirectInbox } from "iconsax-react";
+import { SearchNormal1, More, Cpu, DirectInbox } from "iconsax-react";
 import {
   collection,
   query,
@@ -212,17 +212,6 @@ export default function AgentsPage() {
               </div>
             </div>
           ))}
-
-          {/* Ivy — personal agent / orchestrator, built last */}
-          <div className="bg-white rounded-2xl border border-dashed border-gray-200 p-6 flex items-center gap-3 opacity-70">
-            <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center">
-              <Setting2 size={24} variant="Bold" color="#9ca3af" />
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-gray-500">Ivy</h3>
-              <p className="text-xs text-gray-400">Your personal agent, coordinates all others · coming soon</p>
-            </div>
-          </div>
         </div>
       )}
     </main>
