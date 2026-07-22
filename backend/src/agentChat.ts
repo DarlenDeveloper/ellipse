@@ -240,7 +240,40 @@ async function toolCreateDocument(enterpriseId: string, agentId: string, args: R
       headers: (args.headers as string[]) ?? [],
       rows,
     });
-    return JSON.stringify({ action: "create_document", status: "saved", name: doc.name, url: doc.url });
+
+    // Every document is saved to Data. If Microsoft 365 is connected, also mirror
+    // it to the customer's OneDrive — routed through the gate (approval-respecting).
+    let onedrive: string | undefined;
+    try {
+      const { isMicrosoftConnected } = await import("./connections/microsoft365");
+      if (await isMicrosoftConnected(enterpriseId)) {
+        const res = await executeAgentAction({
+          enterpriseId,
+          agentId: "microsoft365-agent",
+          domain: "files",
+          actionType: "save_file",
+          params: {
+            fileName: doc.name,
+            folder: "Ellipse Documents",
+            storagePath: doc.storage_path,
+            contentType: doc.content_type,
+          },
+          targetSystem: "microsoft365",
+          reasoning: `Save "${doc.name}" to Microsoft 365.`,
+        });
+        onedrive = res.status === "pending" ? "queued for approval" : res.status === "executed" ? "uploaded" : undefined;
+      }
+    } catch (e) {
+      logger.warn("document onedrive mirror failed", { error: (e as Error).message });
+    }
+
+    return JSON.stringify({
+      action: "create_document",
+      status: "saved to Data",
+      name: doc.name,
+      url: doc.url,
+      microsoft365: onedrive ?? "not connected — saved to Data only",
+    });
   } catch (e) {
     return `Could not create document: ${(e as Error).message}`;
   }

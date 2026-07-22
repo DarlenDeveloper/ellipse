@@ -165,7 +165,7 @@ export default function InboxPage() {
         </div>
 
         {/* Reading pane */}
-        <ReadingPane conversation={selectedConv} messages={messages} />
+        <ReadingPane conversation={selectedConv} messages={messages} enterpriseId={enterpriseId} />
       </div>
     </div>
   );

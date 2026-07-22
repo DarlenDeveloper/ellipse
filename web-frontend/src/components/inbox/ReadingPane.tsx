@@ -1,12 +1,16 @@
 "use client";
 
-import { Archive, Trash, Star1, Flag, Clock, More, DocumentText } from "iconsax-react";
+import { useState } from "react";
+import { Archive, Trash, Star1, Flag, Clock, More, DocumentText, Send2 } from "iconsax-react";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
 
 type Conversation = {
   id: string;
   subject: string;
   customer_ref: string;
+  channel?: string;
 } | null;
 
 type Message = {
@@ -94,10 +98,35 @@ function MessageBody({ body, snippet }: { body?: string; snippet?: string }) {
 export function ReadingPane({
   conversation,
   messages,
+  enterpriseId,
 }: {
   conversation: Conversation;
   messages: Message[];
+  enterpriseId: string | null;
 }) {
+  const [reply, setReply] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const send = async () => {
+    if (!reply.trim() || !conversation || !enterpriseId || sending) return;
+    setSending(true);
+    setError(null);
+    try {
+      await httpsCallable(functions, "sendReply")({
+        enterpriseId,
+        conversationId: conversation.id,
+        body: reply.trim(),
+      });
+      setReply("");
+    } catch (e) {
+      setError("Couldn't send. Please try again.");
+      console.error(e);
+    } finally {
+      setSending(false);
+    }
+  };
+
   if (!conversation) {
     return (
       <div className="flex-1 flex items-center justify-center bg-white text-gray-400 text-sm">
@@ -159,6 +188,35 @@ export function ReadingPane({
           </button>
         </div>
       </div>
+
+      {/* Reply composer — WhatsApp only */}
+      {conversation.channel === "whatsapp" && (
+      <div className="border-t border-gray-100 px-6 py-4 bg-white">
+        {error && <p className="text-xs text-red-500 mb-2">{error}</p>}
+        <div className="flex items-end gap-3 bg-gray-50 rounded-2xl px-4 py-2.5">
+          <textarea
+            value={reply}
+            onChange={(e) => setReply(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            rows={1}
+            placeholder={`Reply to ${conversation.customer_ref}…`}
+            className="flex-1 resize-none bg-transparent outline-none text-sm py-1.5 max-h-32"
+          />
+          <button
+            onClick={send}
+            disabled={!reply.trim() || sending}
+            className="w-9 h-9 rounded-full bg-black text-white flex items-center justify-center hover:bg-gray-800 disabled:opacity-40 shrink-0"
+          >
+            <Send2 size={16} variant="Bold" color="#ffffff" />
+          </button>
+        </div>
+      </div>
+      )}
     </div>
   );
 }

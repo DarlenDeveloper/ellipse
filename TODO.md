@@ -6,17 +6,13 @@ Core principle: **one agent per connection**, plus **Ivy** (boss agent) built LA
 
 ## 🎯 Next major milestones (in order)
 
-All connections are live (Gmail, WhatsApp, Outlook, Zoho, SMTP, Website). Agent quality (triage), reports + documents, the Data page, and **Ivy + direct agent chat** are done. Remaining big rocks:
+All connections live. Triage, reports + documents, Data page, Ivy + direct agent chat, **custom agents**, and **document creation** are done. Remaining big rocks:
 
-1. **Custom agents** — let users add their own agent to the Agents page (define name, purpose/system prompt, which tools/channels it can use). Surfaces in the agent selector + chat.
-2. **Microsoft 365 file *creation* agent abilities** (beyond report upload, which is done):
-   - `create_spreadsheet` / `read` / `append_row` (Excel via Graph workbook API)
-   - `save_document` — Word docs + **quotation PDFs** generated on request in a conversation (e.g. "send them a quote")
-   - Cross-agent: any agent can request a document be created + saved/emailed (all gated).
-3. **Security pass (before production)** — Firestore rules (incl. owner-only mode, per-user `ivy_chats`), tokens Firestore → Secret Manager, remove all debug fns.
-4. **Agent memory** (WAY later) — persistent per-agent memory across chats/conversations so agents recall context and preferences over time.
+1. **Security pass (before production)** — Firestore rules (owner-only mode, per-user `ivy_chats`, per-enterprise `custom_agents`/`documents`), tokens Firestore → Secret Manager, remove all debug fns.
+2. **Richer MS365 file abilities** — quotation **PDFs**, live Excel workbook edit (`append_row` to an existing sheet via Graph workbook API) beyond the current create+upload.
+3. **Agent memory** (WAY later) — persistent per-agent memory across chats/conversations so agents recall context and preferences over time.
 
-Supporting: real-time push (Gmail/Zoho webhooks), Search Console, website chat agent, Ivy dashboard briefing card.
+Supporting: real-time push (Gmail/Zoho webhooks), Search Console, website chat agent, Ivy dashboard briefing card, inbox "Summarise" button.
 
 ---
 
@@ -65,7 +61,23 @@ Supporting: real-time push (Gmail/Zoho webhooks), Search Console, website chat a
 - [x] **Per-agent direct chat** scoped to that connection's tools (Zoho=CRM, messaging=channel convos+reply, Website=analytics); tools only offered if the connection is active
 - [x] Every chat ACTION routes through `executeAgentAction` → respects mode/approval (Supervised queues in /approvals, Autopilot executes, Off/expired does nothing)
 - [x] Removed the old "Ivy coming soon" card from the Agents page
+- [x] Chat history is a dropdown (agent-picker pattern) grouped Today/Yesterday/Earlier
 - [ ] Ivy dashboard briefing card (daily summary across agents)
+
+## ✅ Custom agents (DONE)
+- [x] Agents page "New Agent" → modal (name, role/specialty, ability checklist); cards + delete
+- [x] `custom_agents` collection (client CRUD); appear in the Ivy agent selector
+- [x] `askAgent` loads custom config → specialty system prompt + chosen tools (gated by connections)
+- [x] Specialist prompts + STRICT no-hallucination (never invent facts/numbers/names/prices; defer out-of-scope to Ivy)
+
+## ✅ Document creation (DONE)
+- [x] `create_document` tool (Word/Excel) available to all agents → saved to `documents` + Storage
+- [x] Documents surface on the Data page (folder = agent, "Document" label, downloadable)
+- [x] If Microsoft 365 connected → also mirrored to OneDrive ("Ellipse Documents"), routed through the approval gate; if not, Data-only (by design)
+- [ ] Quotation PDFs; live Excel append via Graph workbook API
+
+## ✅ Inbox reply (DONE)
+- [x] Reply composer in the reading pane — **WhatsApp only** → `sendReply` sends immediately (human send, bypasses gate) and reflects the message instantly. Email channels reply via the agent/draft flow.
 
 ---
 

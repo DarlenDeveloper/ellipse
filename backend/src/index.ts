@@ -679,6 +679,78 @@ export const askAgent = onCall(
   }
 );
 
+/**
+ * Human-sent reply from the inbox reading pane. Sends immediately via the
+ * conversation's channel (this is a person clicking send, not an agent, so it
+ * bypasses the approval gate) and writes the outbound message so it shows at once.
+ */
+export const sendReply = onCall(
+  {
+    secrets: [
+      googleClientId,
+      googleClientSecret,
+      zohoClientId,
+      zohoClientSecret,
+      msClientId,
+      msClientSecret,
+    ],
+  },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+    const enterpriseId = request.data?.enterpriseId as string | undefined;
+    const conversationId = request.data?.conversationId as string | undefined;
+    const body = (request.data?.body as string | undefined)?.trim();
+    if (!enterpriseId || !conversationId || !body) {
+      throw new HttpsError("invalid-argument", "Missing enterpriseId, conversationId, or body.");
+    }
+
+    const { db, FieldValue } = await import("./admin");
+    const convSnap = await db.doc(`conversations/${conversationId}`).get();
+    if (!convSnap.exists) throw new HttpsError("not-found", "Conversation not found.");
+    const conv = convSnap.data() as Record<string, unknown>;
+    const channel = conv.channel as string;
+
+    const targetByChannel: Record<string, string> = {
+      "google-workspace": "gmail",
+      smtp: "smtp",
+      microsoft365: "microsoft365",
+      whatsapp: "whatsapp",
+    };
+    const target = targetByChannel[channel];
+    if (!target) throw new HttpsError("failed-precondition", `Cannot reply on channel ${channel}.`);
+
+    const { executeAction } = await import("./executeAgentAction");
+    const externalRef = await executeAction(enterpriseId, target, "send_reply", {
+      conversationId,
+      threadId: conv.thread_id,
+      to: conv.customer_ref,
+      subject: conv.subject ?? "",
+      body,
+    });
+
+    // Reflect the sent message immediately in the unified inbox.
+    await db.collection("messages").add({
+      conversation_id: conversationId,
+      enterprise_id: enterpriseId,
+      channel,
+      sender_type: "us",
+      from: "You",
+      from_email: "",
+      subject: conv.subject ?? "",
+      body,
+      snippet: body.slice(0, 200),
+      timestamp: new Date(),
+      created_at: FieldValue.serverTimestamp(),
+    });
+    await db.doc(`conversations/${conversationId}`).set(
+      { last_message_at: new Date(), updated_at: FieldValue.serverTimestamp() },
+      { merge: true }
+    );
+
+    return { ok: true, externalRef };
+  }
+);
+
 export { executeAgentAction };
 export { onPendingActionApproved } from "./approvals";
 export { onMessageCreated } from "./onMessage";

@@ -22,7 +22,15 @@ import { db, bucket, FieldValue } from "./admin";
 const DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
-export type CreatedDocument = { id: string; name: string; url: string; type: "docx" | "xlsx"; size: number };
+export type CreatedDocument = {
+  id: string;
+  name: string;
+  url: string;
+  type: "docx" | "xlsx";
+  size: number;
+  storage_path: string;
+  content_type: string;
+};
 
 async function buildDocx(orgName: string, title: string, body: string): Promise<Buffer> {
   const paras = body
@@ -126,7 +134,7 @@ export async function createDocument(opts: {
     contentType = DOCX_TYPE;
   }
 
-  const { url } = await uploadDocument(opts.enterpriseId, docId, filename, buffer, contentType);
+  const { url, path } = await uploadDocument(opts.enterpriseId, docId, filename, buffer, contentType);
 
   await docRef.set({
     enterprise_id: opts.enterpriseId,
@@ -139,5 +147,5 @@ export async function createDocument(opts: {
     created_at: FieldValue.serverTimestamp(),
   });
 
-  return { id: docId, name: filename, url, type: opts.kind, size: buffer.length };
+  return { id: docId, name: filename, url, type: opts.kind, size: buffer.length, storage_path: path, content_type: contentType };
 }
