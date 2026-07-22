@@ -80,19 +80,26 @@ function formatDate(ts?: { toDate: () => Date }): string {
   });
 }
 
-function summarizeParams(params?: Record<string, unknown>): string {
-  if (!params) return "—";
-  const parts: string[] = [];
+function paramLines(params?: Record<string, unknown>): { label: string; value: string }[] {
+  if (!params) return [];
+  const lines: { label: string; value: string }[] = [];
+  const push = (k: string, v: unknown) => {
+    const value = v === null || v === undefined ? "" : String(v);
+    if (value.trim()) lines.push({ label: k.replace(/_/g, " "), value });
+  };
   for (const [k, v] of Object.entries(params)) {
-    if (v && typeof v === "object") {
-      for (const [fk, fv] of Object.entries(v as Record<string, unknown>)) {
-        parts.push(`${fk}: ${fv}`);
-      }
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      for (const [fk, fv] of Object.entries(v as Record<string, unknown>)) push(fk, fv);
     } else {
-      parts.push(`${k}: ${v}`);
+      push(k, v);
     }
   }
-  return parts.join(" · ") || "—";
+  return lines;
+}
+
+function summarizeParams(params?: Record<string, unknown>): string {
+  const lines = paramLines(params);
+  return lines.length ? lines.map((l) => `${l.label}: ${l.value}`).join(" · ") : "—";
 }
 
 export default function ApprovalsPage() {
@@ -208,7 +215,7 @@ export default function ApprovalsPage() {
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.04)] overflow-hidden">
+      <div className="bg-white rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.04)]">
         <div className={`grid ${cols} gap-4 px-6 py-4 text-xs text-gray-400 font-medium border-b border-gray-100`}>
           <span>Agent</span>
           <span>Action</span>
@@ -234,7 +241,10 @@ export default function ApprovalsPage() {
               const logo = item.target_system ? systemLogo[item.target_system] : undefined;
               const isPending = item.status === "pending";
               return (
-                <div key={item.id} className={`grid ${cols} gap-4 px-6 py-4 items-center`}>
+                <div
+                  key={item.id}
+                  className={`group grid ${cols} gap-4 px-6 py-4 items-center hover:bg-gray-50/70 transition-colors`}
+                >
                   {/* Agent */}
                   <div className="flex items-center gap-2.5 min-w-0">
                     <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center shrink-0">
@@ -257,10 +267,25 @@ export default function ApprovalsPage() {
                     )}
                   </div>
 
-                  {/* Details */}
-                  <span className="text-sm text-gray-600 truncate" title={summarizeParams(item.params)}>
-                    {summarizeParams(item.params)}
-                  </span>
+                  {/* Details — truncated, full breakdown on hover */}
+                  <div className="relative min-w-0">
+                    <span className="block text-sm text-gray-600 truncate">
+                      {summarizeParams(item.params)}
+                    </span>
+                    {paramLines(item.params).length > 0 && (
+                      <div className="pointer-events-none absolute left-0 top-full mt-2 z-30 w-[360px] max-w-[70vw] opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-150">
+                        <div className="bg-white rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.18)] border border-gray-100 p-4 space-y-2 max-h-72 overflow-y-auto">
+                          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-300">Details</p>
+                          {paramLines(item.params).map((l, i) => (
+                            <div key={i} className="text-sm">
+                              <span className="text-gray-400 capitalize">{l.label}: </span>
+                              <span className="text-gray-800 break-words whitespace-pre-wrap">{l.value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
 
                   {/* Requested */}
                   <span className="text-sm text-gray-400">{formatDate(item.created_at)}</span>
