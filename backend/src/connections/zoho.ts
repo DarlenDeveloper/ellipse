@@ -330,16 +330,24 @@ function zfmt(d: Date): string {
   return d.toISOString().replace(/\.\d{3}Z$/, "+00:00");
 }
 
-/** Run a COQL query (Zoho's SQL-like record query). Returns the data rows. */
+/** Run a COQL query (Zoho's SQL-like record query). Returns the data rows. Throws on API error. */
 export async function coql(enterpriseId: string, selectQuery: string): Promise<any[]> {
   const data = await zohoRequest(enterpriseId, "coql", {
     method: "POST",
     body: { select_query: selectQuery },
   });
+  if (data === null) return []; // 204 No Content = no matching records
+  if (data?.status === "error" || data?.code) {
+    throw new Error(`Zoho COQL error: ${data.message ?? data.code ?? "unknown"}`);
+  }
   return data?.data ?? [];
 }
 
-/** Records created in a module within a window (generic). */
+/**
+ * Records created in a module within a window. Uses the standard records API
+ * (works under ZohoCRM.modules.ALL — no separate COQL scope needed), sorted by
+ * Created_Time desc, then filtered to the window in memory.
+ */
 export async function getRecordsCreated(
   enterpriseId: string,
   module: string,
@@ -348,15 +356,34 @@ export async function getRecordsCreated(
   end: Date,
   limit = 200
 ): Promise<any[]> {
-  const cols = fields.join(", ");
-  const q = `select ${cols} from ${module} where Created_Time between '${zfmt(start)}' and '${zfmt(
-    end
-  )}' order by Created_Time desc limit ${limit}`;
+  const cols = encodeURIComponent(fields.join(","));
+  const data = await zohoRequest(
+    enterpriseId,
+    `${module}?fields=${cols}&sort_by=Created_Time&sort_order=desc&per_page=${Math.min(limit, 200)}`
+  );
+  const records: any[] = data?.data ?? [];
+  const s = start.getTime();
+  const e = end.getTime();
+  return records.filter((r) => {
+    const t = r.Created_Time ? new Date(r.Created_Time).getTime() : 0;
+    return t >= s && t < e;
+  });
+}
+
+/** Open (not-closed) deals with their pipeline value — current CRM state, not window-bound. */
+export async function getOpenPipeline(
+  enterpriseId: string
+): Promise<{ open_deals: number; open_pipeline_value: number }> {
   try {
-    return await coql(enterpriseId, q);
-  } catch (e) {
-    console.error("getRecordsCreated failed", module, (e as Error).message);
-    return [];
+    const data = await zohoRequest(
+      enterpriseId,
+      `Deals?fields=${encodeURIComponent("Deal_Name,Stage,Amount")}&sort_by=Amount&sort_order=desc&per_page=200`
+    );
+    const rows: any[] = (data?.data ?? []).filter((d: any) => !/closed|won|lost/i.test(String(d.Stage ?? "")));
+    const value = rows.reduce((sum, d) => sum + (Number(d.Amount) || 0), 0);
+    return { open_deals: rows.length, open_pipeline_value: Math.round(value) };
+  } catch {
+    return { open_deals: 0, open_pipeline_value: 0 };
   }
 }
 
@@ -367,6 +394,8 @@ export type SalesSummary = {
   deals_won: number;
   revenue_won: number;
   pipeline_created_value: number;
+  open_deals: number;
+  open_pipeline_value: number;
   by_stage: Record<string, number>;
   top_deals: { name: string; stage: string; amount: number }[];
 };
@@ -388,11 +417,13 @@ export async function getSalesSummary(
     deals_won: 0,
     revenue_won: 0,
     pipeline_created_value: 0,
+    open_deals: 0,
+    open_pipeline_value: 0,
     by_stage: {},
     top_deals: [],
   };
 
-  const [leads, contacts, deals] = await Promise.all([
+  const [leads, contacts, deals, pipeline] = await Promise.all([
     getRecordsCreated(enterpriseId, "Leads", ["id"], start, end, 200),
     getRecordsCreated(enterpriseId, "Contacts", ["id"], start, end, 200),
     getRecordsCreated(
@@ -403,7 +434,11 @@ export async function getSalesSummary(
       end,
       200
     ),
+    getOpenPipeline(enterpriseId),
   ]);
+
+  summary.open_deals = pipeline.open_deals;
+  summary.open_pipeline_value = pipeline.open_pipeline_value;
 
   summary.leads_created = leads.length;
   summary.contacts_created = contacts.length;

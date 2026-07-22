@@ -330,12 +330,25 @@ async function toolSalesSummary(enterpriseId: string, args: Record<string, unkno
   const days = Math.min(Number(args.days) || 30, 365);
   const end = new Date();
   const start = new Date(Date.now() - days * 86400000);
+  // Confirm Zoho is actually connected first, so "not connected" isn't reported as zero.
+  const connSnap = await db.doc(`connections/${enterpriseId}_zoho`).get();
+  if (!connSnap.exists || connSnap.data()?.status !== "active") {
+    return JSON.stringify({ connected: false, note: "Zoho CRM is not connected for this workspace." });
+  }
   try {
     const { getSalesSummary } = await import("./connections/zoho");
     const s = await getSalesSummary(enterpriseId, start, end);
-    return JSON.stringify({ window_days: days, ...s });
+    const anyNew = s.leads_created + s.contacts_created + s.deals_created > 0;
+    return JSON.stringify({
+      connected: true,
+      window_days: days,
+      note: anyNew
+        ? undefined
+        : `No NEW leads/contacts/deals were created in the last ${days} days. The current open pipeline figures below reflect the CRM's live state regardless of when records were created.`,
+      ...s,
+    });
   } catch (e) {
-    return `Could not read Zoho sales: ${(e as Error).message}`;
+    return JSON.stringify({ connected: true, error: `Zoho read failed: ${(e as Error).message}` });
   }
 }
 

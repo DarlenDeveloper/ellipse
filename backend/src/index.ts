@@ -757,6 +757,26 @@ export const sendReply = onCall(
   }
 );
 
+/** TEMPORARY — write a tiny file to Storage and return its download URL + bucket, to verify the pipeline. Remove before ship. */
+export const pingStorage = onRequest(async (_req, res) => {
+  try {
+    const { bucket } = await import("./admin");
+    const { randomUUID } = await import("crypto");
+    const b = bucket();
+    const path = `debug/ping-${Date.now()}.txt`;
+    const token = randomUUID();
+    await b.file(path).save(Buffer.from("ellipse storage ok"), {
+      contentType: "text/plain",
+      metadata: { metadata: { firebaseStorageDownloadTokens: token } },
+      resumable: false,
+    });
+    const url = `https://firebasestorage.googleapis.com/v0/b/${b.name}/o/${encodeURIComponent(path)}?alt=media&token=${token}`;
+    res.json({ ok: true, bucket: b.name, url });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: (e as Error).message });
+  }
+});
+
 export { executeAgentAction };
 export { onPendingActionApproved } from "./approvals";
 export { onMessageCreated } from "./onMessage";
