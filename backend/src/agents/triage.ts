@@ -8,18 +8,30 @@ import { loadKnowledgeBase } from "./knowledge";
  * transactional, marketing, or irrelevant mail.
  */
 
-// Obvious automated / no-reply senders — skipped without spending a Gemini call.
+// The local-part (before @) begins with a clearly reply-less token.
 const AUTOMATED_LOCALPART =
-  /(no[-_.]?reply|do[-_.]?not[-_.]?reply|mailer-daemon|postmaster|notifications?|notify|alerts?|account[-_.]?security|security|updates?|newsletter|mailer|bounce|receipts?|billing|invoices?)/i;
-const AUTOMATED_DOMAIN =
-  /(accountprotection\.microsoft\.com|facebookmail\.com|githubapp\.com|github\.com|devpost\.com|sendgrid\.|mailchimp|substack|intercom|notifications?\.|email\.|mail\.|updates\.|noreply\.|no-reply\.)/i;
+  /^(no[-_.]?reply|do[-_.]?not[-_.]?reply|mailer[-_.]?daemon|postmaster|notifications?|notify|alerts?|account[-_.]?security|updates?|newsletter|mailer|bounce|receipts?|billing|invoices?)([._-]|$)/i;
+
+// Known machine-sending domains (matched at the END of the domain).
+const KNOWN_AUTOMATED_DOMAIN =
+  /(accountprotection\.microsoft\.com|facebookmail\.com|githubapp\.com|sendgrid\.net|mailchimp\.com|mcsv\.net|substack\.com|intercom-mail\.com|sparkpostmail\.com|amazonses\.com)$/i;
+
+// Automated sending SUBdomains — matched only as the FIRST label of the domain,
+// so "mail.acme.com" is caught but "gmail.com" / "email-provider.com" are NOT.
+const AUTOMATED_FIRST_LABEL =
+  /^(mailer|mail|email|em|noreply|no-reply|notifications?|notify|updates?|bounce|bounces|newsletter|news|marketing|reply|mailing|campaigns?)$/i;
 
 export function isLikelyAutomated(fromEmail?: string, from?: string): boolean {
-  const e = (fromEmail || from || "").toLowerCase();
-  if (!e) return false;
+  const e = (fromEmail || from || "").toLowerCase().trim();
+  if (!e || !e.includes("@")) return false;
   const local = e.split("@")[0] ?? "";
   const domain = e.split("@")[1] ?? "";
-  return AUTOMATED_LOCALPART.test(local) || AUTOMATED_DOMAIN.test(domain);
+  if (AUTOMATED_LOCALPART.test(local)) return true;
+  if (KNOWN_AUTOMATED_DOMAIN.test(domain)) return true;
+  // First-label check only for multi-label domains (never freemail like gmail.com).
+  const labels = domain.split(".");
+  if (labels.length >= 3 && AUTOMATED_FIRST_LABEL.test(labels[0])) return true;
+  return false;
 }
 
 export type Triage = {
