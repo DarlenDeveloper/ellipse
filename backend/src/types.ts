@@ -2,7 +2,7 @@
 
 export type Mode = "supervised" | "unsupervised" | "off";
 export type Tier = "starter" | "business" | "enterprise";
-export type AgentDomain = "inbox" | "assistant" | "calendar";
+export type AgentDomain = "inbox" | "assistant" | "calendar" | "files";
 export type TargetSystem =
   | "internal"
   | "gmail"

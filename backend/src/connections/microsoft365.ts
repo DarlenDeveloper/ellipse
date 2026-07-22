@@ -296,6 +296,40 @@ export async function sendOutlookReply(
   return "sent";
 }
 
+/**
+ * Upload a file to the connected account's OneDrive (simple upload, < 4 MB).
+ * Used to store agent-generated reports (Word/Excel) in Microsoft 365 so they
+ * live alongside the customer's other business documents. Returns the driveItem
+ * id + a shareable webUrl.
+ */
+export async function uploadFileToOneDrive(
+  enterpriseId: string,
+  folder: string,
+  filename: string,
+  buffer: Buffer,
+  contentType: string
+): Promise<{ id: string; webUrl: string }> {
+  const token = await authedTokenFor(enterpriseId);
+  const path = `${encodeURIComponent(folder)}/${encodeURIComponent(filename)}`;
+  const res = await fetch(
+    `https://graph.microsoft.com/v1.0/me/drive/root:/${path}:/content`,
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": contentType },
+      body: buffer,
+    }
+  );
+  const d = (await res.json()) as any;
+  if (d?.error) throw new Error(d.error.message);
+  return { id: d.id, webUrl: d.webUrl };
+}
+
+/** Is Microsoft 365 connected + active for this enterprise? */
+export async function isMicrosoftConnected(enterpriseId: string): Promise<boolean> {
+  const snap = await connDoc(enterpriseId).get();
+  return snap.exists && snap.data()?.status === "active";
+}
+
 /** Verify the connection + peek at the inbox to diagnose ingestion. */
 export async function verifyConnection(
   enterpriseId: string

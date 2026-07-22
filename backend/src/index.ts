@@ -618,6 +618,35 @@ export const zohoOAuthCallback = onRequest(
   }
 );
 
+/**
+ * Hourly report generator — for every enterprise at its local midnight, produce
+ * the due agent reports (daily always; weekly on Mon; monthly/quarterly/annual
+ * on period start). Idempotent, so hourly re-runs are safe.
+ */
+export const scheduledReports = onSchedule(
+  { schedule: "every 60 minutes", secrets: [geminiKey, zohoClientId, zohoClientSecret, msClientId, msClientSecret] },
+  async () => {
+    const { generateDueReports } = await import("./reports");
+    const res = await generateDueReports();
+    logger.info("scheduledReports complete", res);
+  }
+);
+
+/**
+ * On-demand report generation for testing — builds the last completed period
+ * for each active agent. data: { enterpriseId, period? }.
+ */
+export const generateReportsNow = onCall(
+  { secrets: [geminiKey, zohoClientId, zohoClientSecret, msClientId, msClientSecret] },
+  async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const enterpriseId = request.data?.enterpriseId as string | undefined;
+  const period = (request.data?.period as string | undefined) ?? "daily";
+  if (!enterpriseId) throw new HttpsError("invalid-argument", "Missing enterpriseId.");
+  const { generateReportsNow: gen } = await import("./reports");
+  return gen(enterpriseId, period as any);
+});
+
 export { executeAgentAction };
 export { onPendingActionApproved } from "./approvals";
 export { onMessageCreated } from "./onMessage";

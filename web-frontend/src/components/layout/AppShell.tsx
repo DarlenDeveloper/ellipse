@@ -6,6 +6,7 @@ import { SidebarProvider, useSidebar } from "./SidebarContext";
 import { ModeProvider } from "./ModeContext";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { Sidebar } from "./Sidebar";
+import { IvyBubble } from "@/components/ivy/IvyBubble";
 
 // Routes that render WITHOUT the app sidebar (pre-login / onboarding)
 const bareRoutes = ["/login", "/signup", "/onboarding"];
@@ -39,6 +40,7 @@ function ShellInner({ children }: { children: ReactNode }) {
       >
         {children}
       </div>
+      <IvyBubble />
     </>
   );
 }

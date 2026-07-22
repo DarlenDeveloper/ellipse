@@ -262,8 +262,52 @@ async function executeMicrosoftAction(
         subject: params.subject as string,
         body: (params.body as string) ?? "",
       });
+    case "save_file":
+      return saveFileToMicrosoft(enterpriseId, params);
     default:
       logger.warn("Unknown Microsoft action", { actionType });
       return null;
   }
+}
+
+/**
+ * Upload a report file (already stored in our bucket) to the customer's
+ * Microsoft 365 OneDrive, then link the resulting webUrl back onto the report.
+ * Runs when a save_file action executes — immediately (unsupervised) or on
+ * approval (supervised).
+ */
+async function saveFileToMicrosoft(
+  enterpriseId: string,
+  params: Record<string, unknown>
+): Promise<string | null> {
+  const { bucket } = await import("./admin");
+  const ms = await import("./connections/microsoft365");
+
+  const fileName = params.fileName as string;
+  const folder = (params.folder as string) ?? "Ellipse Reports";
+  const storagePath = params.storagePath as string;
+  const contentType =
+    (params.contentType as string) ?? "application/octet-stream";
+  const reportId = params.reportId as string | undefined;
+  if (!fileName || !storagePath) throw new Error("save_file: missing fileName or storagePath");
+
+  const [buffer] = await bucket().file(storagePath).download();
+  const { webUrl } = await ms.uploadFileToOneDrive(enterpriseId, folder, fileName, buffer, contentType);
+
+  // Link the OneDrive URL back onto the report's file entry.
+  if (reportId) {
+    try {
+      const ref = db.doc(`reports/${reportId}`);
+      const snap = await ref.get();
+      const files = (snap.data()?.files as Record<string, unknown>[] | undefined) ?? [];
+      const next = files.map((f) =>
+        f.name === fileName ? { ...f, onedrive_url: webUrl, onedrive_status: "executed" } : f
+      );
+      await ref.update({ files: next });
+    } catch (e) {
+      logger.warn("failed to link onedrive url to report", { reportId, error: (e as Error).message });
+    }
+  }
+
+  return webUrl;
 }

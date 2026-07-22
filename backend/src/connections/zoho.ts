@@ -323,6 +323,134 @@ export async function backfillZoho(
   return { total, byModule };
 }
 
+// ---- Read / reporting capabilities (sales, pipeline, records) ----
+
+/** Zoho COQL datetime format: ISO8601, seconds precision, explicit offset. */
+function zfmt(d: Date): string {
+  return d.toISOString().replace(/\.\d{3}Z$/, "+00:00");
+}
+
+/** Run a COQL query (Zoho's SQL-like record query). Returns the data rows. */
+export async function coql(enterpriseId: string, selectQuery: string): Promise<any[]> {
+  const data = await zohoRequest(enterpriseId, "coql", {
+    method: "POST",
+    body: { select_query: selectQuery },
+  });
+  return data?.data ?? [];
+}
+
+/** Records created in a module within a window (generic). */
+export async function getRecordsCreated(
+  enterpriseId: string,
+  module: string,
+  fields: string[],
+  start: Date,
+  end: Date,
+  limit = 200
+): Promise<any[]> {
+  const cols = fields.join(", ");
+  const q = `select ${cols} from ${module} where Created_Time between '${zfmt(start)}' and '${zfmt(
+    end
+  )}' order by Created_Time desc limit ${limit}`;
+  try {
+    return await coql(enterpriseId, q);
+  } catch (e) {
+    console.error("getRecordsCreated failed", module, (e as Error).message);
+    return [];
+  }
+}
+
+export type SalesSummary = {
+  leads_created: number;
+  contacts_created: number;
+  deals_created: number;
+  deals_won: number;
+  revenue_won: number;
+  pipeline_created_value: number;
+  by_stage: Record<string, number>;
+  top_deals: { name: string; stage: string; amount: number }[];
+};
+
+/**
+ * Business sales summary from Zoho for a window: new leads/contacts/deals,
+ * deals won + revenue, pipeline value created, and a stage breakdown. This is
+ * the CRM half of a company report — real numbers, not agent activity.
+ */
+export async function getSalesSummary(
+  enterpriseId: string,
+  start: Date,
+  end: Date
+): Promise<SalesSummary> {
+  const summary: SalesSummary = {
+    leads_created: 0,
+    contacts_created: 0,
+    deals_created: 0,
+    deals_won: 0,
+    revenue_won: 0,
+    pipeline_created_value: 0,
+    by_stage: {},
+    top_deals: [],
+  };
+
+  const [leads, contacts, deals] = await Promise.all([
+    getRecordsCreated(enterpriseId, "Leads", ["id"], start, end, 200),
+    getRecordsCreated(enterpriseId, "Contacts", ["id"], start, end, 200),
+    getRecordsCreated(
+      enterpriseId,
+      "Deals",
+      ["Deal_Name", "Stage", "Amount", "Closing_Date"],
+      start,
+      end,
+      200
+    ),
+  ]);
+
+  summary.leads_created = leads.length;
+  summary.contacts_created = contacts.length;
+  summary.deals_created = deals.length;
+
+  for (const d of deals) {
+    const stage = (d.Stage as string) || "Unknown";
+    const amount = Number(d.Amount) || 0;
+    summary.by_stage[stage] = (summary.by_stage[stage] ?? 0) + 1;
+    summary.pipeline_created_value += amount;
+    if (/won/i.test(stage)) {
+      summary.deals_won++;
+      summary.revenue_won += amount;
+    }
+  }
+
+  summary.top_deals = deals
+    .map((d) => ({ name: (d.Deal_Name as string) || "(unnamed)", stage: (d.Stage as string) || "", amount: Number(d.Amount) || 0 }))
+    .sort((a, b) => b.amount - a.amount)
+    .slice(0, 5);
+
+  return summary;
+}
+
+/** Leads created in a window, as rows for a report/spreadsheet. */
+export async function getLeadsCreated(
+  enterpriseId: string,
+  start: Date,
+  end: Date
+): Promise<{ name: string; email: string; company: string; status: string; created: string }[]> {
+  const rows = await getRecordsCreated(
+    enterpriseId,
+    "Leads",
+    ["Full_Name", "Email", "Company", "Lead_Status", "Created_Time"],
+    start,
+    end,
+    200
+  );
+  return rows.map((r) => ({
+    name: (r.Full_Name as string) || "(unknown)",
+    email: (r.Email as string) || "",
+    company: (r.Company as string) || "",
+    status: (r.Lead_Status as string) || "",
+    created: r.Created_Time ? String(r.Created_Time).slice(0, 10) : "",
+  }));
+}
+
 // ---- Action executors (routed from executeAgentAction for targetSystem "zoho") ----
 
 /** Look up a record in a module by email — used to enrich inbound conversations. */
