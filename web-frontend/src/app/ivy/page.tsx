@@ -12,7 +12,6 @@ import {
   SearchNormal1,
   TickCircle,
   Clock,
-  CloseCircle,
 } from "iconsax-react";
 import {
   collection,
@@ -271,13 +270,62 @@ export default function IvyPage() {
             <Add size={18} variant="Linear" color="#ffffff" />
             New Chat
           </button>
-          <button
-            onClick={() => setHistoryOpen(true)}
-            title="Chat history"
-            className="w-10 h-10 rounded-full bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] flex items-center justify-center hover:shadow-md transition-shadow"
-          >
-            <Clock size={19} variant="Linear" color="#6b7280" />
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => setHistoryOpen((o) => !o)}
+              title="Chat history"
+              className="w-10 h-10 rounded-full bg-white shadow-[0_2px_10px_rgba(0,0,0,0.05)] flex items-center justify-center hover:shadow-md transition-shadow"
+            >
+              <Clock size={19} variant="Linear" color="#6b7280" />
+            </button>
+
+            {historyOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setHistoryOpen(false)} />
+                <div className="absolute right-0 mt-2 w-80 max-h-[70vh] overflow-y-auto bg-white rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.15)] border border-gray-100 p-1.5 z-20">
+                  <p className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-gray-300">
+                    Chat history
+                  </p>
+                  {chats.length === 0 ? (
+                    <p className="px-3 py-8 text-sm text-gray-400 text-center">No previous chats yet.</p>
+                  ) : (
+                    groupChats(chats).map((group) => (
+                      <div key={group.label} className="mb-1">
+                        <p className="px-3 pt-2 pb-1 text-[11px] font-medium text-gray-400">{group.label}</p>
+                        {group.items.map((c) => {
+                          const isAgent = c.agent_id !== "ivy" && CONNECTION_AGENTS[c.agent_id];
+                          return (
+                            <button
+                              key={c.id}
+                              onClick={() => loadChat(c)}
+                              className={cn(
+                                "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-colors",
+                                c.id === chatId ? "bg-gray-100" : "hover:bg-gray-50"
+                              )}
+                            >
+                              <span className="w-7 h-7 rounded-lg overflow-hidden flex items-center justify-center bg-gray-50 shrink-0">
+                                {isAgent ? (
+                                  <Image src={CONNECTION_AGENTS[c.agent_id].logo} alt="" width={18} height={18} className="object-contain" />
+                                ) : (
+                                  <IvyOrb size={24} />
+                                )}
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block text-sm font-medium truncate">{c.title || "Untitled chat"}</span>
+                                <span className="block text-[11px] text-gray-400">
+                                  {c.agent_id === "ivy" ? "Ivy" : CONNECTION_AGENTS[c.agent_id]?.name ?? c.agent_id}
+                                </span>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -354,77 +402,6 @@ export default function IvyPage() {
             </div>
           </div>
         </>
-      )}
-
-      {/* History side panel (slide-out from the right) */}
-      {historyOpen && (
-        <div className="fixed inset-0 z-[60]">
-          <div
-            className="absolute inset-0 bg-black/30"
-            style={{ animation: "ivy-fade-in 0.2s ease-out" }}
-            onClick={() => setHistoryOpen(false)}
-          />
-          <aside
-            className="absolute top-0 right-0 h-full w-[380px] max-w-[92vw] bg-white shadow-[0_0_60px_rgba(0,0,0,0.2)] rounded-l-3xl flex flex-col"
-            style={{ animation: "ivy-slide-in 0.28s cubic-bezier(0.22,1,0.36,1)" }}
-          >
-            <div className="flex items-center justify-between px-6 pt-6 pb-4">
-              <h3 className="text-xl font-bold">History</h3>
-              <button
-                onClick={() => setHistoryOpen(false)}
-                className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-400 hover:text-gray-700"
-              >
-                <CloseCircle size={22} variant="Linear" />
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto px-3 pb-4">
-              {chats.length === 0 ? (
-                <div className="flex flex-col items-center text-center px-6 py-20">
-                  <div className="w-14 h-14 rounded-2xl bg-gray-50 flex items-center justify-center mb-4">
-                    <Clock size={26} variant="Bold" color="#d1d5db" />
-                  </div>
-                  <p className="text-sm font-semibold text-gray-600">No chats yet</p>
-                  <p className="text-sm text-gray-400 mt-1">Your conversations with Ivy and the agents will appear here.</p>
-                </div>
-              ) : (
-                groupChats(chats).map((group) => (
-                  <div key={group.label} className="mb-2">
-                    <p className="px-3 pt-3 pb-1.5 text-xs font-semibold text-gray-400">{group.label}</p>
-                    {group.items.map((c) => {
-                      const isAgent = c.agent_id !== "ivy" && CONNECTION_AGENTS[c.agent_id];
-                      const lastMsg = c.messages?.[c.messages.length - 1]?.text ?? "";
-                      return (
-                        <button
-                          key={c.id}
-                          onClick={() => loadChat(c)}
-                          className={cn(
-                            "w-full flex items-start gap-3 px-3 py-3 rounded-2xl text-left transition-colors",
-                            c.id === chatId ? "bg-gray-100" : "hover:bg-gray-50"
-                          )}
-                        >
-                          <span className="w-9 h-9 rounded-xl overflow-hidden flex items-center justify-center bg-gray-50 shrink-0 mt-0.5">
-                            {isAgent ? (
-                              <Image src={CONNECTION_AGENTS[c.agent_id].logo} alt="" width={22} height={22} className="object-contain" />
-                            ) : (
-                              <IvyOrb size={30} />
-                            )}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block text-sm font-semibold truncate">{c.title || "Untitled chat"}</span>
-                            <span className="block text-xs text-gray-400 truncate">
-                              {lastMsg || (c.agent_id === "ivy" ? "Ivy" : CONNECTION_AGENTS[c.agent_id]?.name ?? c.agent_id)}
-                            </span>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ))
-              )}
-            </div>
-          </aside>
-        </div>
       )}
     </div>
   );

@@ -6,19 +6,17 @@ Core principle: **one agent per connection**, plus **Ivy** (boss agent) built LA
 
 ## 🎯 Next major milestones (in order)
 
-All connections are live (Gmail, WhatsApp, Outlook, Zoho, SMTP, Website). Agent quality (triage), reports + documents, and the Data page are done. Remaining big rocks:
+All connections are live (Gmail, WhatsApp, Outlook, Zoho, SMTP, Website). Agent quality (triage), reports + documents, the Data page, and **Ivy + direct agent chat** are done. Remaining big rocks:
 
-1. **Ivy (boss agent)** — orchestrator that talks to every connection agent, reads the reports in `reports/`, rolls them into one briefing, and coordinates cross-channel actions.
-   - UI shell is DONE: floating animated orb bubble on all pages (`IvyBubble` + `IvyOrb`), chat panel with suggestions, placeholder responses.
-   - TODO: backend `askIvy` callable — Gemini with tools to query reports, conversations, CRM (Zoho sales), analytics; per-tool routing through the gate for any actions.
-   - TODO: dashboard briefing card (Ivy's daily summary across agents).
+1. **Custom agents** — let users add their own agent to the Agents page (define name, purpose/system prompt, which tools/channels it can use). Surfaces in the agent selector + chat.
 2. **Microsoft 365 file *creation* agent abilities** (beyond report upload, which is done):
    - `create_spreadsheet` / `read` / `append_row` (Excel via Graph workbook API)
    - `save_document` — Word docs + **quotation PDFs** generated on request in a conversation (e.g. "send them a quote")
    - Cross-agent: any agent can request a document be created + saved/emailed (all gated).
-3. **Security pass (before production)** — Firestore rules, tokens Firestore → Secret Manager, remove all debug fns.
+3. **Security pass (before production)** — Firestore rules (incl. owner-only mode, per-user `ivy_chats`), tokens Firestore → Secret Manager, remove all debug fns.
+4. **Agent memory** (WAY later) — persistent per-agent memory across chats/conversations so agents recall context and preferences over time.
 
-Supporting: mode-switcher persistence, real-time push (Gmail/Zoho webhooks), Search Console, website chat agent.
+Supporting: real-time push (Gmail/Zoho webhooks), Search Console, website chat agent, Ivy dashboard briefing card.
 
 ---
 
@@ -57,9 +55,17 @@ Supporting: mode-switcher persistence, real-time push (Gmail/Zoho webhooks), Sea
 - [x] Settings General tab de-mocked → real enterprise data (name, website, industry, timezone) + agent approval **mode**, live Firestore read/write
 - [x] Settings shell redesigned (grouped card nav + section headers); Knowledge Base UI redesigned (toolbar, collapsible add form, card grid, empty state)
 
-## ✅ Ivy UI shell (DONE — backend pending)
-- [x] `IvyOrb` — pure-CSS animated glassy sphere (swirling plasma, flowing wave, shine, breathing)
-- [x] `IvyBubble` — floating bottom-right on all authed pages, chat panel with suggestions + placeholder replies (ready to wire to backend)
+## ✅ Ivy + direct agent chat (DONE)
+- [x] `IvyOrb` — pure-CSS animated glassy sphere (swirling plasma, flowing wave, shine, slow rotation)
+- [x] `IvyBubble` — floating orb on all authed pages (hidden on /ivy), quick chat panel + expand-to-full-view
+- [x] `/ivy` wide page — greeting, big composer, suggestion chips, agent selector (Ivy or a specific agent)
+- [x] Chat **history** persisted to `ivy_chats` (per user+enterprise); dropdown grouped Today/Yesterday/Earlier, click to reopen, New Chat resets
+- [x] **`askAgent` backend** — two-pass Gemini (reason → call tools → natural reply)
+- [x] **Ivy orchestrator**: tools across all agents — `search_conversations`, `get_reports`, `get_sales_summary`, `get_web_analytics`, `create_crm_lead`, `reply_to_conversation`
+- [x] **Per-agent direct chat** scoped to that connection's tools (Zoho=CRM, messaging=channel convos+reply, Website=analytics); tools only offered if the connection is active
+- [x] Every chat ACTION routes through `executeAgentAction` → respects mode/approval (Supervised queues in /approvals, Autopilot executes, Off/expired does nothing)
+- [x] Removed the old "Ivy coming soon" card from the Agents page
+- [ ] Ivy dashboard briefing card (daily summary across agents)
 
 ---
 
