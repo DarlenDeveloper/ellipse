@@ -30,11 +30,13 @@ export async function callGemini(opts: {
   system?: string;
   prompt: string;
   tools?: { name: string; description: string; parameters: Record<string, unknown> }[];
+  temperature?: number;
 }): Promise<GeminiResult> {
   const ai = getClient();
 
   const config: Record<string, unknown> = {};
   if (opts.system) config.systemInstruction = opts.system;
+  if (typeof opts.temperature === "number") config.temperature = opts.temperature;
   if (opts.tools && opts.tools.length) {
     config.tools = [{ functionDeclarations: opts.tools }];
   }

@@ -513,8 +513,8 @@ export async function chatWithAgent(
   const convo = renderHistory(history);
   const prompt = [convo ? `Conversation so far:\n${convo}\n` : "", `User: ${message}`].filter(Boolean).join("\n");
 
-  // Pass 1 — let the agent reason + optionally call tools.
-  const first = await callGemini({ system, prompt, tools });
+  // Pass 1 — let the agent reason + optionally call tools. Low temperature to curb speculation.
+  const first = await callGemini({ system, prompt, tools, temperature: 0.1 });
 
   if (!first.functionCalls.length) {
     return { reply: first.text || "…", actions: [], files: [] };
@@ -555,15 +555,20 @@ export async function chatWithAgent(
     `You called tools and got these results:`,
     ...results,
     ``,
-    `Now reply to the user in natural language. If an action was queued for approval, say so clearly.`,
+    `Now write the FINAL reply to the user. Rules:`,
+    `- Use ONLY the tool results above. State exactly what the data shows.`,
+    `- Do NOT invent, infer, or add any leads, names, companies, numbers, deals or pipeline that are not explicitly present in the results.`,
+    `- No preamble, no "let me check", no describing what you did — just the answer.`,
+    `- Keep it to 1-3 sentences (plus a short list only if the data has items).`,
+    `- If a tool returned connected:false or an error, tell the user plainly.`,
     files.length
-      ? `IMPORTANT: A file was created and is shown to the user as a downloadable card below your message. Do NOT paste the file URL or any long link in your reply — just refer to the file by name (e.g. "I've created the report — it's attached below and saved to your Data").`
+      ? `- A file was created and shown as a downloadable card below your message. Do NOT paste the file URL — refer to it by name.`
       : "",
   ]
     .filter(Boolean)
     .join("\n");
 
-  const second = await callGemini({ system, prompt: prompt2 });
+  const second = await callGemini({ system, prompt: prompt2, temperature: 0 });
   logger.info("agent chat", { enterpriseId, agentId, toolCalls: first.functionCalls.length });
   return { reply: second.text || first.text || "Done.", actions, files };
 }

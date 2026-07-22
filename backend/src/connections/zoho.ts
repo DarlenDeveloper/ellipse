@@ -356,11 +356,17 @@ export async function getRecordsCreated(
   end: Date,
   limit = 200
 ): Promise<any[]> {
-  const cols = encodeURIComponent(fields.join(","));
+  // Always fetch Created_Time — it's what we filter the window on. ("id" is
+  // implicit and not accepted in the fields param, so drop it.)
+  const wanted = Array.from(new Set([...fields.filter((f) => f.toLowerCase() !== "id"), "Created_Time"]));
+  const cols = encodeURIComponent(wanted.join(","));
   const data = await zohoRequest(
     enterpriseId,
     `${module}?fields=${cols}&sort_by=Created_Time&sort_order=desc&per_page=${Math.min(limit, 200)}`
   );
+  if (data?.status === "error") {
+    throw new Error(`Zoho ${module} read error: ${data.message ?? data.code ?? "unknown"}`);
+  }
   const records: any[] = data?.data ?? [];
   const s = start.getTime();
   const e = end.getTime();
