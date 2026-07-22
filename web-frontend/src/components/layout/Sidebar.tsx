@@ -9,7 +9,6 @@ import {
   ClipboardTick,
   Hierarchy,
   Cpu,
-  Global,
   Code,
   Data,
   Profile2User,
@@ -30,7 +29,6 @@ const navItems = [
   { icon: ClipboardTick, label: "Approvals", href: "/approvals" },
   { icon: Hierarchy, label: "Integrations", href: "/integrations" },
   { icon: Cpu, label: "Agents", href: "/agents" },
-  { icon: Global, label: "Web Agents", href: "/web-agents" },
   { icon: Code, label: "Website", href: "/website" },
   { icon: Data, label: "Data", href: "/data" },
   { icon: Profile2User, label: "Users", href: "/users" },
@@ -65,7 +63,7 @@ export function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 space-y-1.5">
+      <nav className="flex-1 min-h-0 overflow-y-auto space-y-1.5 -mr-2 pr-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {navItems.map((item) => {
           const active = pathname.startsWith(item.href);
           return (

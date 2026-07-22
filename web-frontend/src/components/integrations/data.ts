@@ -68,7 +68,7 @@ export const integrations: Integration[] = [
     id: "website",
     name: "Website",
     description: "Add a tracking tag for visitor analytics — plus a web chat agent for your site.",
-    logo: null,
+    logo: "/logos/web.png",
     tileClass: "bg-indigo-50",
     connected: false,
   },

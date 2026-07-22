@@ -27,7 +27,7 @@ const AGENT_BY_CONNECTION: Record<string, AgentMeta> = {
   microsoft365: { agent: "microsoft365", label: "Microsoft 365", logo: "/logos/microsoft.png", kind: "messaging" },
   whatsapp: { agent: "whatsapp", label: "WhatsApp", logo: "/logos/whatsapp.png", kind: "messaging" },
   zoho: { agent: "zoho", label: "Zoho CRM", logo: "/logos/zoho.png", kind: "crm" },
-  website: { agent: "website", label: "Website", logo: "", kind: "web" },
+  website: { agent: "website", label: "Website", logo: "/logos/web.png", kind: "web" },
 };
 
 // channel string stored on messages, per messaging agent

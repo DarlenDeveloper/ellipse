@@ -15,6 +15,7 @@ function ShellInner({ children }: { children: ReactNode }) {
   const { collapsed } = useSidebar();
   const { user, loading } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
     if (!loading && !user) {
@@ -40,7 +41,7 @@ function ShellInner({ children }: { children: ReactNode }) {
       >
         {children}
       </div>
-      <IvyBubble />
+      {pathname !== "/ivy" && <IvyBubble />}
     </>
   );
 }

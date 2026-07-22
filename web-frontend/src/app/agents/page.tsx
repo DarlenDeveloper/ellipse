@@ -20,7 +20,7 @@ const AGENT_META: Record<string, { name: string; agentId: string; channel: strin
   "google-workspace": { name: "Gmail Agent", agentId: "gmail-agent", channel: "Gmail", logo: "/logos/gmail.png" },
   zoho: { name: "Zoho Agent", agentId: "zoho-agent", channel: "Zoho CRM", logo: "/logos/zoho.png" },
   smtp: { name: "SMTP Agent", agentId: "smtp-agent", channel: "SMTP / IMAP", logo: "/logos/smtp.png" },
-  website: { name: "Website Agent", agentId: "website-agent", channel: "Website Analytics", logo: null },
+  website: { name: "Website Agent", agentId: "website-agent", channel: "Website Analytics", logo: "/logos/web.png" },
   whatsapp: { name: "WhatsApp Agent", agentId: "whatsapp-agent", channel: "WhatsApp", logo: "/logos/whatsapp.png" },
   odoo: { name: "Odoo Agent", agentId: "odoo-agent", channel: "Odoo", logo: "/logos/odoo.png" },
   salesforce: { name: "Salesforce Agent", agentId: "salesforce-agent", channel: "Salesforce", logo: "/logos/salesforce.png" },

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Send2, CloseCircle } from "iconsax-react";
+import { useRouter } from "next/navigation";
+import { Send2, CloseCircle, Maximize4 } from "iconsax-react";
 import { IvyOrb } from "./IvyOrb";
 import { cn } from "@/lib/utils";
 
@@ -24,6 +25,7 @@ export function IvyBubble() {
   ]);
   const [thinking, setThinking] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -67,9 +69,16 @@ export function IvyBubble() {
                 {thinking ? "Thinking…" : "Your workspace agent"}
               </p>
             </div>
-            <span className="text-[10px] font-semibold text-blue-500 bg-blue-50 rounded-full px-2 py-0.5">
-              Preview
-            </span>
+            <button
+              onClick={() => {
+                setOpen(false);
+                router.push("/ivy");
+              }}
+              title="Open full view"
+              className="text-gray-300 hover:text-gray-600"
+            >
+              <Maximize4 size={19} variant="Linear" />
+            </button>
             <button onClick={() => setOpen(false)} className="text-gray-300 hover:text-gray-600">
               <CloseCircle size={22} variant="Linear" />
             </button>
@@ -143,14 +152,10 @@ export function IvyBubble() {
         aria-label="Open Ivy"
         className="fixed bottom-6 right-6 z-50 group"
       >
-        {/* pulsing ring */}
-        {!open && (
-          <span
-            className="absolute inset-0 rounded-full bg-blue-400/40"
-            style={{ animation: "ivy-ring 2.6s ease-out infinite" }}
-          />
-        )}
-        <span className="relative block transition-transform group-hover:scale-105 active:scale-95">
+        <span
+          className="relative block transition-transform group-hover:scale-105 active:scale-95"
+          style={{ animation: "ivy-rotate 24s linear infinite" }}
+        >
           <IvyOrb size={62} active={open} />
         </span>
       </button>
