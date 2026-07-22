@@ -120,7 +120,12 @@ export function ReadingPane({
       });
       setReply("");
     } catch (e) {
-      setError("Couldn't send. Please try again.");
+      const msg = (e as { message?: string })?.message || "";
+      setError(
+        /access blocked|token|expired|OAuth/i.test(msg)
+          ? "WhatsApp rejected the send — the access token has expired or is blocked. Reconnect WhatsApp with a fresh token."
+          : msg || "Couldn't send. Please try again."
+      );
       console.error(e);
     } finally {
       setSending(false);

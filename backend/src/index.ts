@@ -720,13 +720,19 @@ export const sendReply = onCall(
     if (!target) throw new HttpsError("failed-precondition", `Cannot reply on channel ${channel}.`);
 
     const { executeAction } = await import("./executeAgentAction");
-    const externalRef = await executeAction(enterpriseId, target, "send_reply", {
-      conversationId,
-      threadId: conv.thread_id,
-      to: conv.customer_ref,
-      subject: conv.subject ?? "",
-      body,
-    });
+    let externalRef: string | null;
+    try {
+      externalRef = await executeAction(enterpriseId, target, "send_reply", {
+        conversationId,
+        threadId: conv.thread_id,
+        to: conv.customer_ref,
+        subject: conv.subject ?? "",
+        body,
+      });
+    } catch (e) {
+      // Surface the real provider error (e.g. Meta "API access blocked" = expired token).
+      throw new HttpsError("failed-precondition", (e as Error).message || "Send failed.");
+    }
 
     // Reflect the sent message immediately in the unified inbox.
     await db.collection("messages").add({
