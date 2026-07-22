@@ -1,20 +1,42 @@
 "use client";
 
 import { useState } from "react";
-import { Building, Notification, ShieldTick, Paintbucket, Trash, Book1 } from "iconsax-react";
+import { Building, Notification, ShieldTick, Paintbucket, Book1 } from "iconsax-react";
 import { cn } from "@/lib/utils";
 import { KnowledgeBase } from "@/components/settings/KnowledgeBase";
+import { GeneralSettings } from "@/components/settings/GeneralSettings";
 
-const tabs = [
-  { id: "general", label: "General", icon: Building },
-  { id: "knowledge", label: "Knowledge Base", icon: Book1 },
-  { id: "notifications", label: "Notifications", icon: Notification },
-  { id: "security", label: "Security", icon: ShieldTick },
-  { id: "appearance", label: "Appearance", icon: Paintbucket },
+type TabId = "general" | "knowledge" | "notifications" | "security" | "appearance";
+
+const tabGroups: {
+  group: string;
+  items: { id: TabId; label: string; desc: string; icon: typeof Building }[];
+}[] = [
+  {
+    group: "Workspace",
+    items: [
+      { id: "general", label: "General", desc: "Org details & agent defaults", icon: Building },
+      { id: "knowledge", label: "Knowledge Base", desc: "Facts your agents rely on", icon: Book1 },
+    ],
+  },
+  {
+    group: "Preferences",
+    items: [
+      { id: "notifications", label: "Notifications", desc: "What we alert you about", icon: Notification },
+      { id: "appearance", label: "Appearance", desc: "Theme & accent color", icon: Paintbucket },
+    ],
+  },
+  {
+    group: "Account",
+    items: [{ id: "security", label: "Security", desc: "Access & authentication", icon: ShieldTick }],
+  },
 ];
 
+const allTabs = tabGroups.flatMap((g) => g.items);
+
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState("general");
+  const [activeTab, setActiveTab] = useState<TabId>("general");
+  const active = allTabs.find((t) => t.id === activeTab)!;
 
   return (
     <main className="p-8">
@@ -24,105 +46,68 @@ export default function SettingsPage() {
         <p className="text-gray-400 mt-1">Manage your organization preferences.</p>
       </div>
 
-      <div className="flex gap-8">
+      <div className="flex gap-8 items-start">
         {/* Tabs sidebar */}
-        <div className="w-[200px] shrink-0 space-y-1">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={cn(
-                "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-colors text-left",
-                activeTab === tab.id
-                  ? "bg-black text-white"
-                  : "text-gray-500 hover:bg-gray-100"
-              )}
-            >
-              <tab.icon size={18} variant={activeTab === tab.id ? "Bold" : "Linear"} color={activeTab === tab.id ? "#ffffff" : "#9ca3af"} />
-              {tab.label}
-            </button>
+        <aside className="w-[240px] shrink-0 bg-white rounded-2xl p-3 shadow-[0_4px_20px_rgba(0,0,0,0.04)] sticky top-8">
+          {tabGroups.map((grp) => (
+            <div key={grp.group} className="mb-3 last:mb-0">
+              <p className="px-3 pt-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-gray-300">
+                {grp.group}
+              </p>
+              <div className="space-y-0.5">
+                {grp.items.map((tab) => {
+                  const isActive = activeTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveTab(tab.id)}
+                      className={cn(
+                        "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors text-left group",
+                        isActive ? "bg-black" : "hover:bg-gray-50"
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
+                          isActive ? "bg-white/15" : "bg-gray-50 group-hover:bg-white"
+                        )}
+                      >
+                        <tab.icon
+                          size={17}
+                          variant={isActive ? "Bold" : "Linear"}
+                          color={isActive ? "#ffffff" : "#6b7280"}
+                        />
+                      </span>
+                      <span className="min-w-0">
+                        <span className={cn("block text-sm font-medium", isActive ? "text-white" : "text-gray-800")}>
+                          {tab.label}
+                        </span>
+                        <span className={cn("block text-[11px] truncate", isActive ? "text-white/50" : "text-gray-400")}>
+                          {tab.desc}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           ))}
-        </div>
+        </aside>
 
         {/* Content */}
         <div className="flex-1 max-w-2xl">
-          {activeTab === "general" && (
-            <div className="space-y-6">
-              <div className="bg-white rounded-2xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">
-                <h3 className="text-lg font-bold mb-4">Organization Details</h3>
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-sm font-medium text-gray-700 block mb-1.5">Organization Name</label>
-                    <input
-                      defaultValue="Ellipse"
-                      className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-gray-200"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-gray-700 block mb-1.5">Website</label>
-                    <input
-                      defaultValue="https://ellipse.io"
-                      className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-gray-200"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-gray-700 block mb-1.5">Industry</label>
-                    <input
-                      defaultValue="SaaS / Communication"
-                      className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-gray-200"
-                    />
-                  </div>
-                </div>
-                <button className="mt-5 bg-black text-white text-sm font-medium rounded-full px-5 py-2.5 hover:bg-gray-800">
-                  Save Changes
-                </button>
-              </div>
-
-              <div className="bg-white rounded-2xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">
-                <h3 className="text-lg font-bold mb-4">Agent Defaults</h3>
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-sm font-medium text-gray-700 block mb-1.5">Default AI Model</label>
-                    <select className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-gray-200 bg-white">
-                      <option>Gemini 2.0 Flash</option>
-                      <option>Gemini 1.5 Pro</option>
-                      <option>Gemini 2.0 Pro</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-gray-700 block mb-1.5">Agent Approval Mode</label>
-                    <select className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-gray-200 bg-white">
-                      <option>Human-in-the-loop (approve before send)</option>
-                      <option>Autopilot (auto-send, log for review)</option>
-                      <option>Supervised (auto-send low-risk, approve high-risk)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-gray-700 block mb-1.5">Escalation Timeout</label>
-                    <input
-                      defaultValue="48 hours"
-                      className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-gray-200"
-                    />
-                  </div>
-                </div>
-                <button className="mt-5 bg-black text-white text-sm font-medium rounded-full px-5 py-2.5 hover:bg-gray-800">
-                  Save Changes
-                </button>
-              </div>
-
-              {/* Danger zone */}
-              <div className="bg-white rounded-2xl p-6 border border-red-100 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">
-                <h3 className="text-lg font-bold text-red-600 mb-2">Danger Zone</h3>
-                <p className="text-sm text-gray-500 mb-4">
-                  Permanently delete this organization and all its data. This action cannot be undone.
-                </p>
-                <button className="flex items-center gap-2 bg-red-50 text-red-600 text-sm font-medium rounded-full px-5 py-2.5 hover:bg-red-100 border border-red-200">
-                  <Trash size={16} variant="Linear" />
-                  Delete Organization
-                </button>
-              </div>
+          {/* Section heading */}
+          <div className="flex items-center gap-3 mb-5">
+            <span className="w-10 h-10 rounded-xl bg-black flex items-center justify-center">
+              <active.icon size={20} variant="Bold" color="#ffffff" />
+            </span>
+            <div>
+              <h2 className="text-xl font-bold leading-tight">{active.label}</h2>
+              <p className="text-sm text-gray-400">{active.desc}</p>
             </div>
-          )}
+          </div>
+
+          {activeTab === "general" && <GeneralSettings />}
 
           {activeTab === "knowledge" && <KnowledgeBase />}
 

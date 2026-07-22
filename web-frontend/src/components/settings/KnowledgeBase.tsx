@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Add, Trash, Book1 } from "iconsax-react";
+import { Add, Trash, Book1, DocumentText } from "iconsax-react";
 import {
   collection,
   query,
@@ -22,10 +22,24 @@ type Entry = {
   created_at?: { toDate: () => Date };
 };
 
+function timeAgo(d?: Date): string {
+  if (!d) return "";
+  const s = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const days = Math.floor(h / 24);
+  if (days < 30) return `${days}d ago`;
+  return d.toLocaleDateString();
+}
+
 export function KnowledgeBase() {
   const { enterpriseId } = useEnterpriseId();
   const [entries, setEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [saving, setSaving] = useState(false);
@@ -57,6 +71,7 @@ export function KnowledgeBase() {
       });
       setTitle("");
       setContent("");
+      setOpen(false);
     } finally {
       setSaving(false);
     }
@@ -66,80 +81,122 @@ export function KnowledgeBase() {
     await deleteDoc(doc(db, "knowledge_base", id));
   };
 
-  return (
-    <div className="space-y-6">
-      {/* Intro */}
-      <div className="bg-white rounded-2xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">
-        <div className="flex items-center gap-3 mb-2">
-          <div className="w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center">
-            <Book1 size={20} variant="Bold" color="#1a1a1a" />
-          </div>
-          <div>
-            <h3 className="text-lg font-bold">Knowledge Base</h3>
-            <p className="text-sm text-gray-400">
-              Facts, policies, and FAQs your agents use as context when replying.
-            </p>
-          </div>
-        </div>
-      </div>
+  const inputClass =
+    "w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-gray-200";
 
-      {/* Add new entry */}
-      <div className="bg-white rounded-2xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">
-        <h4 className="text-sm font-bold mb-4">Add Entry</h4>
-        <div className="space-y-3">
-          <input
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Title (e.g. Refund policy, Pricing, Support hours)"
-            className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-gray-200"
-          />
-          <textarea
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            placeholder="The information the agents should know…"
-            rows={4}
-            className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-gray-200 resize-y"
-          />
+  return (
+    <div className="space-y-5">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-gray-400">
+          {loading
+            ? "Loading…"
+            : entries.length === 0
+            ? "No entries yet"
+            : `${entries.length} ${entries.length === 1 ? "entry" : "entries"} your agents use as context`}
+        </p>
+        {!open && (
           <button
-            onClick={add}
-            disabled={saving || !title.trim() || !content.trim()}
-            className="flex items-center gap-2 bg-black text-white text-sm font-medium rounded-full px-5 py-2.5 hover:bg-gray-800 disabled:opacity-50"
+            onClick={() => setOpen(true)}
+            className="flex items-center gap-2 bg-black text-white text-sm font-medium rounded-full px-4 py-2 hover:bg-gray-800"
           >
             <Add size={18} variant="Linear" color="#ffffff" />
-            {saving ? "Adding…" : "Add Entry"}
+            Add Entry
           </button>
-        </div>
-      </div>
-
-      {/* Entries list */}
-      <div className="bg-white rounded-2xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">
-        <h4 className="text-sm font-bold mb-4">
-          Entries {entries.length > 0 && <span className="text-gray-400 font-medium">({entries.length})</span>}
-        </h4>
-        {loading ? (
-          <p className="text-sm text-gray-400">Loading…</p>
-        ) : entries.length === 0 ? (
-          <p className="text-sm text-gray-400">No entries yet. Add facts your agents should know.</p>
-        ) : (
-          <div className="divide-y divide-gray-50">
-            {entries.map((e) => (
-              <div key={e.id} className="flex items-start justify-between gap-4 py-4 first:pt-0 last:pb-0">
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold">{e.title}</p>
-                  <p className="text-sm text-gray-500 mt-1 whitespace-pre-wrap">{e.content}</p>
-                </div>
-                <button
-                  onClick={() => remove(e.id)}
-                  title="Delete"
-                  className="text-gray-300 hover:text-red-600 shrink-0"
-                >
-                  <Trash size={18} variant="Linear" />
-                </button>
-              </div>
-            ))}
-          </div>
         )}
       </div>
+
+      {/* Add form (collapsible) */}
+      {open && (
+        <div className="bg-white rounded-2xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)] border border-gray-100">
+          <div className="space-y-3">
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Title — e.g. Refund policy, Pricing, Support hours"
+              autoFocus
+              className={inputClass}
+            />
+            <textarea
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              placeholder="The information the agents should know…"
+              rows={4}
+              className={`${inputClass} resize-y`}
+            />
+            <div className="flex items-center gap-2">
+              <button
+                onClick={add}
+                disabled={saving || !title.trim() || !content.trim()}
+                className="flex items-center gap-2 bg-black text-white text-sm font-medium rounded-full px-5 py-2.5 hover:bg-gray-800 disabled:opacity-50"
+              >
+                {saving ? "Adding…" : "Save Entry"}
+              </button>
+              <button
+                onClick={() => {
+                  setOpen(false);
+                  setTitle("");
+                  setContent("");
+                }}
+                className="text-sm font-medium text-gray-500 rounded-full px-5 py-2.5 hover:bg-gray-100"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Entries */}
+      {loading ? null : entries.length === 0 && !open ? (
+        <div className="bg-white rounded-2xl p-12 shadow-[0_4px_20px_rgba(0,0,0,0.04)] flex flex-col items-center text-center">
+          <div className="w-14 h-14 rounded-2xl bg-gray-50 flex items-center justify-center mb-4">
+            <Book1 size={26} variant="Bold" color="#9ca3af" />
+          </div>
+          <h4 className="text-base font-semibold">Teach your agents</h4>
+          <p className="text-sm text-gray-400 mt-1 max-w-xs">
+            Add facts, policies, and FAQs. Every agent uses these as context when replying and qualifying leads.
+          </p>
+          <button
+            onClick={() => setOpen(true)}
+            className="mt-5 flex items-center gap-2 bg-black text-white text-sm font-medium rounded-full px-5 py-2.5 hover:bg-gray-800"
+          >
+            <Add size={18} variant="Linear" color="#ffffff" />
+            Add your first entry
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {entries.map((e) => (
+            <div
+              key={e.id}
+              className="group bg-white rounded-2xl p-5 shadow-[0_4px_20px_rgba(0,0,0,0.04)] border border-gray-100 hover:border-gray-200 transition-colors"
+            >
+              <div className="flex items-start gap-3">
+                <span className="w-9 h-9 rounded-lg bg-gray-50 flex items-center justify-center shrink-0">
+                  <DocumentText size={17} variant="Bold" color="#6b7280" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-semibold truncate">{e.title}</p>
+                    <button
+                      onClick={() => remove(e.id)}
+                      title="Delete"
+                      className="text-gray-300 hover:text-red-600 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <Trash size={16} variant="Linear" />
+                    </button>
+                  </div>
+                  <p className="text-sm text-gray-500 mt-1.5 whitespace-pre-wrap line-clamp-4">{e.content}</p>
+                  {e.created_at && (
+                    <p className="text-[11px] text-gray-300 mt-3">{timeAgo(e.created_at.toDate())}</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
