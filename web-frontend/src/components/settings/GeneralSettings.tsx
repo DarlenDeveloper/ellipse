@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
-import { Trash } from "iconsax-react";
+import { Trash, Lock1 } from "iconsax-react";
 import { db } from "@/lib/firebase";
+import { useAuth } from "@/lib/auth-context";
 import { useEnterpriseId } from "@/lib/use-enterprise";
 import { detectTimezone } from "@/lib/onboarding";
 
@@ -38,8 +39,10 @@ function timezoneOptions(): string[] {
 }
 
 export function GeneralSettings() {
+  const { user } = useAuth();
   const { enterpriseId, loading: idLoading } = useEnterpriseId();
   const timezones = useMemo(timezoneOptions, []);
+  const [isOwner, setIsOwner] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -50,6 +53,13 @@ export function GeneralSettings() {
   const [industry, setIndustry] = useState("");
   const [timezone, setTimezone] = useState(detectTimezone());
   const [mode, setMode] = useState<Mode>("supervised");
+
+  useEffect(() => {
+    if (!user) return;
+    getDoc(doc(db, "users", user.uid)).then((snap) => {
+      setIsOwner((snap.data()?.role as string) === "owner");
+    });
+  }, [user]);
 
   useEffect(() => {
     if (!enterpriseId) return;
@@ -161,7 +171,15 @@ export function GeneralSettings() {
       </div>
 
       <div className="bg-white rounded-2xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">
-        <h3 className="text-lg font-bold mb-4">Agent Defaults</h3>
+        <div className="flex items-center gap-2 mb-4">
+          <h3 className="text-lg font-bold">Agent Defaults</h3>
+          {!busy && !isOwner && (
+            <span className="flex items-center gap-1 text-[11px] font-medium text-gray-400 bg-gray-50 rounded-full px-2 py-0.5">
+              <Lock1 size={12} variant="Bold" color="#9ca3af" />
+              Owner only
+            </span>
+          )}
+        </div>
         {busy ? (
           <p className="text-sm text-gray-400">Loading…</p>
         ) : (
@@ -172,24 +190,29 @@ export function GeneralSettings() {
                 <select
                   value={mode}
                   onChange={(e) => setMode(e.target.value as Mode)}
-                  className={`${inputClass} bg-white`}
+                  disabled={!isOwner}
+                  className={`${inputClass} bg-white disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed`}
                 >
                   <option value="supervised">Supervised (approve before send)</option>
                   <option value="unsupervised">Autopilot (auto-send, log for review)</option>
                   <option value="off">Off (agents don&apos;t run)</option>
                 </select>
                 <p className="text-xs text-gray-400 mt-1.5">
-                  Controls whether agents suggest, act automatically, or stay off.
+                  {isOwner
+                    ? "Controls whether agents suggest, act automatically, or stay off."
+                    : "Only the organization owner can change the agent approval mode."}
                 </p>
               </div>
             </div>
-            <button
-              onClick={saveDefaults}
-              disabled={saving}
-              className="mt-5 bg-black text-white text-sm font-medium rounded-full px-5 py-2.5 hover:bg-gray-800 disabled:opacity-50"
-            >
-              {saving ? "Saving…" : "Save Changes"}
-            </button>
+            {isOwner && (
+              <button
+                onClick={saveDefaults}
+                disabled={saving}
+                className="mt-5 bg-black text-white text-sm font-medium rounded-full px-5 py-2.5 hover:bg-gray-800 disabled:opacity-50"
+              >
+                {saving ? "Saving…" : "Save Changes"}
+              </button>
+            )}
           </>
         )}
       </div>
