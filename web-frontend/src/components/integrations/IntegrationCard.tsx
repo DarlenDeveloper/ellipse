@@ -8,6 +8,7 @@ export function IntegrationCard({
   integration,
   onConnectClick,
   onDisconnect,
+  onUpdate,
   subtitle,
   busy,
 }: {
@@ -15,6 +16,7 @@ export function IntegrationCard({
   onToggle?: (id: string) => void;
   onConnectClick?: () => void;
   onDisconnect?: () => void;
+  onUpdate?: () => void;
   subtitle?: string;
   busy?: boolean;
 }) {
@@ -50,15 +52,26 @@ export function IntegrationCard({
               <TickCircle size={16} variant="Bold" />
               Connected
             </span>
-            {onDisconnect && (
-              <button
-                type="button"
-                onClick={onDisconnect}
-                className="text-sm font-medium text-red-600 border border-red-200 hover:bg-red-50 rounded-full px-4 py-2"
-              >
-                Disconnect
-              </button>
-            )}
+            <div className="flex items-center gap-2">
+              {onUpdate && (
+                <button
+                  type="button"
+                  onClick={onUpdate}
+                  className="text-sm font-medium text-gray-700 border border-gray-200 hover:bg-gray-50 rounded-full px-4 py-2"
+                >
+                  Update
+                </button>
+              )}
+              {onDisconnect && (
+                <button
+                  type="button"
+                  onClick={onDisconnect}
+                  className="text-sm font-medium text-red-600 border border-red-200 hover:bg-red-50 rounded-full px-4 py-2"
+                >
+                  Disconnect
+                </button>
+              )}
+            </div>
           </>
         ) : (
           <button

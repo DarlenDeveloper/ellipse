@@ -286,6 +286,13 @@ export default function IntegrationsPage() {
                   : undefined
               }
               onDisconnect={() => setDisconnectTarget({ id: integration.id, name: integration.name })}
+              onUpdate={
+                isWhatsapp && whatsappConnected
+                  ? openModal(setShowWhatsappModal)
+                  : isSmtp && smtpConnected
+                  ? openModal(setShowSmtpModal)
+                  : undefined
+              }
               subtitle={
                 isZoho && zohoConnected
                   ? "Connected"

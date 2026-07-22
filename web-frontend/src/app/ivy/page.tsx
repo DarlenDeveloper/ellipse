@@ -28,9 +28,10 @@ import { db, functions } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 import { useEnterpriseId } from "@/lib/use-enterprise";
 import { IvyOrb } from "@/components/ivy/IvyOrb";
+import { FileCard, stripFileUrls, type ChatFile } from "@/components/ivy/FileCard";
 import { cn } from "@/lib/utils";
 
-type Msg = { role: "ivy" | "user"; text: string };
+type Msg = { role: "ivy" | "user"; text: string; files?: ChatFile[] };
 
 type ChatSummary = {
   id: string;
@@ -178,8 +179,10 @@ export default function IvyPage() {
 
       const fn = httpsCallable(functions, "askAgent");
       const res = await fn({ enterpriseId, agentId, message: q, history });
-      const reply = (res.data as { reply?: string })?.reply ?? "…";
-      const full: Msg[] = [...withUser, { role: "ivy", text: reply }];
+      const data = res.data as { reply?: string; files?: ChatFile[] };
+      const ivyMsg: Msg = { role: "ivy", text: data.reply ?? "…" };
+      if (data.files && data.files.length) ivyMsg.files = data.files;
+      const full: Msg[] = [...withUser, ivyMsg];
       setMessages(full);
       if (cid) {
         await updateDoc(doc(db, "ivy_chats", cid), {
@@ -384,13 +387,20 @@ export default function IvyPage() {
                       <IvyOrb size={30} />
                     </div>
                   )}
-                  <div
-                    className={cn(
-                      "max-w-[78%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
-                      m.role === "user" ? "bg-black text-white rounded-br-md" : "bg-white shadow-sm text-gray-700 rounded-bl-md"
-                    )}
-                  >
-                    {m.text}
+                  <div className="max-w-[78%] space-y-2">
+                    <div
+                      className={cn(
+                        "rounded-2xl px-4 py-3 text-sm leading-relaxed",
+                        m.role === "user"
+                          ? "bg-black text-white rounded-br-md"
+                          : "bg-white shadow-sm text-gray-700 rounded-bl-md"
+                      )}
+                    >
+                      {m.role === "ivy" ? stripFileUrls(m.text) : m.text}
+                    </div>
+                    {m.files?.map((f) => (
+                      <FileCard key={f.url} file={f} />
+                    ))}
                   </div>
                 </div>
               ))}

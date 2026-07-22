@@ -468,7 +468,7 @@ export async function chatWithAgent(
   agentId: string,
   message: string,
   history: ChatTurn[] = []
-): Promise<{ reply: string; actions: unknown[] }> {
+): Promise<{ reply: string; actions: unknown[]; files: { name: string; url: string; type: string }[] }> {
   const entSnap = await db.doc(`enterprises/${enterpriseId}`).get();
   const orgName = (entSnap.data()?.name as string) || "your company";
 
@@ -489,7 +489,7 @@ export async function chatWithAgent(
   } else {
     const caSnap = await db.doc(`custom_agents/${agentId}`).get();
     if (!caSnap.exists || caSnap.data()?.enterprise_id !== enterpriseId) {
-      return { reply: "This agent no longer exists.", actions: [] };
+      return { reply: "This agent no longer exists.", actions: [], files: [] };
     }
     const cfg = caSnap.data() as CustomAgent & { enterprise_id: string };
     label = cfg.name || "Custom Agent";
@@ -504,18 +504,30 @@ export async function chatWithAgent(
   const first = await callGemini({ system, prompt, tools });
 
   if (!first.functionCalls.length) {
-    return { reply: first.text || "…", actions: [] };
+    return { reply: first.text || "…", actions: [], files: [] };
   }
 
   // Execute tool calls.
   const results: string[] = [];
   const actions: unknown[] = [];
+  const files: { name: string; url: string; type: string }[] = [];
   for (const call of first.functionCalls) {
     try {
       const out = await runTool(enterpriseId, agentId, call.name, call.args);
       results.push(`${call.name} → ${out}`);
       if (["create_crm_lead", "reply_to_conversation", "create_document"].includes(call.name)) {
         actions.push({ name: call.name, args: call.args, result: out });
+      }
+      // Surface created documents as downloadable file cards (not raw URLs in text).
+      if (call.name === "create_document") {
+        try {
+          const parsed = JSON.parse(out) as { name?: string; url?: string };
+          if (parsed.url && parsed.name) {
+            files.push({ name: parsed.name, url: parsed.url, type: parsed.name.split(".").pop() || "file" });
+          }
+        } catch {
+          /* ignore */
+        }
       }
     } catch (e) {
       results.push(`${call.name} → error: ${(e as Error).message}`);
@@ -531,11 +543,14 @@ export async function chatWithAgent(
     ...results,
     ``,
     `Now reply to the user in natural language. If an action was queued for approval, say so clearly.`,
+    files.length
+      ? `IMPORTANT: A file was created and is shown to the user as a downloadable card below your message. Do NOT paste the file URL or any long link in your reply — just refer to the file by name (e.g. "I've created the report — it's attached below and saved to your Data").`
+      : "",
   ]
     .filter(Boolean)
     .join("\n");
 
   const second = await callGemini({ system, prompt: prompt2 });
   logger.info("agent chat", { enterpriseId, agentId, toolCalls: first.functionCalls.length });
-  return { reply: second.text || first.text || "Done.", actions };
+  return { reply: second.text || first.text || "Done.", actions, files };
 }

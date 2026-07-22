@@ -7,9 +7,10 @@ import { httpsCallable } from "firebase/functions";
 import { functions } from "@/lib/firebase";
 import { useEnterpriseId } from "@/lib/use-enterprise";
 import { IvyOrb } from "./IvyOrb";
+import { FileCard, stripFileUrls, type ChatFile } from "./FileCard";
 import { cn } from "@/lib/utils";
 
-type Msg = { role: "ivy" | "user"; text: string };
+type Msg = { role: "ivy" | "user"; text: string; files?: ChatFile[] };
 
 const SUGGESTIONS = [
   "How did we do this week?",
@@ -45,8 +46,10 @@ export function IvyBubble() {
     try {
       const fn = httpsCallable(functions, "askAgent");
       const res = await fn({ enterpriseId, agentId: "ivy", message: q, history });
-      const reply = (res.data as { reply?: string })?.reply ?? "…";
-      setMessages((m) => [...m, { role: "ivy", text: reply }]);
+      const data = res.data as { reply?: string; files?: ChatFile[] };
+      const msg: Msg = { role: "ivy", text: data.reply ?? "…" };
+      if (data.files && data.files.length) msg.files = data.files;
+      setMessages((m) => [...m, msg]);
     } catch (e) {
       setMessages((m) => [...m, { role: "ivy", text: "Something went wrong. Please try again." }]);
       console.error(e);
@@ -93,15 +96,20 @@ export function IvyBubble() {
           <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
             {messages.map((m, i) => (
               <div key={i} className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
-                <div
-                  className={cn(
-                    "max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
-                    m.role === "user"
-                      ? "bg-black text-white rounded-br-md"
-                      : "bg-gray-50 text-gray-700 rounded-bl-md"
-                  )}
-                >
-                  {m.text}
+                <div className="max-w-[80%] space-y-2">
+                  <div
+                    className={cn(
+                      "rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
+                      m.role === "user"
+                        ? "bg-black text-white rounded-br-md"
+                        : "bg-gray-50 text-gray-700 rounded-bl-md"
+                    )}
+                  >
+                    {m.role === "ivy" ? stripFileUrls(m.text) : m.text}
+                  </div>
+                  {m.files?.map((f) => (
+                    <FileCard key={f.url} file={f} />
+                  ))}
                 </div>
               </div>
             ))}
