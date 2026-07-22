@@ -90,47 +90,46 @@ export function Sidebar() {
         })}
       </nav>
 
-      {/* Mode switcher */}
-      <div className="mt-4 pt-4 border-t border-gray-100">
+      {/* Pinned footer — mode, collapse, profile (never scrolls) */}
+      <div className="shrink-0 pt-3 mt-2 border-t border-gray-100">
+        {/* Mode switcher */}
         <ModeSwitcher collapsed={collapsed} />
-      </div>
 
-      {/* Collapse toggle */}
-      <button
-        onClick={toggle}
-        className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center mx-auto mt-4 hover:bg-gray-200 transition-colors"
-      >
-        {collapsed ? (
-          <ArrowRight2 size={14} variant="Linear" color="#6b7280" />
+        {/* Collapse toggle */}
+        <button
+          onClick={toggle}
+          className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center mx-auto mt-3 hover:bg-gray-200 transition-colors"
+        >
+          {collapsed ? (
+            <ArrowRight2 size={14} variant="Linear" color="#6b7280" />
+          ) : (
+            <ArrowLeft2 size={14} variant="Linear" color="#6b7280" />
+          )}
+        </button>
+
+        {/* User Profile */}
+        {!collapsed ? (
+          <div className="flex flex-col items-center pt-3 mt-3 border-t border-gray-100">
+            <div className="relative mb-2">
+              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-gray-300 to-gray-400 border-2 border-white shadow" />
+              <span className="absolute -top-1 -right-1 bg-black text-white text-[10px] font-semibold w-5 h-5 rounded-full flex items-center justify-center border-2 border-white">
+                3
+              </span>
+            </div>
+            <p className="text-[14px] font-semibold">George</p>
+            <p className="text-xs text-gray-400">admin@ellipse.io</p>
+          </div>
         ) : (
-          <ArrowLeft2 size={14} variant="Linear" color="#6b7280" />
+          <div className="flex justify-center pt-3 mt-3 border-t border-gray-100">
+            <div className="relative">
+              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-gray-300 to-gray-400" />
+              <span className="absolute -top-1 -right-1 bg-black text-white text-[9px] font-semibold w-4 h-4 rounded-full flex items-center justify-center border-2 border-white">
+                3
+              </span>
+            </div>
+          </div>
         )}
-      </button>
-
-      {/* User Profile */}
-      {!collapsed && (
-        <div className="flex flex-col items-center pt-4 mt-4 border-t border-gray-100">
-          <div className="relative mb-2">
-            <div className="w-12 h-12 rounded-full bg-gradient-to-br from-gray-300 to-gray-400 border-2 border-white shadow" />
-            <span className="absolute -top-1 -right-1 bg-black text-white text-[10px] font-semibold w-5 h-5 rounded-full flex items-center justify-center border-2 border-white">
-              3
-            </span>
-          </div>
-          <p className="text-[14px] font-semibold">George</p>
-          <p className="text-xs text-gray-400">admin@ellipse.io</p>
-        </div>
-      )}
-
-      {collapsed && (
-        <div className="flex justify-center pt-4 mt-4 border-t border-gray-100">
-          <div className="relative">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-gray-300 to-gray-400" />
-            <span className="absolute -top-1 -right-1 bg-black text-white text-[9px] font-semibold w-4 h-4 rounded-full flex items-center justify-center border-2 border-white">
-              3
-            </span>
-          </div>
-        </div>
-      )}
+      </div>
     </aside>
   );
 }
