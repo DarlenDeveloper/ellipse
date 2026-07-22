@@ -88,6 +88,7 @@ export default function IvyPage() {
   const { enterpriseId } = useEnterpriseId();
 
   const [connTypes, setConnTypes] = useState<string[]>([]);
+  const [customAgents, setCustomAgents] = useState<{ id: string; name: string }[]>([]);
   const [agentId, setAgentId] = useState("ivy");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -100,7 +101,7 @@ export default function IvyPage() {
 
   useEffect(() => {
     if (!enterpriseId) return;
-    return onSnapshot(
+    const unsubConn = onSnapshot(
       query(collection(db, "connections"), where("enterprise_id", "==", enterpriseId)),
       (snap) => {
         setConnTypes(
@@ -111,14 +112,23 @@ export default function IvyPage() {
         );
       }
     );
+    const unsubCustom = onSnapshot(
+      query(collection(db, "custom_agents"), where("enterprise_id", "==", enterpriseId)),
+      (snap) => setCustomAgents(snap.docs.map((d) => ({ id: d.id, name: (d.data().name as string) || "Custom Agent" })))
+    );
+    return () => {
+      unsubConn();
+      unsubCustom();
+    };
   }, [enterpriseId]);
 
   const agents: AgentOption[] = useMemo(
     () => [
       { id: "ivy", name: "Ivy — all agents", logo: null },
       ...connTypes.map((t) => ({ id: t, name: CONNECTION_AGENTS[t].name, logo: CONNECTION_AGENTS[t].logo })),
+      ...customAgents.map((c) => ({ id: c.id, name: c.name, logo: null })),
     ],
-    [connTypes]
+    [connTypes, customAgents]
   );
   const active = agents.find((a) => a.id === agentId) ?? agents[0];
 

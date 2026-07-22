@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { SearchNormal1, More, Cpu, DirectInbox } from "iconsax-react";
+import { SearchNormal1, More, Cpu, DirectInbox, Add, Trash } from "iconsax-react";
 import {
   collection,
   query,
@@ -10,10 +10,12 @@ import {
   onSnapshot,
   doc,
   getDoc,
+  deleteDoc,
 } from "firebase/firestore";
 import { cn } from "@/lib/utils";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
+import { CustomAgentModal } from "@/components/agents/CustomAgentModal";
 
 // Connection type → the agent that runs it. logo null → falls back to an icon.
 const AGENT_META: Record<string, { name: string; agentId: string; channel: string; logo: string | null }> = {
@@ -52,28 +54,35 @@ function timeAgo(d?: Date): string {
   return `${Math.floor(hr / 24)} d ago`;
 }
 
+type CustomAgent = { id: string; name: string; specialty?: string; tools?: string[] };
+
 export default function AgentsPage() {
   const { user } = useAuth();
+  const [enterpriseId, setEnterpriseId] = useState<string | null>(null);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [actions, setActions] = useState<Action[]>([]);
+  const [customAgents, setCustomAgents] = useState<CustomAgent[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [showModal, setShowModal] = useState(false);
 
   useEffect(() => {
     if (!user) return;
     let unsubConn: (() => void) | undefined;
     let unsubAct: (() => void) | undefined;
+    let unsubCustom: (() => void) | undefined;
 
     (async () => {
       const userSnap = await getDoc(doc(db, "users", user.uid));
-      const enterpriseId = userSnap.data()?.enterprise_id as string | undefined;
-      if (!enterpriseId) {
+      const eid = userSnap.data()?.enterprise_id as string | undefined;
+      if (!eid) {
         setLoading(false);
         return;
       }
+      setEnterpriseId(eid);
 
       unsubConn = onSnapshot(
-        query(collection(db, "connections"), where("enterprise_id", "==", enterpriseId)),
+        query(collection(db, "connections"), where("enterprise_id", "==", eid)),
         (snap) => {
           setConnections(snap.docs.map((d) => d.data() as Connection));
           setLoading(false);
@@ -81,13 +90,19 @@ export default function AgentsPage() {
       );
 
       unsubAct = onSnapshot(
-        query(collection(db, "pending_actions"), where("enterprise_id", "==", enterpriseId)),
+        query(collection(db, "pending_actions"), where("enterprise_id", "==", eid)),
         (snap) => setActions(snap.docs.map((d) => d.data() as Action))
+      );
+
+      unsubCustom = onSnapshot(
+        query(collection(db, "custom_agents"), where("enterprise_id", "==", eid)),
+        (snap) => setCustomAgents(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<CustomAgent, "id">) })))
       );
     })();
 
     return () => {
       unsubConn?.();
+      unsubCustom?.();
       unsubAct?.();
     };
   }, [user]);
@@ -128,10 +143,22 @@ export default function AgentsPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Agents</h1>
           <p className="text-gray-400 mt-1">
-            Monitor the AI agents running each of your connections.
+            Monitor the AI agents running each of your connections, and build your own.
           </p>
         </div>
+        <button
+          onClick={() => setShowModal(true)}
+          disabled={!enterpriseId}
+          className="flex items-center gap-2 bg-black text-white text-sm font-semibold rounded-full px-5 py-2.5 hover:bg-gray-800 disabled:opacity-50"
+        >
+          <Add size={18} variant="Linear" color="#ffffff" />
+          New Agent
+        </button>
       </div>
+
+      {showModal && enterpriseId && (
+        <CustomAgentModal enterpriseId={enterpriseId} onClose={() => setShowModal(false)} />
+      )}
 
       {/* Search */}
       <div className="flex items-center gap-3 mb-6">
@@ -150,7 +177,7 @@ export default function AgentsPage() {
 
       {loading ? (
         <p className="text-sm text-gray-400">Loading…</p>
-      ) : filtered.length === 0 ? (
+      ) : filtered.length === 0 && customAgents.length === 0 ? (
         <div className="flex flex-col items-center justify-center text-center py-24 bg-white rounded-3xl border border-gray-100">
           <div className="w-14 h-14 rounded-2xl bg-gray-50 flex items-center justify-center mb-4">
             <Cpu size={28} variant="Bold" color="#9ca3af" />
@@ -212,6 +239,50 @@ export default function AgentsPage() {
               </div>
             </div>
           ))}
+
+          {/* Custom agents */}
+          {customAgents
+            .filter(
+              (a) =>
+                a.name.toLowerCase().includes(search.toLowerCase()) ||
+                (a.specialty ?? "").toLowerCase().includes(search.toLowerCase())
+            )
+            .map((agent) => (
+              <div
+                key={agent.id}
+                className="bg-white rounded-2xl border border-gray-100 p-6 shadow-[0_2px_12px_rgba(0,0,0,0.03)] hover:shadow-md transition-shadow"
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-black flex items-center justify-center">
+                      <Cpu size={22} variant="Bold" color="#ffffff" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold">{agent.name}</h3>
+                      <p className="text-xs text-gray-400">Custom agent</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium rounded-full px-3 py-1 bg-blue-50 text-blue-600">Custom</span>
+                    <button
+                      onClick={() => deleteDoc(doc(db, "custom_agents", agent.id))}
+                      title="Delete agent"
+                      className="text-gray-300 hover:text-red-600"
+                    >
+                      <Trash size={17} variant="Linear" />
+                    </button>
+                  </div>
+                </div>
+                <p className="text-sm text-gray-500 line-clamp-2">{agent.specialty}</p>
+                <div className="flex flex-wrap gap-1.5 pt-4 mt-4 border-t border-gray-100">
+                  {(agent.tools ?? []).slice(0, 5).map((t) => (
+                    <span key={t} className="text-[11px] text-gray-500 bg-gray-50 rounded-full px-2.5 py-1">
+                      {t.replace(/_/g, " ")}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
         </div>
       )}
     </main>

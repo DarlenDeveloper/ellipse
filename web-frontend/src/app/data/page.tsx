@@ -33,7 +33,7 @@ type Report = {
   agent: string;
   agent_label: string;
   logo?: string;
-  period: Period;
+  period: Period | "document";
   period_key: string;
   period_label?: string;
   title: string;
@@ -67,6 +67,7 @@ function fmtSize(bytes: number) {
 export default function DataPage() {
   const { enterpriseId } = useEnterpriseId();
   const [reports, setReports] = useState<Report[]>([]);
+  const [documents, setDocuments] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [activeFolder, setActiveFolder] = useState<string | null>(null); // agent
@@ -76,32 +77,73 @@ export default function DataPage() {
 
   useEffect(() => {
     if (!enterpriseId) return;
-    const q = query(collection(db, "reports"), where("enterprise_id", "==", enterpriseId));
-    return onSnapshot(q, (snap) => {
-      const rows = snap.docs
-        .map((d) => ({ id: d.id, ...(d.data() as Omit<Report, "id">) }))
-        .sort(
-          (a, b) =>
-            (b.period_start?.toDate?.().getTime() ?? 0) - (a.period_start?.toDate?.().getTime() ?? 0)
-        );
-      setReports(rows);
-      setLoading(false);
-    });
+    const unsubReports = onSnapshot(
+      query(collection(db, "reports"), where("enterprise_id", "==", enterpriseId)),
+      (snap) => {
+        const rows = snap.docs
+          .map((d) => ({ id: d.id, ...(d.data() as Omit<Report, "id">) }))
+          .sort(
+            (a, b) =>
+              (b.period_start?.toDate?.().getTime() ?? 0) - (a.period_start?.toDate?.().getTime() ?? 0)
+          );
+        setReports(rows);
+        setLoading(false);
+      }
+    );
+    // Agent-created documents surface here too, as their own "document" entries.
+    const unsubDocs = onSnapshot(
+      query(collection(db, "documents"), where("enterprise_id", "==", enterpriseId)),
+      (snap) => {
+        const rows: Report[] = snap.docs.map((d) => {
+          const data = d.data() as Record<string, unknown>;
+          const file = data.file as ReportFile | undefined;
+          return {
+            id: d.id,
+            agent: (data.agent as string) || "custom",
+            agent_label: (data.agent_label as string) || "Agent",
+            logo: (data.logo as string) || "",
+            period: "document",
+            period_key: d.id,
+            period_label: "Document",
+            title: (data.title as string) || "Document",
+            summary: `${(data.kind as string) === "xlsx" ? "Spreadsheet" : "Document"} created by ${
+              (data.agent_label as string) || "an agent"
+            }.`,
+            files: file ? [file] : [],
+            created_at: data.created_at as { toDate: () => Date } | undefined,
+            period_start: data.created_at as { toDate: () => Date } | undefined,
+          };
+        });
+        setDocuments(rows);
+      }
+    );
+    return () => {
+      unsubReports();
+      unsubDocs();
+    };
   }, [enterpriseId]);
 
-  // Folders = agents that have reports
+  const allItems = useMemo(
+    () =>
+      [...reports, ...documents].sort(
+        (a, b) => (b.period_start?.toDate?.().getTime() ?? 0) - (a.period_start?.toDate?.().getTime() ?? 0)
+      ),
+    [reports, documents]
+  );
+
+  // Folders = agents that have reports or documents
   const folders = useMemo(() => {
     const map = new Map<string, { agent: string; label: string; logo?: string; count: number }>();
-    for (const r of reports) {
+    for (const r of allItems) {
       const cur = map.get(r.agent) ?? { agent: r.agent, label: r.agent_label, logo: r.logo, count: 0 };
       cur.count++;
       map.set(r.agent, cur);
     }
     return [...map.values()].sort((a, b) => a.label.localeCompare(b.label));
-  }, [reports]);
+  }, [allItems]);
 
   const visible = useMemo(() => {
-    return reports.filter((r) => {
+    return allItems.filter((r) => {
       if (activeFolder && r.agent !== activeFolder) return false;
       if (period !== "all" && r.period !== period) return false;
       if (search) {
@@ -110,7 +152,7 @@ export default function DataPage() {
       }
       return true;
     });
-  }, [reports, activeFolder, period, search]);
+  }, [allItems, activeFolder, period, search]);
 
   const generateNow = async () => {
     if (!enterpriseId || generating) return;
@@ -169,7 +211,7 @@ export default function DataPage() {
               All Reports
             </span>
             <span className={cn("text-xs", activeFolder === null ? "text-white/60" : "text-gray-400")}>
-              {reports.length}
+              {allItems.length}
             </span>
           </button>
           <div className="space-y-0.5 mt-0.5">

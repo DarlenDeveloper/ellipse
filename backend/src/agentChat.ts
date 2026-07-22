@@ -112,20 +112,51 @@ const T = {
       required: ["conversationId", "body"],
     },
   },
+  create_document: {
+    name: "create_document",
+    description:
+      "Create a document (Word or Excel) and save it to the workspace Data page. Use for quotes, letters, summaries (docx) or tabular exports/lists (xlsx). Only use real data provided or fetched via other tools.",
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Document title / file name" },
+        kind: { type: "string", description: "'docx' for a document, 'xlsx' for a spreadsheet" },
+        body: { type: "string", description: "For docx: the full text content (use newlines for paragraphs)." },
+        headers: { type: "array", items: { type: "string" }, description: "For xlsx: column headers." },
+        rows: {
+          type: "array",
+          items: { type: "array", items: { type: "string" } },
+          description: "For xlsx: rows of cell values matching the headers.",
+        },
+      },
+      required: ["title", "kind"],
+    },
+  },
 } as const;
 
 type ToolDecl = { name: string; description: string; parameters: Record<string, unknown> };
 
-/** Which tools each agent gets, based on what's connected. */
+const TOOL_CATALOG: Record<string, ToolDecl> = {
+  search_conversations: T.search_conversations,
+  get_reports: T.get_reports,
+  get_sales_summary: T.get_sales_summary,
+  get_web_analytics: T.get_web_analytics,
+  create_crm_lead: T.create_crm_lead,
+  reply_to_conversation: T.reply_to_conversation,
+  create_document: T.create_document,
+};
+
+const BUILTIN_AGENTS = new Set(["ivy", "zoho", "website", "google-workspace", "smtp", "microsoft365", "whatsapp"]);
+
+/** Which tools each built-in agent gets, based on what's connected. */
 function toolsFor(agentId: string, connected: Set<string>): ToolDecl[] {
   const tools: ToolDecl[] = [];
   const has = (t: ConnType) => connected.has(t);
 
   if (agentId === "ivy") {
-    tools.push(T.search_conversations, T.get_reports);
+    tools.push(T.search_conversations, T.get_reports, T.create_document);
     if (has("zoho")) tools.push(T.get_sales_summary, T.create_crm_lead);
     if (has("website")) tools.push(T.get_web_analytics);
-    // Ivy can reply on any connected messaging channel
     if (has("google-workspace") || has("smtp") || has("microsoft365") || has("whatsapp")) {
       tools.push(T.reply_to_conversation);
     }
@@ -133,16 +164,32 @@ function toolsFor(agentId: string, connected: Set<string>): ToolDecl[] {
   }
 
   if (agentId === "zoho") {
-    tools.push(T.get_sales_summary, T.create_crm_lead, T.search_conversations);
+    tools.push(T.get_sales_summary, T.create_crm_lead, T.search_conversations, T.create_document);
     return tools;
   }
   if (agentId === "website") {
-    tools.push(T.get_web_analytics);
+    tools.push(T.get_web_analytics, T.create_document);
     return tools;
   }
   // messaging agents
-  tools.push(T.search_conversations, T.reply_to_conversation);
+  tools.push(T.search_conversations, T.reply_to_conversation, T.create_document);
   return tools;
+}
+
+type CustomAgent = { name: string; specialty?: string; tools?: string[]; channel?: string };
+
+/** Tools for a user-defined custom agent (its configured subset, gated by connections). */
+function toolsForCustom(cfg: CustomAgent, connected: Set<string>): ToolDecl[] {
+  const wanted = cfg.tools ?? [];
+  return wanted
+    .map((t) => TOOL_CATALOG[t])
+    .filter((t): t is ToolDecl => {
+      if (!t) return false;
+      // Gate connection-dependent tools.
+      if ((t === T.get_sales_summary || t === T.create_crm_lead) && !connected.has("zoho")) return false;
+      if (t === T.get_web_analytics && !connected.has("website")) return false;
+      return true;
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -168,8 +215,34 @@ async function runTool(
       return toolCreateLead(enterpriseId, args);
     case "reply_to_conversation":
       return toolReply(enterpriseId, args);
+    case "create_document":
+      return toolCreateDocument(enterpriseId, agentId, args);
     default:
       return `Unknown tool ${name}.`;
+  }
+}
+
+async function toolCreateDocument(enterpriseId: string, agentId: string, args: Record<string, unknown>) {
+  const title = String(args.title ?? "").trim();
+  const kind = (args.kind as string) === "xlsx" ? "xlsx" : "docx";
+  if (!title) return "Missing document title.";
+  try {
+    const { createDocument } = await import("./documents");
+    const rowsRaw = (args.rows as unknown[]) ?? [];
+    const rows = rowsRaw.map((r) => (Array.isArray(r) ? r.map((c) => String(c)) : [String(r)]));
+    const doc = await createDocument({
+      enterpriseId,
+      agentId,
+      agentLabel: AGENT_LABEL[agentId] ?? "Agent",
+      title,
+      kind,
+      body: args.body as string | undefined,
+      headers: (args.headers as string[]) ?? [],
+      rows,
+    });
+    return JSON.stringify({ action: "create_document", status: "saved", name: doc.name, url: doc.url });
+  } catch (e) {
+    return `Could not create document: ${(e as Error).message}`;
   }
 }
 
@@ -326,23 +399,27 @@ async function toolReply(enterpriseId: string, args: Record<string, unknown>) {
 // Chat entrypoint
 // ---------------------------------------------------------------------------
 
-function buildSystem(agentId: string, orgName: string, kb: string): string {
-  const label = AGENT_LABEL[agentId] ?? "Agent";
+function buildSystem(agentId: string, label: string, orgName: string, kb: string, customSpecialty?: string): string {
   const base = `You are ${label} for ${orgName}, operating inside Ellipse — a business automation platform. Today is ${new Date().toISOString().slice(0, 10)}.
 - Be concise, helpful, and professional. Answer using the tools when the question needs live data.
-- When the user asks you to DO something (create a lead, reply to a customer), use the matching action tool. Actions are subject to the workspace approval rules — if an action comes back "pending", tell the user it's been queued for approval; if "executed", confirm it's done; if "off"/"frozen", explain agents aren't currently running.
-- Never invent data. If a tool returns nothing, say so.`;
+- When the user asks you to DO something (create a lead, reply to a customer, make a document), use the matching action tool. Actions are subject to the workspace approval rules — if an action comes back "pending", tell the user it's been queued for approval; if "executed"/"saved", confirm it's done; if "off"/"frozen", explain agents aren't currently running.
+- STRICT no-hallucination: never invent facts, numbers, names, customers, emails, deals, prices or metrics. Only state what a tool returned or what the user/knowledge base gave you. If you don't have the data, say you don't have it and offer to fetch it with a tool. Do not guess.
+- Stay within your specialty. If a request is outside your area, say so and (if you're a specialist agent) suggest asking Ivy, who can coordinate across agents.`;
 
-  const scope =
-    agentId === "ivy"
-      ? `\nYou are the orchestrator: you can see across ALL connected agents (inbox conversations, reports, CRM sales, website analytics) and coordinate actions on any of them.`
-      : agentId === "zoho"
-      ? `\nYou specialize in the Zoho CRM: sales figures, leads, contacts and deals.`
-      : agentId === "website"
-      ? `\nYou specialize in website analytics.`
-      : `\nYou specialize in the ${label.replace(" Agent", "")} channel: its conversations and replies.`;
+  let scope: string;
+  if (customSpecialty) {
+    scope = `\n\nYour role and specialty:\n${customSpecialty}`;
+  } else if (agentId === "ivy") {
+    scope = `\nYou are the orchestrator: you can see across ALL connected agents (inbox conversations, reports, CRM sales, website analytics), create documents, and coordinate actions on any of them.`;
+  } else if (agentId === "zoho") {
+    scope = `\nYou are the Zoho CRM specialist: sales figures, leads, contacts and deals. You are excellent at CRM work and nothing else — defer non-CRM questions.`;
+  } else if (agentId === "website") {
+    scope = `\nYou are the website analytics specialist: traffic, visitors, pages, geography. Defer non-analytics questions.`;
+  } else {
+    scope = `\nYou are the ${label.replace(" Agent", "")} channel specialist: its conversations and replies. You know this channel deeply and defer questions about other channels.`;
+  }
 
-  const knowledge = kb ? `\n\n--- Company knowledge base ---\n${kb}` : "";
+  const knowledge = kb ? `\n\n--- Company knowledge base (authoritative facts) ---\n${kb}` : "";
   return base + scope + knowledge;
 }
 
@@ -368,8 +445,24 @@ export async function chatWithAgent(
   );
 
   const kb = await loadKnowledgeBase(enterpriseId);
-  const system = buildSystem(agentId, orgName, kb);
-  const tools = toolsFor(agentId, connected);
+
+  // Custom (user-defined) agent? Load its config; otherwise use the built-in.
+  let label = AGENT_LABEL[agentId] ?? "Agent";
+  let system: string;
+  let tools: ToolDecl[];
+  if (BUILTIN_AGENTS.has(agentId)) {
+    system = buildSystem(agentId, label, orgName, kb);
+    tools = toolsFor(agentId, connected);
+  } else {
+    const caSnap = await db.doc(`custom_agents/${agentId}`).get();
+    if (!caSnap.exists || caSnap.data()?.enterprise_id !== enterpriseId) {
+      return { reply: "This agent no longer exists.", actions: [] };
+    }
+    const cfg = caSnap.data() as CustomAgent & { enterprise_id: string };
+    label = cfg.name || "Custom Agent";
+    system = buildSystem(agentId, label, orgName, kb, cfg.specialty);
+    tools = toolsForCustom(cfg, connected);
+  }
 
   const convo = renderHistory(history);
   const prompt = [convo ? `Conversation so far:\n${convo}\n` : "", `User: ${message}`].filter(Boolean).join("\n");
@@ -388,7 +481,7 @@ export async function chatWithAgent(
     try {
       const out = await runTool(enterpriseId, agentId, call.name, call.args);
       results.push(`${call.name} → ${out}`);
-      if (call.name === "create_crm_lead" || call.name === "reply_to_conversation") {
+      if (["create_crm_lead", "reply_to_conversation", "create_document"].includes(call.name)) {
         actions.push({ name: call.name, args: call.args, result: out });
       }
     } catch (e) {
