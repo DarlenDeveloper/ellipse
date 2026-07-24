@@ -527,6 +527,7 @@ export async function chatWithAgent(
   for (const call of first.functionCalls) {
     try {
       const out = await runTool(enterpriseId, agentId, call.name, call.args);
+      logger.info("tool result", { agentId, tool: call.name, enterpriseId, out: out.slice(0, 500) });
       results.push(`${call.name} → ${out}`);
       if (["create_crm_lead", "reply_to_conversation", "create_document"].includes(call.name)) {
         actions.push({ name: call.name, args: call.args, result: out });

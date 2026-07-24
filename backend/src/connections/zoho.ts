@@ -404,6 +404,7 @@ export type SalesSummary = {
   open_pipeline_value: number;
   by_stage: Record<string, number>;
   top_deals: { name: string; stage: string; amount: number }[];
+  recent_leads: { name: string; company: string; created: string }[]; // latest leads, regardless of window
 };
 
 /**
@@ -427,7 +428,23 @@ export async function getSalesSummary(
     open_pipeline_value: 0,
     by_stage: {},
     top_deals: [],
+    recent_leads: [],
   };
+
+  // Latest leads regardless of the window — so "do we have any leads?" is answerable.
+  try {
+    const recent = await zohoRequest(
+      enterpriseId,
+      `Leads?fields=${encodeURIComponent("Full_Name,Company,Created_Time")}&sort_by=Created_Time&sort_order=desc&per_page=10`
+    );
+    summary.recent_leads = (recent?.data ?? []).slice(0, 10).map((l: any) => ({
+      name: l.Full_Name ?? "(unnamed)",
+      company: l.Company ?? "",
+      created: l.Created_Time ? String(l.Created_Time).slice(0, 10) : "",
+    }));
+  } catch {
+    /* non-fatal */
+  }
 
   const [leads, contacts, deals, pipeline] = await Promise.all([
     getRecordsCreated(enterpriseId, "Leads", ["id"], start, end, 200),

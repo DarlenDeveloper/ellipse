@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { SearchNormal1, TickCircle, CloseCircle } from "iconsax-react";
 import { httpsCallable } from "firebase/functions";
-import { doc, getDoc, deleteDoc, collection, getDocs, query as fsQuery, where } from "firebase/firestore";
+import { doc, getDoc, collection, getDocs, query as fsQuery, where } from "firebase/firestore";
 import { integrations as seed } from "@/components/integrations/data";
 import { IntegrationCard } from "@/components/integrations/IntegrationCard";
 import { SmtpConnectModal } from "@/components/integrations/SmtpConnectModal";
@@ -174,7 +174,8 @@ export default function IntegrationsPage() {
     setDisconnecting(true);
     const id = disconnectTarget.id;
     try {
-      await deleteDoc(doc(db, "connections", `${enterpriseId}_${id}`));
+      // Server-side: removes the connection AND purges its data (analytics, messages, sites).
+      await httpsCallable(functions, "disconnectIntegration")({ enterpriseId, type: id });
       setItems((prev) => prev.map((it) => (it.id === id ? { ...it, connected: false } : it)));
       if (id === "google-workspace") setGoogleEmail(null);
       if (id === "zoho") setZohoConnected(false);
@@ -351,8 +352,8 @@ export default function IntegrationsPage() {
           <div className="bg-white rounded-3xl p-6 w-full max-w-md shadow-xl">
             <h3 className="text-xl font-bold">Disconnect {disconnectTarget.name}?</h3>
             <p className="text-sm text-gray-500 mt-2">
-              This removes the connection and stops syncing. You can reconnect anytime — but stored
-              credentials/tokens will be cleared.
+              This removes the connection and <span className="font-medium text-gray-700">permanently deletes its data</span>{" "}
+              (analytics, synced messages, tracked sites). This can&apos;t be undone. You can reconnect later and start fresh.
             </p>
             <div className="flex items-center justify-end gap-3 mt-6">
               <button

@@ -777,6 +777,16 @@ export const pingStorage = onRequest(async (_req, res) => {
   }
 });
 
+/** Disconnect an integration and purge all data it produced (analytics, messages, sites). */
+export const disconnectIntegration = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const enterpriseId = request.data?.enterpriseId as string | undefined;
+  const type = request.data?.type as string | undefined;
+  if (!enterpriseId || !type) throw new HttpsError("invalid-argument", "Missing enterpriseId or type.");
+  const { disconnectIntegration: run } = await import("./disconnect");
+  return run(enterpriseId, type);
+});
+
 export { executeAgentAction };
 export { onPendingActionApproved } from "./approvals";
 export { onMessageCreated } from "./onMessage";
