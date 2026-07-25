@@ -76,6 +76,21 @@ const T = {
       },
     },
   },
+  list_leads: {
+    name: "list_leads",
+    description:
+      "List actual Zoho CRM leads (real rows: name, company, email, phone, owner, status, source, created date), newest first. " +
+      "Use this for ANY question that asks for specific leads — 'top/recent/latest leads', 'which leads', 'unattended leads' " +
+      "(unattended = no owner assigned or status still 'New'/not contacted), leads from a period, etc. " +
+      "NEVER invent lead names, companies or dates — only report what this returns. Use get_sales_summary only for counts/totals, not for listing leads.",
+    parameters: {
+      type: "object",
+      properties: {
+        days: { type: "number", description: "How far back to look, in days (default 90)." },
+        limit: { type: "number", description: "Max leads to return (default 25, max 200)." },
+      },
+    },
+  },
   get_sales_summary: {
     name: "get_sales_summary",
     description: "Get CRM sales figures from Zoho for the last N days: new leads/contacts/deals, deals won, revenue, pipeline.",
@@ -326,6 +341,7 @@ const TOOL_CATALOG: Record<string, ToolDecl> = {
   search_conversations: T.search_conversations,
   get_reports: T.get_reports,
   get_sales_summary: T.get_sales_summary,
+  list_leads: T.list_leads,
   get_web_analytics: T.get_web_analytics,
   create_crm_lead: T.create_crm_lead,
   reply_to_conversation: T.reply_to_conversation,
@@ -350,7 +366,7 @@ function toolsFor(agentId: string, connected: Set<string>): ToolDecl[] {
 
   if (agentId === "ivy") {
     tools.push(T.search_conversations, T.get_reports, T.create_document);
-    if (has("zoho")) tools.push(T.get_sales_summary, T.create_crm_lead, T.get_zoho_quote);
+    if (has("zoho")) tools.push(T.get_sales_summary, T.list_leads, T.create_crm_lead, T.get_zoho_quote);
     if (has("website")) tools.push(T.get_web_analytics);
     // Quotation generation is available whenever there's a data source to quote from.
     if (has("zoho") || has("mercury")) tools.push(T.create_quotation);
@@ -375,6 +391,7 @@ function toolsFor(agentId: string, connected: Set<string>): ToolDecl[] {
   if (agentId === "zoho") {
     tools.push(
       T.get_sales_summary,
+      T.list_leads,
       T.create_crm_lead,
       T.search_conversations,
       T.create_document,
@@ -435,6 +452,8 @@ async function runTool(
       return toolGetReports(enterpriseId, args);
     case "get_sales_summary":
       return toolSalesSummary(enterpriseId, args);
+    case "list_leads":
+      return toolListLeads(enterpriseId, args);
     case "get_web_analytics":
       return toolWebAnalytics(enterpriseId, args);
     case "create_crm_lead":
@@ -1045,6 +1064,33 @@ async function toolGetReports(enterpriseId: string, args: Record<string, unknown
       summary: (r.summary as string)?.slice(0, 600),
     }));
   return JSON.stringify(rows);
+}
+
+async function toolListLeads(enterpriseId: string, args: Record<string, unknown>) {
+  const connSnap = await db.doc(`connections/${enterpriseId}_zoho`).get();
+  if (!connSnap.exists || connSnap.data()?.status !== "active") {
+    return JSON.stringify({ connected: false, note: "Zoho CRM is not connected for this workspace." });
+  }
+  try {
+    const { getLeadsList } = await import("./connections/zoho");
+    const days = args.days ? Number(args.days) : undefined; // only filter by period if asked
+    const limit = Number(args.limit) || 25;
+    const leads = await getLeadsList(enterpriseId, { days, limit });
+    return JSON.stringify({
+      connected: true,
+      window_days: days ?? "all",
+      count: leads.length,
+      note:
+        leads.length === 0
+          ? days
+            ? `No leads were created in the last ${days} days.`
+            : "No leads found in Zoho."
+          : undefined,
+      leads,
+    });
+  } catch (e) {
+    return JSON.stringify({ connected: true, error: `Zoho leads read failed: ${(e as Error).message}` });
+  }
 }
 
 async function toolSalesSummary(enterpriseId: string, args: Record<string, unknown>) {

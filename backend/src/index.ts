@@ -807,6 +807,35 @@ export const mercuryDebug = onRequest(async (req, res) => {
   }
 });
 
+/** TEMPORARY — verify real leads list. ?enterpriseId=&days=&limit=. Remove before ship. */
+export const zohoLeadsDebug = onRequest(
+  { secrets: [zohoClientId, zohoClientSecret] },
+  async (req, res) => {
+    const enterpriseId = req.query.enterpriseId as string | undefined;
+    if (!enterpriseId) {
+      res.status(400).json({ ok: false, error: "Missing enterpriseId" });
+      return;
+    }
+    try {
+      const fields = req.query.fields as string | undefined;
+      if (fields) {
+        const { debugLeadsRaw } = await import("./connections/zoho");
+        const raw = await debugLeadsRaw(enterpriseId, fields);
+        res.json({ ok: true, probe: fields, ...raw });
+        return;
+      }
+      const { getLeadsList } = await import("./connections/zoho");
+      const leads = await getLeadsList(enterpriseId, {
+        days: req.query.days ? Number(req.query.days) : undefined,
+        limit: Number(req.query.limit) || 25,
+      });
+      res.json({ ok: true, count: leads.length, leads });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: (e as Error).message });
+    }
+  }
+);
+
 /** TEMPORARY — inspect a recent Zoho quote's line-item structure. ?enterpriseId=. Remove before ship. */
 export const zohoQuoteDebug = onRequest(
   { secrets: [zohoClientId, zohoClientSecret] },

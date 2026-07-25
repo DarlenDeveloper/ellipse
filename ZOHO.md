@@ -104,6 +104,11 @@ Verified from the org's live metadata (`settings/fields?module=Quotes`):
 - `generate_report` (agent tool) — one Excel per connected source; Zoho = summary/detailed/both. **Detailed is the default** (Summary + Leads + Deals + Contacts + Quotes line-items; workbook opens on the Quotes tab).
 - `generate_owner_analysis` (agent tool, **OWNER-ONLY**) — groups quotes by Quote Owner: count, total & avg sub-total, won count. Gated to `users/{uid}.role === "owner"` (tool not even offered to others + handler re-checks).
 - `listModuleFields` — metadata-driven field discovery (used to find custom fields like Prof_NO).
+- `getLeadsList` / `list_leads` (agent tool) — real lead rows (Full_Name, Company, Email, Phone, Lead_Status, Owner, Lead_Source, Created_Time), newest-first. **No forced window** by default (the Leads module may have only old entries); pass `days` to restrict to a period. Fixes agents guessing/flip-flopping lead lists from the aggregate summary. `get_sales_summary` also carries `recent_leads` (newest 10, window-independent) for "do we have any leads?".
+- `getQuoteForQuotation` / `get_zoho_quote` (agent tool) — fetch one Quote (by proforma no / subject / account) INCLUDING line items, to build a branded proforma via `create_quotation`.
+
+### Quotes line items (verified from live data)
+- Subform field is **`Quoted_Items`** (this org), fallback `Product_Details`. Per-line fields: **`Product_Name`** (lookup → `.name`), **`List_Price`** (unit rate), **`Quantity`**, `Description`, `Discount`, `Net_Total`, `Total`, `Total_After_Discount`. Fetch via `GET Quotes/{id}` (the records list doesn't return the subform).
 
 ## Gotchas / lessons learned
 - **Pagination caps at 2000 records with `page`/`per_page`.** For >2000 you MUST use `page_token` (cursor). The token is BOUND to the first call's params — resend the exact same `fields`, `sort_by`, `sort_order`, `per_page` and just append `&page_token=<next_page_token>`; never mix with `page`; don't URL-encode/alter the token. Errors seen: `DISCRETE_PAGINATION_LIMIT_EXCEEDED`, `TOKEN_BOUND_DATA_MISMATCH`, `REQUIRED_PARAM_MISSING`. Max 100,000 records via page_token; token valid 24h.

@@ -50,6 +50,7 @@ Connections first (CRM → communication → marketing much later), Ivy (persona
 - **WhatsApp** (Meta Cloud API) — webhook, send, agent; WhatsApp-only reply composer in inbox
 - **Zoho CRM** — OAuth (DC-aware), enrich, backfill, write executors, **rich reporting** (see ZOHO.md)
 - **Website analytics** — tracker, collector, verify-install, `/website` analytics page
+- **Mercury Store** (custom external REST API, key-auth) — products/orders/quotations/repairs read+write; server-side `q` search + cursor pagination sweep (whole catalog, not just first page); standalone Mercury agent + Ivy tools (`store_list`/`store_get`/`store_create`/`store_update`, writes gated). See `External-integration-API.md`.
 
 ### Done — agents & intelligence
 - **One agent per connection** sharing `replyBase` (gmail/smtp/microsoft/whatsapp), Zoho CRM agent, Website agent
@@ -59,6 +60,10 @@ Connections first (CRM → communication → marketing much later), Ivy (persona
 - **Custom agents**: user-defined agents (name, specialty, ability checklist) in `custom_agents`; appear in the selector; scoped tools.
 - **Document creation** (`create_document`) + **multi-source reports** (`generate_report`): deterministic Excel/Word built in code from live data (NO AI-authored figures). Saved to `documents` → Data page; mirrored to OneDrive when MS365 connected (gated).
 - **Owner-only Quote Owner analysis** (`generate_owner_analysis`): per-employee quote performance, gated to org owner (role check).
+- **Quotation / proforma generation** (`create_quotation`): deterministic branded PDF (pdfkit) matching the client's proforma layout — letterhead (logo + company block), line-item table, subtotal/VAT/total, prepared-by, terms. Amounts computed in code (no AI figures). Auto proforma number `PREFIX/YY/Mon/NNNNN`. Branding configured in **Settings → Quotation** (owner-only, logo upload) via `saveQuotationBranding`. Can build from a real Zoho quote (`get_zoho_quote` pulls the `Quoted_Items` line items).
+- **Send email** (`send_email`): agent sends a brand-new email to ANY address, optional attachment (e.g. the quotation PDF via `attachDocumentId`). Routed through the gate — supervised → queued in Approvals; attachment support added to Gmail/SMTP/Outlook. Channel auto-picked (Gmail → MS365 → SMTP).
+- **List leads** (`list_leads`): real Zoho lead rows (name, company, owner, status, source, date), newest-first, optional period filter — fixes agents guessing lead lists from the aggregate summary.
+- **Knowledge base file upload** (`ingestKnowledgeFile`): upload PDFs/images/text (e.g. sample quotations); text extracted via Gemini multimodal (verbatim) and fed to agents as context. Settings → Knowledge Base "Upload File".
 - Approvals page, Agents page (live monitoring), Data page (folder/file repository)
 
 ### Reports — how they work (anti-hallucination)
@@ -67,15 +72,33 @@ Connections first (CRM → communication → marketing much later), Ivy (persona
 - All report numbers come straight from the source API into the cells via `exceljs`/`docx` — the AI only picks the tool and phrases the message.
 
 ### Next
-- **Custom system** integration (next up)
+- **Users & roles** (next up) — see the dedicated section below
 - Ivy dashboard briefing card
-- Richer MS365 files (quotation PDFs, live Excel append)
+- Live Excel append via Graph workbook API
+
+## Users & Roles — plan (next up)
+
+Model the client described:
+- **Roles:** `owner`, `admin`, `employee` + orthogonal `can_approve` flag. (Manager/Viewer from the old mock are dropped unless a read-only role is needed.)
+- **Integrations per user:**
+  - A user may use the **org owner's (shared) integrations** — but only **with permission** (owner/admin grants access).
+  - A user may **add their own integrations** freely (no permission needed); these are **personal**, scoped to that user.
+- **Daily per-user digest:** every day **Ivy generates an "org users report" for the owner** — what each user did + summaries pulled from that user's connections (e.g. their Zoho activity). The owner sees the org-wide roll-up of all users.
+- **Visibility:** regular org users **cannot** see other users' activity/reports or the org-wide digest — that's owner-only. *(Confirm exact scope: what else are non-owners restricted from — analytics, other users' inbox, settings?)*
+
+Build steps (once confirmed):
+1. `acceptInvite` callable — invited email signs up → linked to the org with role/can_approve (instead of creating a new org). Wire into post-login landing.
+2. Member-management callables (role-checked + seat-limited): `inviteMember`, `updateMemberRole`, `setCanApprove`, `removeMember`, `revokeInvite`.
+3. Connection ownership model: mark connections as **shared (org)** vs **personal (user)**; per-user grant to use shared ones; scope agent tool access accordingly.
+4. Daily `orgUsersReport` (scheduled) → per-user activity + connection summaries, delivered to the owner.
+5. Rebuild the Users page on real data (members + pending invites), actions gated by viewer role.
+6. Frontend permission gating on settings/integrations for non-admins.
 
 ## Deferred / flagged (security pass before production)
 - Firestore **security rules** still test mode ⚠️ (add owner-only mode, per-user `ivy_chats`, per-enterprise `custom_agents`/`documents`/`reports`)
 - All refresh tokens/creds Firestore → **Secret Manager**
-- **Remove debug fns**: `pingGemini`, `pingZoho`, `pingMicrosoft`, `pingStorage`, `zohoSearchDebug`, `zohoBackfillDebug`, `zohoFieldsDebug`, `crmReportDebug`, `reportGenDebug`, `runGmailAgentDebug`, `runZohoAgentDebug`
-- Role enforcement (only mode is owner-gated so far) + invite **emails**
+- **Remove debug fns**: `pingGemini`, `pingZoho`, `pingMicrosoft`, `pingStorage`, `zohoSearchDebug`, `zohoBackfillDebug`, `zohoFieldsDebug`, `crmReportDebug`, `reportGenDebug`, `runGmailAgentDebug`, `runZohoAgentDebug`, `mercuryDebug`, `quotationDebug`, `zohoQuoteDebug`, `zohoLeadsDebug` (+ helpers `mercuryRawGet`, `debugRecentQuote`, `debugLeadsRaw`)
+- Role enforcement (owner-gated so far: mode, quotation branding, owner analysis) + invite **emails**
 - Vercel production wiring: `FRONTEND_URL`, OAuth redirect allowlists, Firebase Auth authorized domains
 - WhatsApp **permanent** (System User) token
 - Real-time push (Gmail/Zoho webhooks) instead of polling

@@ -140,15 +140,20 @@ orgs/{orgId}/
 
 ---
 
-## User Roles
+## User Roles (planned model — next milestone)
+
+Lean set + an orthogonal approval flag:
 
 | Role | Permissions |
 |------|-------------|
-| Owner | Full access, billing, delete org |
-| Admin | Manage members, connectors, agents, settings |
-| Manager | View analytics, manage threads, approve agent actions |
-| Agent/Member | Use inbox, respond to messages, view assigned threads |
-| Viewer | Read-only access to inbox and analytics |
+| Owner | Everything — billing/plan, delete org, manage all members (incl. admins), agent mode, quotation branding, owner-only analytics, receives the daily org-users digest |
+| Admin | Manage members (not owner), integrations, agents, knowledge base, quotation branding; no billing/delete-org |
+| Employee | Inbox, agent chat, create docs/quotations, view own analytics; no settings/member management |
+| `can_approve` (flag) | Orthogonal to role — grants approving pending agent actions |
+
+Integration ownership: an employee may use the **owner's shared integrations with permission**, and may **add their own personal integrations freely**. Ivy compiles a **daily per-user activity report for the owner** (summaries from each user's connections). Non-owners can't see other users' activity or the org-wide digest.
+
+*(Old mock Manager/Viewer tiers dropped unless a read-only role is needed.)*
 
 ---
 
@@ -156,10 +161,10 @@ orgs/{orgId}/
 
 🟢 **Core built & deployed** (pre-production; security pass pending)
 
-**Live:** Unified inbox (Gmail, SMTP, Outlook, WhatsApp) · per-connection agents + triage · Zoho CRM (enrich, write, rich reporting) · Website analytics · Ivy + direct agent chat (floating bubble + `/ivy` page) · custom agents · document + multi-source report generation (deterministic, saved to Data, mirrored to OneDrive) · owner-only Quote Owner analysis · approvals flow · Data page.
+**Live:** Unified inbox (Gmail, SMTP, Outlook, WhatsApp) · per-connection agents + triage · Zoho CRM (enrich, write, rich reporting, `list_leads`, `get_zoho_quote`) · Website analytics · **Mercury Store** (custom key-auth API: products/orders/quotations/repairs with search + pagination) · Ivy + direct agent chat (floating bubble + `/ivy` page) · custom agents · document + multi-source report generation (deterministic, saved to Data, mirrored to OneDrive) · owner-only Quote Owner analysis · **quotation/proforma PDF generation** (branded, Settings → Quotation) · **send email with attachments** (gated) · **knowledge-base file upload** (PDF/image text extraction) · approvals flow · Data page.
 
 **Note on this doc:** it's the original vision spec. For the accurate current state and build order, see **`IMPLEMENTATION.md`** (source of truth); Zoho capabilities in **`ZOHO.md`**; live task list in **`TODO.md`**.
 
-**Roadmap:** custom system integration → security pass (Firestore rules, tokens → Secret Manager, remove debug fns, role enforcement, invite emails) → richer MS365 files (quotation PDFs) → agent memory.
+**Roadmap:** users & roles (join flow, shared vs personal integrations, daily per-user digest) → security pass (Firestore rules, tokens → Secret Manager, remove debug fns, role enforcement, invite emails) → live Excel append (Graph workbook) → agent memory.
 
 **Reality vs. this spec:** agents are **per-connection + Ivy** (not domain agents); Ivy was built after the connections, not first; wallet = subscription window (no credits). Backend is Firebase Functions; frontend deploys to Vercel.

@@ -726,6 +726,72 @@ export async function debugRecentQuote(enterpriseId: string): Promise<any> {
   };
 }
 
+export type LeadListRow = {
+  name: string;
+  company: string;
+  email: string;
+  phone: string;
+  status: string;
+  owner: string;
+  source: string;
+  created: string;
+};
+
+/**
+ * Actual list of leads (not aggregates) for the agent to answer "which/top/
+ * recent leads" questions from real data. Sorted newest-first. `days` bounds the
+ * window (default 90); `limit` caps rows. Includes Owner + Status so the agent
+ * can reason about "unattended" (unassigned / still-New) leads.
+ */
+export async function getLeadsList(
+  enterpriseId: string,
+  opts: { days?: number; limit?: number } = {}
+): Promise<LeadListRow[]> {
+  const limit = Math.min(opts.limit ?? 25, 200);
+  // Fetch the newest leads outright (no forced window) — the Leads module may not
+  // have recent entries, and "top/recent leads" should still return real rows.
+  const cols = encodeURIComponent("Full_Name,Company,Email,Phone,Lead_Status,Owner,Lead_Source,Created_Time");
+  const data = await zohoRequest(
+    enterpriseId,
+    `Leads?fields=${cols}&sort_by=Created_Time&sort_order=desc&per_page=${limit}`
+  );
+  if (data?.status === "error") {
+    throw new Error(`Zoho Leads read error: ${data.message ?? data.code ?? "unknown"}`);
+  }
+  let rows: any[] = data?.data ?? [];
+  // Apply a recency filter only if the caller explicitly asked for a period.
+  if (opts.days) {
+    const cutoff = Date.now() - Math.min(opts.days, 3650) * 86400000;
+    rows = rows.filter((r) => (r.Created_Time ? new Date(r.Created_Time).getTime() : 0) >= cutoff);
+  }
+  return rows.map((r) => ({
+    name: (r.Full_Name as string) || "(unknown)",
+    company: (r.Company as string) || "",
+    email: (r.Email as string) || "",
+    phone: (r.Phone as string) || "",
+    status: (r.Lead_Status as string) || "",
+    owner: lookupName(r.Owner),
+    source: (r.Lead_Source as string) || "",
+    created: r.Created_Time ? String(r.Created_Time).slice(0, 10) : "",
+  }));
+}
+
+/** TEMPORARY debug — raw Leads fetch with an arbitrary fields list. Remove before ship. */
+export async function debugLeadsRaw(enterpriseId: string, fields: string): Promise<any> {
+  const data = await zohoRequest(
+    enterpriseId,
+    `Leads?fields=${encodeURIComponent(fields)}&sort_by=Created_Time&sort_order=desc&per_page=3`
+  );
+  return {
+    httpStatus: data === null ? 204 : "200/other",
+    status: data?.status,
+    code: data?.code,
+    message: data?.message,
+    count: Array.isArray(data?.data) ? data.data.length : 0,
+    firstKeys: data?.data?.[0] ? Object.keys(data.data[0]) : [],
+  };
+}
+
 /** Leads created in a window, as rows for a report/spreadsheet. */
 export async function getLeadsCreated(
   enterpriseId: string,

@@ -6,14 +6,38 @@ Core principle: **one agent per connection**, plus **Ivy** (boss agent) built LA
 
 ## 🎯 Next major milestones (in order)
 
-All connections live. Triage, reports (multi-source + detailed + owner analysis), documents, Data page, Ivy + direct agent chat, and custom agents are done. Remaining big rocks:
+All connections live (incl. Mercury Store custom API). Triage, reports (multi-source + detailed + owner analysis), documents, Data page, Ivy + direct agent chat, custom agents, quotation PDFs, send-email, and KB file upload are done. Remaining big rocks:
 
-1. **Custom system integration** — NEXT UP (per the client's spec).
-2. **Security pass (before production)** — Firestore rules (owner-only mode, per-user `ivy_chats`, per-enterprise `custom_agents`/`documents`/`reports`), tokens Firestore → Secret Manager, remove all debug fns.
-3. **Richer MS365 file abilities** — quotation **PDFs**, live Excel workbook edit (`append_row`) via Graph workbook API.
+1. **Users & roles** — NEXT UP. Roles `owner`/`admin`/`employee` + `can_approve`; invited users join via `acceptInvite` (not a new org); shared vs personal integrations (use owner's connections **with permission**, add own freely); daily per-user **org users report** to the owner; real Users page. See IMPLEMENTATION.md "Users & Roles — plan".
+2. **Security pass (before production)** — Firestore rules (owner-only mode, per-user `ivy_chats`, per-enterprise `custom_agents`/`documents`/`reports`/`quotation_settings`), tokens Firestore → Secret Manager, remove all debug fns.
+3. **Live Excel workbook edit** (`append_row`) via Graph workbook API.
 4. **Agent memory** (WAY later) — persistent per-agent memory across chats/conversations.
 
 Supporting: real-time push (Gmail/Zoho webhooks), Search Console, website chat agent, Ivy dashboard briefing card, inbox "Summarise" button.
+
+## ✅ Mercury Store — custom external integration (DONE)
+- [x] `connections/mercury.ts` — key auth (`mck_live_…`), CRUD helpers, connect probe, `isMercuryConnected`
+- [x] Server API upgraded (client-side) with `q` search + `cursor` pagination + `total`; our `listResource` + `listAllResource` sweep the whole catalog so search-by-name works (fixed false "no Lenovo" — 79 real matches, 560 products total)
+- [x] Agent tools `store_list`/`store_get`/`store_create`/`store_update` (writes gated); standalone Mercury agent + Ivy tools; hard rule: never claim store data absent without a `store_list` call
+- [x] Connect modal + integration card + white-label logos
+
+## ✅ Quotation / proforma generation (DONE)
+- [x] `quotations.ts` — deterministic branded PDF (pdfkit) matching client layout; amounts computed in code; auto proforma no. `PREFIX/YY/Mon/NNNNN` (atomic counter)
+- [x] `create_quotation` tool (Ivy/Zoho/Mercury agents) → PDF saved to Data + download card
+- [x] `get_zoho_quote` — pulls a real Zoho quote incl. `Quoted_Items` line items to build the proforma
+- [x] **Settings → Quotation** (owner-only): logo upload + company/TIN/address/VAT/prefix/prepared-by/terms via `saveQuotationBranding`
+- [x] Data page + file cards render PDF (red PDF badge)
+
+## ✅ Send email + attachments (DONE)
+- [x] `send_email` tool — brand-new email to ANY address, optional attachment (`attachDocumentId`, e.g. quotation PDF); gated (supervised → Approvals)
+- [x] Attachment support added to Gmail (MIME), SMTP (nodemailer), Outlook (Graph); channel auto-picked (Gmail → MS365 → SMTP); approval-time send downloads the file from Storage
+
+## ✅ Knowledge base file upload (DONE)
+- [x] `ingestKnowledgeFile` — upload PDF/image/text; text extracted via Gemini multimodal (verbatim), stored + fed to agents; per-entry/total caps so a big file can't dominate the prompt
+- [x] Settings → KB "Upload File" with preview + download link on file entries
+
+## ✅ list_leads (DONE)
+- [x] Real Zoho lead rows (name/company/owner/status/source/date), newest-first, optional `days` filter — agents no longer improvise lead lists from the aggregate summary
 
 ## ✅ Advanced Zoho reporting (DONE)
 - [x] Cursor pagination (`page_token`) — handles orgs with >2000 records (fixed silent open-pipeline=0 bug)
@@ -148,8 +172,8 @@ Supporting: real-time push (Gmail/Zoho webhooks), Search Console, website chat a
 ## Deferred / flagged (security pass before production)
 - [ ] Firestore security rules (still test mode ⚠️)
 - [ ] All refresh tokens/creds Firestore → Secret Manager
-- [ ] Remove all debug fns (`ping*`, `*Debug`, `runGmailAgentDebug`, `runZohoAgentDebug`)
-- [ ] Invite emails (currently just a doc)
+- [ ] Remove all debug fns (`ping*`, `*Debug` incl. `mercuryDebug`/`quotationDebug`/`zohoQuoteDebug`/`zohoLeadsDebug`, `runGmailAgentDebug`, `runZohoAgentDebug`) + helpers (`mercuryRawGet`, `debugRecentQuote`, `debugLeadsRaw`)
+- [ ] Invite emails (currently just a doc) — plus `acceptInvite` join flow (users & roles milestone)
 - [ ] Node 20 → newer runtime; bump firebase-functions
 - [ ] Web widget (Intercom-style)
 - [ ] Consider unified API (Nango/Merge) for remaining connections
