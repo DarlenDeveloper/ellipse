@@ -4,7 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Send2, CloseCircle, Maximize4 } from "iconsax-react";
 import { httpsCallable } from "firebase/functions";
-import { functions } from "@/lib/firebase";
+import { addDoc, collection, doc, serverTimestamp, updateDoc } from "firebase/firestore";
+import { functions, db } from "@/lib/firebase";
+import { useAuth } from "@/lib/auth-context";
 import { useEnterpriseId } from "@/lib/use-enterprise";
 import { IvyOrb } from "./IvyOrb";
 import { FileCard, stripFileUrls, type ChatFile } from "./FileCard";
@@ -28,8 +30,10 @@ export function IvyBubble() {
     },
   ]);
   const [thinking, setThinking] = useState(false);
+  const [chatId, setChatId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
+  const { user } = useAuth();
   const { enterpriseId } = useEnterpriseId();
 
   useEffect(() => {
@@ -40,16 +44,36 @@ export function IvyBubble() {
     const q = (text ?? input).trim();
     if (!q || thinking) return;
     const history = messages.map((m) => ({ role: m.role, text: m.text }));
-    setMessages((m) => [...m, { role: "user", text: q }]);
+    const withUser: Msg[] = [...messages, { role: "user", text: q }];
+    setMessages(withUser);
     setInput("");
     setThinking(true);
+
+    // Persist the chat so it appears in Ivy's history (same collection as the full page).
+    let cid = chatId;
     try {
+      if (!cid && user && enterpriseId) {
+        const ref = await addDoc(collection(db, "ivy_chats"), {
+          enterprise_id: enterpriseId,
+          user_id: user.uid,
+          agent_id: "ivy",
+          title: q.slice(0, 60),
+          messages: withUser,
+          created_at: serverTimestamp(),
+          updated_at: serverTimestamp(),
+        });
+        cid = ref.id;
+        setChatId(cid);
+      }
+
       const fn = httpsCallable(functions, "askAgent");
       const res = await fn({ enterpriseId, agentId: "ivy", message: q, history });
       const data = res.data as { reply?: string; files?: ChatFile[] };
       const msg: Msg = { role: "ivy", text: data.reply ?? "…" };
       if (data.files && data.files.length) msg.files = data.files;
-      setMessages((m) => [...m, msg]);
+      const full = [...withUser, msg];
+      setMessages(full);
+      if (cid) await updateDoc(doc(db, "ivy_chats", cid), { messages: full, updated_at: serverTimestamp() });
     } catch (e) {
       setMessages((m) => [...m, { role: "ivy", text: "Something went wrong. Please try again." }]);
       console.error(e);

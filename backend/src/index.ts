@@ -675,7 +675,7 @@ export const askAgent = onCall(
       throw new HttpsError("invalid-argument", "Missing enterpriseId or message.");
     }
     const { chatWithAgent } = await import("./agentChat");
-    return chatWithAgent(enterpriseId, agentId, message, history);
+    return chatWithAgent(enterpriseId, agentId, message, history, request.auth.uid);
   }
 );
 
@@ -786,6 +786,85 @@ export const disconnectIntegration = onCall(async (request) => {
   const { disconnectIntegration: run } = await import("./disconnect");
   return run(enterpriseId, type);
 });
+
+/** TEMPORARY — generate a detailed CRM report file and return its URL, to inspect contents. Remove before ship. */
+export const reportGenDebug = onRequest(
+  { secrets: [zohoClientId, zohoClientSecret] },
+  async (req, res) => {
+    const enterpriseId = req.query.enterpriseId as string | undefined;
+    if (!enterpriseId) {
+      res.status(400).json({ ok: false, error: "Missing enterpriseId" });
+      return;
+    }
+    try {
+      const now = new Date();
+      const start = new Date(now.getTime() - 7 * 86400000);
+      const { getCrmReportData, getQuotesDetailed } = await import("./connections/zoho");
+      const { createCrmReport } = await import("./documents");
+      const base = await getCrmReportData(enterpriseId, start, now);
+      const quotes = await getQuotesDetailed(enterpriseId, start, now);
+      const docs = await createCrmReport({
+        enterpriseId,
+        agentId: "zoho-agent",
+        agentLabel: "Zoho CRM Agent",
+        logo: "/logos/zoho.png",
+        periodLabel: "Last 7 days Detailed",
+        data: { ...base, quotes },
+      });
+      res.json({ ok: true, quotes_count: quotes.length, files: docs });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: (e as Error).message });
+    }
+  }
+);
+
+/** TEMPORARY — list a module's field api_names + labels. ?enterpriseId=&module=Quotes. Remove before ship. */
+export const zohoFieldsDebug = onRequest(
+  { secrets: [zohoClientId, zohoClientSecret] },
+  async (req, res) => {
+    const enterpriseId = req.query.enterpriseId as string | undefined;
+    const module = (req.query.module as string | undefined) ?? "Quotes";
+    if (!enterpriseId) {
+      res.status(400).json({ ok: false, error: "Missing enterpriseId" });
+      return;
+    }
+    try {
+      const { listModuleFields } = await import("./connections/zoho");
+      const fields = await listModuleFields(enterpriseId, module);
+      res.json({ ok: true, module, count: fields.length, fields });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: (e as Error).message });
+    }
+  }
+);
+
+/** TEMPORARY — dump raw CRM report data for fact-checking. ?enterpriseId=&period=week. Remove before ship. */
+export const crmReportDebug = onRequest(
+  { secrets: [zohoClientId, zohoClientSecret] },
+  async (req, res) => {
+    const enterpriseId = req.query.enterpriseId as string | undefined;
+    const period = (req.query.period as string | undefined) ?? "week";
+    if (!enterpriseId) {
+      res.status(400).json({ ok: false, error: "Missing enterpriseId" });
+      return;
+    }
+    try {
+      const now = new Date();
+      const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      let start = startOfDay(now);
+      if (period === "week") start = new Date(now.getTime() - 7 * 86400000);
+      else if (period === "month") start = new Date(now.getTime() - 30 * 86400000);
+      const { getCrmReportData, getQuotesDetailed } = await import("./connections/zoho");
+      const data = (await getCrmReportData(enterpriseId, start, now)) as any;
+      if ((req.query.detail as string) === "detailed") {
+        data.quotes = await getQuotesDetailed(enterpriseId, start, now);
+      }
+      res.json({ ok: true, enterpriseId, period, window: { start: start.toISOString(), end: now.toISOString() }, data });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: (e as Error).message });
+    }
+  }
+);
 
 export { executeAgentAction };
 export { onPendingActionApproved } from "./approvals";

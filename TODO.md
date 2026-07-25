@@ -6,13 +6,22 @@ Core principle: **one agent per connection**, plus **Ivy** (boss agent) built LA
 
 ## 🎯 Next major milestones (in order)
 
-All connections live. Triage, reports + documents, Data page, Ivy + direct agent chat, **custom agents**, and **document creation** are done. Remaining big rocks:
+All connections live. Triage, reports (multi-source + detailed + owner analysis), documents, Data page, Ivy + direct agent chat, and custom agents are done. Remaining big rocks:
 
-1. **Security pass (before production)** — Firestore rules (owner-only mode, per-user `ivy_chats`, per-enterprise `custom_agents`/`documents`), tokens Firestore → Secret Manager, remove all debug fns.
-2. **Richer MS365 file abilities** — quotation **PDFs**, live Excel workbook edit (`append_row` to an existing sheet via Graph workbook API) beyond the current create+upload.
-3. **Agent memory** (WAY later) — persistent per-agent memory across chats/conversations so agents recall context and preferences over time.
+1. **Custom system integration** — NEXT UP (per the client's spec).
+2. **Security pass (before production)** — Firestore rules (owner-only mode, per-user `ivy_chats`, per-enterprise `custom_agents`/`documents`/`reports`), tokens Firestore → Secret Manager, remove all debug fns.
+3. **Richer MS365 file abilities** — quotation **PDFs**, live Excel workbook edit (`append_row`) via Graph workbook API.
+4. **Agent memory** (WAY later) — persistent per-agent memory across chats/conversations.
 
 Supporting: real-time push (Gmail/Zoho webhooks), Search Console, website chat agent, Ivy dashboard briefing card, inbox "Summarise" button.
+
+## ✅ Advanced Zoho reporting (DONE)
+- [x] Cursor pagination (`page_token`) — handles orgs with >2000 records (fixed silent open-pipeline=0 bug)
+- [x] `generate_report(period, sources, detail)` — one Excel per connected source (Zoho / Website / Gmail / SMTP / MS365 / WhatsApp), all at once; **detailed is default** for Zoho
+- [x] Detailed Zoho report = Quotes line-items (Subject, Account, Proforma No., Quote Date, Owner, Deal, Stage, Sub Total); workbook opens on the Quotes tab
+- [x] Owner-only `generate_owner_analysis` — per Quote Owner performance (gated to org owner)
+- [x] Real Excel/Word logos on file cards; multi-file responses
+- [x] Fact-checked against live data via debug endpoints (numbers match exactly)
 
 ---
 

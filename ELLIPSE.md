@@ -152,4 +152,12 @@ orgs/{orgId}/
 
 ## Status
 
-🟡 In Development
+🟢 **Core built & deployed** (pre-production; security pass pending)
+
+**Live:** Unified inbox (Gmail, SMTP, Outlook, WhatsApp) · per-connection agents + triage · Zoho CRM (enrich, write, rich reporting) · Website analytics · Ivy + direct agent chat (floating bubble + `/ivy` page) · custom agents · document + multi-source report generation (deterministic, saved to Data, mirrored to OneDrive) · owner-only Quote Owner analysis · approvals flow · Data page.
+
+**Note on this doc:** it's the original vision spec. For the accurate current state and build order, see **`IMPLEMENTATION.md`** (source of truth); Zoho capabilities in **`ZOHO.md`**; live task list in **`TODO.md`**.
+
+**Roadmap:** custom system integration → security pass (Firestore rules, tokens → Secret Manager, remove debug fns, role enforcement, invite emails) → richer MS365 files (quotation PDFs) → agent memory.
+
+**Reality vs. this spec:** agents are **per-connection + Ivy** (not domain agents); Ivy was built after the connections, not first; wallet = subscription window (no credits). Backend is Firebase Functions; frontend deploys to Vercel.

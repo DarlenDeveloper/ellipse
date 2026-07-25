@@ -1,35 +1,27 @@
 "use client";
 
-import { DocumentDownload } from "iconsax-react";
+import Image from "next/image";
+import { DocumentDownload, Document } from "iconsax-react";
 
 export type ChatFile = { name: string; url: string; type: string };
 
-/**
- * Strip raw file URLs (and markdown links wrapping them) out of chat text —
- * files are shown as download cards, so the URL shouldn't appear inline. Also
- * cleans up messages saved before file cards existed.
- */
+// Strip raw file URLs an agent may have pasted into its text (we show a card instead).
 export function stripFileUrls(text: string): string {
-  let s = text;
-  // [label](https://…firebasestorage…) → label
-  s = s.replace(/\[([^\]]+)\]\(https?:\/\/[^)]*firebasestorage[^)]*\)/gi, "$1");
-  // bare firebasestorage URLs (optionally wrapped in parens)
-  s = s.replace(/\(?\s*https?:\/\/[^\s)]*firebasestorage[^\s)]*\s*\)?/gi, "");
-  // tidy leftover empty brackets / doubled spaces / dangling colons
-  s = s.replace(/\[\s*\]|\(\s*\)/g, "").replace(/[ \t]{2,}/g, " ").replace(/\s+\n/g, "\n").trim();
-  return s;
+  return text
+    .replace(/\(?https?:\/\/firebasestorage\.googleapis\.com\/[^\s)]+\)?/gi, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
 }
 
-function badge(type: string): { label: string; color: string } {
+function logoFor(type: string): string | null {
   const t = type.toLowerCase();
-  if (t.includes("xls")) return { label: "XLS", color: "bg-emerald-600" };
-  if (t.includes("doc")) return { label: "DOC", color: "bg-blue-500" };
-  if (t.includes("pdf")) return { label: "PDF", color: "bg-red-500" };
-  return { label: "FILE", color: "bg-gray-500" };
+  if (t.includes("xls")) return "/logos/excel.png";
+  if (t.includes("doc")) return "/logos/word.png";
+  return null;
 }
 
 export function FileCard({ file }: { file: ChatFile }) {
-  const b = badge(file.type);
+  const logo = logoFor(file.type);
   return (
     <a
       href={file.url}
@@ -37,8 +29,12 @@ export function FileCard({ file }: { file: ChatFile }) {
       rel="noopener noreferrer"
       className="group flex items-center gap-3 bg-white border border-gray-200 rounded-2xl p-3 hover:border-gray-300 hover:shadow-sm transition-all max-w-xs"
     >
-      <span className={`w-10 h-10 rounded-xl flex items-center justify-center text-[10px] font-bold text-white shrink-0 ${b.color}`}>
-        {b.label}
+      <span className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 bg-gray-50">
+        {logo ? (
+          <Image src={logo} alt="" width={26} height={26} className="object-contain" />
+        ) : (
+          <Document size={22} variant="Bold" color="#6b7280" />
+        )}
       </span>
       <span className="min-w-0 flex-1">
         <span className="block text-sm font-semibold truncate">{file.name}</span>

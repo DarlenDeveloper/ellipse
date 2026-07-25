@@ -187,6 +187,19 @@ export async function listModules(enterpriseId: string): Promise<any> {
   return zohoRequest(enterpriseId, "settings/modules");
 }
 
+/** List a module's fields (api_name + label + data type) — for metadata-driven reports. */
+export async function listModuleFields(
+  enterpriseId: string,
+  module: string
+): Promise<{ api_name: string; label: string; data_type: string }[]> {
+  const data = await zohoRequest(enterpriseId, `settings/fields?module=${encodeURIComponent(module)}`);
+  return (data?.fields ?? []).map((f: any) => ({
+    api_name: f.api_name,
+    label: f.field_label,
+    data_type: f.data_type,
+  }));
+}
+
 export type ZohoEnrichment = {
   found: boolean;
   type: "contact" | "lead" | null;
@@ -360,37 +373,83 @@ export async function getRecordsCreated(
   // implicit and not accepted in the fields param, so drop it.)
   const wanted = Array.from(new Set([...fields.filter((f) => f.toLowerCase() !== "id"), "Created_Time"]));
   const cols = encodeURIComponent(wanted.join(","));
-  const data = await zohoRequest(
-    enterpriseId,
-    `${module}?fields=${cols}&sort_by=Created_Time&sort_order=desc&per_page=${Math.min(limit, 200)}`
-  );
-  if (data?.status === "error") {
-    throw new Error(`Zoho ${module} read error: ${data.message ?? data.code ?? "unknown"}`);
-  }
-  const records: any[] = data?.data ?? [];
   const s = start.getTime();
   const e = end.getTime();
-  return records.filter((r) => {
-    const t = r.Created_Time ? new Date(r.Created_Time).getTime() : 0;
-    return t >= s && t < e;
-  });
+  const out: any[] = [];
+  const PER = 200;
+  const MAX_PAGES = 60;
+  let token: string | undefined;
+  let pages = 0;
+
+  // Records are sorted Created_Time desc, so in-window rows are at the front —
+  // page via cursor and stop as soon as we pass the window start.
+  while (pages < MAX_PAGES) {
+    // page_token is bound to the first call's params — resend them identically + append the token.
+    const base = `${module}?fields=${cols}&sort_by=Created_Time&sort_order=desc&per_page=${PER}`;
+    const path = token ? `${base}&page_token=${token}` : base;
+    const data = await zohoRequest(enterpriseId, path);
+    if (data?.status === "error") {
+      throw new Error(`Zoho ${module} read error: ${data.message ?? data.code ?? "unknown"}`);
+    }
+    const rows: any[] = data?.data ?? [];
+    let passedWindow = false;
+    for (const r of rows) {
+      const t = r.Created_Time ? new Date(r.Created_Time).getTime() : 0;
+      if (t < s) {
+        passedWindow = true;
+        break;
+      }
+      if (t < e) out.push(r);
+      if (out.length >= limit) {
+        passedWindow = true;
+        break;
+      }
+    }
+    token = data?.info?.next_page_token;
+    pages++;
+    if (passedWindow || !token || rows.length === 0) break;
+  }
+  return out;
 }
 
-/** Open (not-closed) deals with their pipeline value — current CRM state, not window-bound. */
+/**
+ * Open (not-closed) deals with their pipeline value — current CRM state.
+ * Uses cursor pagination (page_token) because orgs with >2000 deals can't be
+ * paged with page numbers. Capped for latency; flags if the cap is hit.
+ */
 export async function getOpenPipeline(
   enterpriseId: string
-): Promise<{ open_deals: number; open_pipeline_value: number }> {
-  try {
-    const data = await zohoRequest(
-      enterpriseId,
-      `Deals?fields=${encodeURIComponent("Deal_Name,Stage,Amount")}&sort_by=Amount&sort_order=desc&per_page=200`
-    );
-    const rows: any[] = (data?.data ?? []).filter((d: any) => !/closed|won|lost/i.test(String(d.Stage ?? "")));
-    const value = rows.reduce((sum, d) => sum + (Number(d.Amount) || 0), 0);
-    return { open_deals: rows.length, open_pipeline_value: Math.round(value) };
-  } catch {
-    return { open_deals: 0, open_pipeline_value: 0 };
+): Promise<{ open_deals: number; open_pipeline_value: number; total_deals: number; capped: boolean }> {
+  const fields = encodeURIComponent("Deal_Name,Stage,Amount");
+  const PER = 200;
+  const MAX_PAGES = 60; // up to 12,000 deals
+  let open = 0;
+  let value = 0;
+  let total = 0;
+  let token: string | undefined;
+  let pages = 0;
+
+  while (pages < MAX_PAGES) {
+    // page_token is bound to the first call's params — resend them identically + append the token.
+    const base = `Deals?fields=${fields}&sort_by=Modified_Time&sort_order=desc&per_page=${PER}`;
+    const path = token ? `${base}&page_token=${token}` : base;
+    const data = await zohoRequest(enterpriseId, path);
+    if (data?.status === "error") {
+      throw new Error(`Zoho Deals read error: ${data.message ?? data.code ?? "unknown"}`);
+    }
+    const rows: any[] = data?.data ?? [];
+    for (const d of rows) {
+      total++;
+      if (!/closed|won|lost/i.test(String(d.Stage ?? ""))) {
+        open++;
+        value += Number(d.Amount) || 0;
+      }
+    }
+    token = data?.info?.next_page_token;
+    pages++;
+    if (!token || rows.length === 0) break;
   }
+  return { open_deals: open, open_pipeline_value: Math.round(value), total_deals: total, capped: pages >= MAX_PAGES && !!token };
 }
 
 export type SalesSummary = {
@@ -484,6 +543,111 @@ export async function getSalesSummary(
     .slice(0, 5);
 
   return summary;
+}
+
+export type CrmReportData = {
+  counts: {
+    new_leads: number;
+    new_contacts: number;
+    new_deals: number;
+    deals_won: number;
+    revenue_won: number;
+    open_deals: number;
+    open_pipeline_value: number;
+  };
+  leads: { name: string; company: string; email: string; source: string; status: string; created: string }[];
+  deals: { name: string; stage: string; amount: number; closing: string; created: string }[];
+  contacts: { name: string; email: string; account: string; created: string }[];
+};
+
+/**
+ * Pull everything needed for a CRM report for a window — real records straight
+ * from Zoho, so a report file can be built deterministically (no AI figures).
+ */
+export async function getCrmReportData(enterpriseId: string, start: Date, end: Date): Promise<CrmReportData> {
+  const [leadsRaw, contactsRaw, dealsRaw, pipeline] = await Promise.all([
+    getRecordsCreated(enterpriseId, "Leads", ["Full_Name", "Company", "Email", "Lead_Source", "Lead_Status"], start, end, 2000),
+    getRecordsCreated(enterpriseId, "Contacts", ["Full_Name", "Email", "Account_Name"], start, end, 2000),
+    getRecordsCreated(enterpriseId, "Deals", ["Deal_Name", "Stage", "Amount", "Closing_Date"], start, end, 2000),
+    getOpenPipeline(enterpriseId),
+  ]);
+
+  const leads = leadsRaw.map((r) => ({
+    name: (r.Full_Name as string) || "(unnamed)",
+    company: (r.Company as string) || "",
+    email: (r.Email as string) || "",
+    source: (r.Lead_Source as string) || "",
+    status: (r.Lead_Status as string) || "",
+    created: r.Created_Time ? String(r.Created_Time).slice(0, 10) : "",
+  }));
+  const contacts = contactsRaw.map((r) => ({
+    name: (r.Full_Name as string) || "(unnamed)",
+    email: (r.Email as string) || "",
+    account: (r.Account_Name?.name as string) || (r.Account_Name as string) || "",
+    created: r.Created_Time ? String(r.Created_Time).slice(0, 10) : "",
+  }));
+  const deals = dealsRaw.map((r) => ({
+    name: (r.Deal_Name as string) || "(unnamed)",
+    stage: (r.Stage as string) || "",
+    amount: Number(r.Amount) || 0,
+    closing: (r.Closing_Date as string) || "",
+    created: r.Created_Time ? String(r.Created_Time).slice(0, 10) : "",
+  }));
+
+  const won = deals.filter((d) => /won/i.test(d.stage));
+  return {
+    counts: {
+      new_leads: leads.length,
+      new_contacts: contacts.length,
+      new_deals: deals.length,
+      deals_won: won.length,
+      revenue_won: Math.round(won.reduce((s, d) => s + d.amount, 0)),
+      open_deals: pipeline.open_deals,
+      open_pipeline_value: pipeline.open_pipeline_value,
+    },
+    leads,
+    deals,
+    contacts,
+  };
+}
+
+export type QuoteRow = {
+  subject: string;
+  account: string;
+  proforma: string;
+  quote_date: string;
+  owner: string;
+  deal: string;
+  stage: string;
+  sub_total: number;
+};
+
+const lookupName = (v: any): string => (v && typeof v === "object" ? (v.name ?? "") : (v ?? "")) as string;
+
+/**
+ * Detailed Quotes report rows for a window — the exact columns the client wants:
+ * Subject, Account Name, Proforma No., Quote Date, Quote Owner, Deal Name,
+ * Quote Stage, Sub Total. Field API names verified from the org's metadata.
+ */
+export async function getQuotesDetailed(enterpriseId: string, start: Date, end: Date): Promise<QuoteRow[]> {
+  const rows = await getRecordsCreated(
+    enterpriseId,
+    "Quotes",
+    ["Subject", "Account_Name", "Prof_NO", "Quote_Date", "Owner", "Deal_Name", "Quote_Stage", "Sub_Total"],
+    start,
+    end,
+    2000
+  );
+  return rows.map((r) => ({
+    subject: (r.Subject as string) || "",
+    account: lookupName(r.Account_Name),
+    proforma: (r.Prof_NO as string) || "",
+    quote_date: (r.Quote_Date as string) || "",
+    owner: lookupName(r.Owner),
+    deal: lookupName(r.Deal_Name),
+    stage: (r.Quote_Stage as string) || "",
+    sub_total: Number(r.Sub_Total) || 0,
+  }));
 }
 
 /** Leads created in a window, as rows for a report/spreadsheet. */

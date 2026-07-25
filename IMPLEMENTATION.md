@@ -33,24 +33,53 @@ Connections first (CRM → communication → marketing much later), Ivy (persona
 
 ## Status
 
-### Done
+### Done — platform
 - Frontend UI (all pages)
 - Firebase Auth (email + Google) + route protection
-- Onboarding backend — incremental & resumable (enterprise, subscription/wallet, connections, invites, owner role)
-- Login routing by onboarding status
-- `executeAgentAction` gate — mode + tier + **subscription** check (credit logic removed)
+- Onboarding — incremental & resumable (enterprise, subscription/wallet, connections, invites, owner role). Now captures **timezone**.
+- `executeAgentAction` gate — mode + tier + **subscription** check (choke point for every action)
+- Gemini wrapper (`gemini-3.1-flash-lite`), supports tools + temperature
+- `onMessageCreated` auto-trigger + **triage gate** (see below)
+- Knowledge Base (Settings tab, live Firestore, injected into all agents)
+- Settings General de-mocked → real org data + owner-only agent **mode** selector
+
+### Done — connections (all live)
+- **Gmail / Google Workspace** — OAuth, ingest, 5-min auto-sync, agent, threaded reply (gated)
+- **SMTP / IMAP** — connect/test/ingest/send, auto-sync, agent
+- **Microsoft 365 (Outlook)** — OAuth, ingest, auto-sync, threaded reply, **OneDrive file upload (gated)**
+- **WhatsApp** (Meta Cloud API) — webhook, send, agent; WhatsApp-only reply composer in inbox
+- **Zoho CRM** — OAuth (DC-aware), enrich, backfill, write executors, **rich reporting** (see ZOHO.md)
+- **Website analytics** — tracker, collector, verify-install, `/website` analytics page
+
+### Done — agents & intelligence
+- **One agent per connection** sharing `replyBase` (gmail/smtp/microsoft/whatsapp), Zoho CRM agent, Website agent
+- **Triage gate** (`agents/triage.ts`): heuristic (skip no-reply/automated) + Gemini classifier → `{engage,is_lead}`. Personal-assistant mode: engages real human emails incl. personal; leads stay strict. WhatsApp inbound always engages.
+- **Ivy + direct agent chat** (`askAgent`): two-pass Gemini (reason → tools → grounded reply), temperature 0 on final answer, strict no-hallucination. Ivy orchestrates across all agents; each agent scoped to its own tools. Connected-integration list injected so clarifying questions only offer connected sources.
+- **Chat UI**: animated `IvyOrb`, floating `IvyBubble` (all pages), wide `/ivy` page with agent selector + history dropdown (persisted to `ivy_chats`).
+- **Custom agents**: user-defined agents (name, specialty, ability checklist) in `custom_agents`; appear in the selector; scoped tools.
+- **Document creation** (`create_document`) + **multi-source reports** (`generate_report`): deterministic Excel/Word built in code from live data (NO AI-authored figures). Saved to `documents` → Data page; mirrored to OneDrive when MS365 connected (gated).
+- **Owner-only Quote Owner analysis** (`generate_owner_analysis`): per-employee quote performance, gated to org owner (role check).
+- Approvals page, Agents page (live monitoring), Data page (folder/file repository)
+
+### Reports — how they work (anti-hallucination)
+- Scheduled per-agent reports at local midnight (daily → weekly/monthly/quarterly/annual roll-ups), timezone-aware, stored in `reports/`.
+- On-demand `generate_report(period, sources, detail)` — one Excel per connected source (Zoho / Website / messaging channels). Zoho detailed = Quotes line-items; **detailed is the default**.
+- All report numbers come straight from the source API into the cells via `exceljs`/`docx` — the AI only picks the tool and phrases the message.
 
 ### Next
-- Gemini wrapper (model TBD — confirm exact id)
-- First connection agent end-to-end
+- **Custom system** integration (next up)
+- Ivy dashboard briefing card
+- Richer MS365 files (quotation PDFs, live Excel append)
 
-## Deferred / flagged
-- Functions deploy (Blaze enabled ✅)
-- Firestore **security rules** still test mode ⚠️
-- Mode switcher not persisted to Firestore
-- Invite **emails** not sent — just an `invites/{id}` doc for now
-- Per-agent / per-connection modes (workspace-wide only for now)
-- Web widget
+## Deferred / flagged (security pass before production)
+- Firestore **security rules** still test mode ⚠️ (add owner-only mode, per-user `ivy_chats`, per-enterprise `custom_agents`/`documents`/`reports`)
+- All refresh tokens/creds Firestore → **Secret Manager**
+- **Remove debug fns**: `pingGemini`, `pingZoho`, `pingMicrosoft`, `pingStorage`, `zohoSearchDebug`, `zohoBackfillDebug`, `zohoFieldsDebug`, `crmReportDebug`, `reportGenDebug`, `runGmailAgentDebug`, `runZohoAgentDebug`
+- Role enforcement (only mode is owner-gated so far) + invite **emails**
+- Vercel production wiring: `FRONTEND_URL`, OAuth redirect allowlists, Firebase Auth authorized domains
+- WhatsApp **permanent** (System User) token
+- Real-time push (Gmail/Zoho webhooks) instead of polling
+- Agent **memory** (later); web widget
 
 ## Corrections to `ellipse-desk-architecture.md` (AI-drafted, partly wrong)
 - Agents are **per-connection + Ivy (personal agent)**, NOT domain agents (Inbox/Assistant/Calendar).
