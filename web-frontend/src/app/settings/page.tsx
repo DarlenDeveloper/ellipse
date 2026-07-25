@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Building, Notification, ShieldTick, Paintbucket, Book1 } from "iconsax-react";
+import { Building, Notification, ShieldTick, Paintbucket, Book1, Receipt1 } from "iconsax-react";
 import { cn } from "@/lib/utils";
 import { KnowledgeBase } from "@/components/settings/KnowledgeBase";
 import { GeneralSettings } from "@/components/settings/GeneralSettings";
+import { QuotationSettings } from "@/components/settings/QuotationSettings";
 
-type TabId = "general" | "knowledge" | "notifications" | "security" | "appearance";
+type TabId = "general" | "knowledge" | "quotation" | "notifications" | "security" | "appearance";
 
 const tabGroups: {
   group: string;
@@ -17,6 +18,7 @@ const tabGroups: {
     items: [
       { id: "general", label: "General", desc: "Org details & agent defaults", icon: Building },
       { id: "knowledge", label: "Knowledge Base", desc: "Facts your agents rely on", icon: Book1 },
+      { id: "quotation", label: "Quotation", desc: "Proforma letterhead & defaults", icon: Receipt1 },
     ],
   },
   {
@@ -110,6 +112,8 @@ export default function SettingsPage() {
           {activeTab === "general" && <GeneralSettings />}
 
           {activeTab === "knowledge" && <KnowledgeBase />}
+
+          {activeTab === "quotation" && <QuotationSettings />}
 
           {activeTab === "notifications" && (
             <div className="bg-white rounded-2xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">

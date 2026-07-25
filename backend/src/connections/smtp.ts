@@ -218,3 +218,32 @@ export async function sendSmtpReply(
   });
   return info.messageId ?? "sent";
 }
+
+/**
+ * Send a brand-new email to an arbitrary recipient via SMTP, with an optional
+ * attachment. Used by the agent's send_email action.
+ */
+export async function sendSmtpEmail(
+  enterpriseId: string,
+  opts: { to: string; subject: string; body: string; cc?: string; attachment?: { filename: string; contentType: string; content: Buffer } }
+): Promise<string> {
+  const cfg = await loadConfig(enterpriseId);
+  const transport = nodemailer.createTransport({
+    host: cfg.smtp_host,
+    port: Number(cfg.smtp_port),
+    secure: Number(cfg.smtp_port) === 465,
+    auth: { user: cfg.username, pass: cfg.password },
+  });
+
+  const info = await transport.sendMail({
+    from: cfg.from_email || cfg.username,
+    to: opts.to,
+    cc: opts.cc || undefined,
+    subject: opts.subject,
+    text: opts.body,
+    attachments: opts.attachment
+      ? [{ filename: opts.attachment.filename, content: opts.attachment.content, contentType: opts.attachment.contentType }]
+      : undefined,
+  });
+  return info.messageId ?? "sent";
+}

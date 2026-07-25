@@ -329,6 +329,8 @@ export async function createDocument(opts: {
     title: opts.title,
     kind: opts.kind,
     file: { name: filename, url, type: opts.kind, size: buffer.length },
+    storage_path: path,
+    content_type: contentType,
     created_at: FieldValue.serverTimestamp(),
   });
 

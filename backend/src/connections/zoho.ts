@@ -650,6 +650,82 @@ export async function getQuotesDetailed(enterpriseId: string, start: Date, end: 
   }));
 }
 
+export type QuoteForQuotation = {
+  id: string;
+  subject: string;
+  proforma: string;
+  account: string;
+  owner: string;
+  deal: string;
+  sub_total: number;
+  grand_total: number;
+  items: { description: string; rate: number; qty: number }[];
+};
+
+/**
+ * Fetch a single Quote (by proforma no, subject, account, or id) INCLUDING its
+ * line items, so the agent can turn a real Zoho quote into a branded proforma.
+ * Line items live in the Quotes `Product_Details` subform.
+ */
+export async function getQuoteForQuotation(
+  enterpriseId: string,
+  query: { id?: string; proforma?: string; subject?: string; account?: string }
+): Promise<QuoteForQuotation | null> {
+  let id = query.id;
+  if (!id) {
+    const criteria: string[] = [];
+    if (query.proforma) criteria.push(`(Prof_NO:equals:${query.proforma})`);
+    if (query.subject) criteria.push(`(Subject:starts_with:${query.subject})`);
+    if (query.account) criteria.push(`(Account_Name:equals:${query.account})`);
+    if (criteria.length) {
+      const joined = criteria.length > 1 ? criteria.join("or") : criteria[0];
+      const data = await zohoRequest(enterpriseId, `Quotes/search?criteria=${encodeURIComponent(joined)}`);
+      id = data?.data?.[0]?.id;
+    }
+  }
+  if (!id) return null;
+
+  const rec = (await zohoRequest(enterpriseId, `Quotes/${id}`))?.data?.[0];
+  if (!rec) return null;
+
+  const subform = (rec.Quoted_Items ?? rec.Product_Details ?? []) as any[];
+  const items = subform.map((li) => ({
+    // Field names verified from live metadata: Product_Name (lookup), List_Price, Quantity, Description.
+    description: lookupName(li.Product_Name) || (li.Description as string) || lookupName(li.product) || "",
+    rate: Number(li.List_Price ?? li.list_price ?? li.Total_After_Discount ?? li.Net_Total ?? 0),
+    qty: Number(li.Quantity ?? li.quantity ?? 1),
+  }));
+
+  return {
+    id: rec.id,
+    subject: (rec.Subject as string) || "",
+    proforma: (rec.Prof_NO as string) || "",
+    account: lookupName(rec.Account_Name),
+    owner: lookupName(rec.Owner),
+    deal: lookupName(rec.Deal_Name),
+    sub_total: Number(rec.Sub_Total ?? 0),
+    grand_total: Number(rec.Grand_Total ?? 0),
+    items,
+  };
+}
+
+/** TEMPORARY debug — most recent Quote's raw keys + line-item sample. Remove before ship. */
+export async function debugRecentQuote(enterpriseId: string): Promise<any> {
+  const list = await zohoRequest(enterpriseId, "Quotes?fields=Subject,Prof_NO&per_page=1&sort_by=Created_Time&sort_order=desc");
+  const id = list?.data?.[0]?.id;
+  if (!id) return { error: "no quotes found", list };
+  const rec = (await zohoRequest(enterpriseId, `Quotes/${id}`))?.data?.[0];
+  const subKey = rec?.Product_Details ? "Product_Details" : rec?.Quoted_Items ? "Quoted_Items" : null;
+  const sub = (subKey ? rec[subKey] : []) as any[];
+  return {
+    id,
+    keys: rec ? Object.keys(rec) : [],
+    subformKey: subKey,
+    lineItemSample: sub?.[0] ?? null,
+    lineItemKeys: sub?.[0] ? Object.keys(sub[0]) : [],
+  };
+}
+
 /** Leads created in a window, as rows for a report/spreadsheet. */
 export async function getLeadsCreated(
   enterpriseId: string,

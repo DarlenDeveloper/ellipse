@@ -124,6 +124,51 @@ export async function sendGmailReply(
   return res.data.id ?? "sent";
 }
 
+/**
+ * Send a brand-new email (not a thread reply) to an arbitrary recipient, with an
+ * optional file attachment. Used by the agent's send_email action.
+ */
+export async function sendGmailEmail(
+  enterpriseId: string,
+  opts: { to: string; subject: string; body: string; cc?: string; attachment?: { filename: string; contentType: string; content: Buffer } }
+): Promise<string> {
+  const { client } = await authedClientFor(enterpriseId);
+  const gmail = google.gmail({ version: "v1", auth: client });
+  const { to, subject, body, cc, attachment } = opts;
+
+  const headers = [`To: ${to}`, cc ? `Cc: ${cc}` : null, `Subject: ${subject}`, "MIME-Version: 1.0"].filter(Boolean) as string[];
+
+  let message: string;
+  if (attachment) {
+    const boundary = `mixed_${Date.now().toString(36)}`;
+    const b64 = attachment.content.toString("base64").replace(/(.{76})/g, "$1\r\n");
+    message = [
+      ...headers,
+      `Content-Type: multipart/mixed; boundary="${boundary}"`,
+      "",
+      `--${boundary}`,
+      `Content-Type: text/plain; charset="UTF-8"`,
+      "",
+      body,
+      "",
+      `--${boundary}`,
+      `Content-Type: ${attachment.contentType}; name="${attachment.filename}"`,
+      "Content-Transfer-Encoding: base64",
+      `Content-Disposition: attachment; filename="${attachment.filename}"`,
+      "",
+      b64,
+      "",
+      `--${boundary}--`,
+    ].join("\r\n");
+  } else {
+    message = [...headers, `Content-Type: text/plain; charset="UTF-8"`, "", body].join("\r\n");
+  }
+
+  const raw = Buffer.from(message).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const res = await gmail.users.messages.send({ userId: "me", requestBody: { raw } });
+  return res.data.id ?? "sent";
+}
+
 /** Return an authed OAuth client for a connected enterprise (for API calls). */
 export async function authedClientFor(enterpriseId: string) {
   const snap = await db.doc(`connections/${enterpriseId}_google-workspace`).get();

@@ -297,6 +297,42 @@ export async function sendOutlookReply(
 }
 
 /**
+ * Send a brand-new Outlook email to an arbitrary recipient, with an optional
+ * attachment. Used by the agent's send_email action.
+ */
+export async function sendOutlookEmail(
+  enterpriseId: string,
+  opts: { to: string; subject: string; body: string; cc?: string; attachment?: { filename: string; contentType: string; content: Buffer } }
+): Promise<string> {
+  const token = await authedTokenFor(enterpriseId);
+  const message: Record<string, unknown> = {
+    subject: opts.subject,
+    body: { contentType: "Text", content: opts.body },
+    toRecipients: [{ emailAddress: { address: opts.to } }],
+    ccRecipients: opts.cc ? [{ emailAddress: { address: opts.cc } }] : [],
+  };
+  if (opts.attachment) {
+    message.attachments = [
+      {
+        "@odata.type": "#microsoft.graph.fileAttachment",
+        name: opts.attachment.filename,
+        contentType: opts.attachment.contentType,
+        contentBytes: opts.attachment.content.toString("base64"),
+      },
+    ];
+  }
+  const res = await fetch("https://graph.microsoft.com/v1.0/me/sendMail", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ message }),
+  });
+  if (res.status === 202) return "sent";
+  const d = (await res.json()) as any;
+  if (d?.error) throw new Error(d.error.message);
+  return "sent";
+}
+
+/**
  * Upload a file to the connected account's OneDrive (simple upload, < 4 MB).
  * Used to store agent-generated reports (Word/Excel) in Microsoft 365 so they
  * live alongside the customer's other business documents. Returns the driveItem

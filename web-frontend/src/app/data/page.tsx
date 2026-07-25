@@ -22,7 +22,7 @@ type Period = "daily" | "weekly" | "monthly" | "quarterly" | "annual";
 type ReportFile = {
   name: string;
   url: string;
-  type: "docx" | "xlsx";
+  type: "docx" | "xlsx" | "pdf";
   size: number;
   onedrive_url?: string;
   onedrive_status?: "pending" | "executed";
@@ -106,9 +106,9 @@ export default function DataPage() {
             period_key: d.id,
             period_label: "Document",
             title: (data.title as string) || "Document",
-            summary: `${(data.kind as string) === "xlsx" ? "Spreadsheet" : "Document"} created by ${
-              (data.agent_label as string) || "an agent"
-            }.`,
+            summary: `${
+              (data.kind as string) === "xlsx" ? "Spreadsheet" : (data.kind as string) === "pdf" ? "PDF document" : "Document"
+            } created by ${(data.agent_label as string) || "an agent"}.`,
             files: file ? [file] : [],
             created_at: data.created_at as { toDate: () => Date } | undefined,
             period_start: data.created_at as { toDate: () => Date } | undefined,
@@ -403,10 +403,10 @@ export default function DataPage() {
                         <span
                           className={cn(
                             "w-9 h-9 rounded-lg flex items-center justify-center text-[10px] font-bold text-white shrink-0",
-                            f.type === "docx" ? "bg-blue-500" : "bg-emerald-600"
+                            f.type === "docx" ? "bg-blue-500" : f.type === "pdf" ? "bg-red-500" : "bg-emerald-600"
                           )}
                         >
-                          {f.type === "docx" ? "DOC" : "XLS"}
+                          {f.type === "docx" ? "DOC" : f.type === "pdf" ? "PDF" : "XLS"}
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block text-sm font-medium truncate">{f.name}</span>

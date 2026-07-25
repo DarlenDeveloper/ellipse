@@ -207,10 +207,33 @@ async function executeGmailAction(
         (params.subject as string) ?? "",
         (params.body as string) ?? ""
       );
+    case "send_email":
+      return gmail.sendGmailEmail(enterpriseId, {
+        to: params.to as string,
+        subject: (params.subject as string) ?? "",
+        body: (params.body as string) ?? "",
+        cc: params.cc as string | undefined,
+        attachment: await loadAttachment(params),
+      });
     default:
       logger.warn("Unknown Gmail action", { actionType });
       return null;
   }
+}
+
+/** Resolve an email attachment (if any) by downloading it from our storage bucket. */
+async function loadAttachment(
+  params: Record<string, unknown>
+): Promise<{ filename: string; contentType: string; content: Buffer } | undefined> {
+  const a = params.attachment as { storagePath?: string; fileName?: string; contentType?: string } | undefined;
+  if (!a?.storagePath) return undefined;
+  const { bucket } = await import("./admin");
+  const [content] = await bucket().file(a.storagePath).download();
+  return {
+    filename: a.fileName || a.storagePath.split("/").pop() || "attachment",
+    contentType: a.contentType || "application/octet-stream",
+    content,
+  };
 }
 
 /** Routes an SMTP action to the connection's executors. Currently: send_reply. */
@@ -228,6 +251,14 @@ async function executeSmtpAction(
         (params.subject as string) ?? "",
         (params.body as string) ?? ""
       );
+    case "send_email":
+      return smtp.sendSmtpEmail(enterpriseId, {
+        to: params.to as string,
+        subject: (params.subject as string) ?? "",
+        body: (params.body as string) ?? "",
+        cc: params.cc as string | undefined,
+        attachment: await loadAttachment(params),
+      });
     default:
       logger.warn("Unknown SMTP action", { actionType });
       return null;
@@ -285,6 +316,14 @@ async function executeMicrosoftAction(
         to: params.to as string,
         subject: params.subject as string,
         body: (params.body as string) ?? "",
+      });
+    case "send_email":
+      return ms.sendOutlookEmail(enterpriseId, {
+        to: params.to as string,
+        subject: (params.subject as string) ?? "",
+        body: (params.body as string) ?? "",
+        cc: params.cc as string | undefined,
+        attachment: await loadAttachment(params),
       });
     case "save_file":
       return saveFileToMicrosoft(enterpriseId, params);

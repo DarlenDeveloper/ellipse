@@ -807,6 +807,60 @@ export const mercuryDebug = onRequest(async (req, res) => {
   }
 });
 
+/** TEMPORARY — inspect a recent Zoho quote's line-item structure. ?enterpriseId=. Remove before ship. */
+export const zohoQuoteDebug = onRequest(
+  { secrets: [zohoClientId, zohoClientSecret] },
+  async (req, res) => {
+    const enterpriseId = req.query.enterpriseId as string | undefined;
+    if (!enterpriseId) {
+      res.status(400).json({ ok: false, error: "Missing enterpriseId" });
+      return;
+    }
+    try {
+      const { debugRecentQuote } = await import("./connections/zoho");
+      res.json({ ok: true, ...(await debugRecentQuote(enterpriseId)) });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: (e as Error).message });
+    }
+  }
+);
+
+/** TEMPORARY — render a sample proforma to verify PDF generation. ?enterpriseId=. Remove before ship. */
+export const quotationDebug = onRequest(async (req, res) => {
+  const enterpriseId = req.query.enterpriseId as string | undefined;
+  if (!enterpriseId) {
+    res.status(400).json({ ok: false, error: "Missing enterpriseId" });
+    return;
+  }
+  try {
+    const { createQuotationPdf } = await import("./quotations");
+    const q = await createQuotationPdf({
+      enterpriseId,
+      agentId: "mercury",
+      agentLabel: "Mercury Store Agent",
+      logo: "/logos/mercury.png",
+      client: {
+        name: "TWED PROPERTY DEVELOPMENT LTD",
+        address: "",
+        tin: "",
+        contact_person: "",
+        contact_no: "",
+        email: "",
+      },
+      items: [
+        { description: "HP 938 Black Original Ink Cartridge", rate: 171911.46, qty: 1 },
+        { description: "HP 936 Yellow Ink Cartridge (C4837A)", rate: 140436.29, qty: 1 },
+        { description: "HP 938 Magenta Original Ink Cartridge", rate: 140436.29, qty: 1 },
+        { description: "HP 938 Cyan Original Ink Cartridge", rate: 140436.29, qty: 1 },
+      ],
+      currency: "UGX",
+    });
+    res.json({ ok: true, ...q });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: (e as Error).message, stack: (e as Error).stack });
+  }
+});
+
 /** Connect the Mercury Store API — verifies the key with a read probe, then stores it. */
 export const connectMercury = onCall(async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
@@ -894,6 +948,79 @@ export const ingestKnowledgeFile = onCall(
     return { ok: true, id: docRef.id, extracted: content.length, url };
   }
 );
+
+/**
+ * Save the org's quotation / proforma branding (letterhead). Owner-only.
+ * Accepts company details + optional logo (base64). Used by the quotation PDF generator.
+ * data: { enterpriseId, company_name, tin, address, phones, email, website,
+ *         prepared_by, vat_rate, review_link, terms, proforma_prefix, proforma_start?,
+ *         logoBase64?, logoType?, logoName? }
+ */
+export const saveQuotationBranding = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const d = request.data ?? {};
+  const enterpriseId = d.enterpriseId as string | undefined;
+  if (!enterpriseId) throw new HttpsError("invalid-argument", "Missing enterpriseId.");
+
+  const { db, bucket, FieldValue } = await import("./admin");
+  const { randomUUID } = await import("crypto");
+
+  // Owner gate.
+  const uSnap = await db.doc(`users/${request.auth.uid}`).get();
+  const u = uSnap.data();
+  if (!u || u.enterprise_id !== enterpriseId || u.role !== "owner") {
+    throw new HttpsError("permission-denied", "Only the organization owner can edit quotation branding.");
+  }
+
+  const update: Record<string, unknown> = {
+    enterprise_id: enterpriseId,
+    updated_at: FieldValue.serverTimestamp(),
+  };
+  const strFields = [
+    "company_name",
+    "tin",
+    "address",
+    "phones",
+    "email",
+    "website",
+    "prepared_by",
+    "review_link",
+    "terms",
+    "proforma_prefix",
+  ];
+  for (const f of strFields) {
+    if (typeof d[f] === "string") update[f] = (d[f] as string).trim();
+  }
+  if (d.vat_rate !== undefined && d.vat_rate !== null && d.vat_rate !== "") {
+    update.vat_rate = Number(d.vat_rate);
+  }
+  if (d.proforma_start !== undefined && d.proforma_start !== null && d.proforma_start !== "") {
+    // Next number issued will be proforma_start.
+    update.proforma_seq = Math.max(0, Number(d.proforma_start) - 1);
+  }
+
+  // Optional logo upload.
+  const logoBase64 = d.logoBase64 as string | undefined;
+  if (logoBase64) {
+    const logoType = (d.logoType as string | undefined) || "image/png";
+    const logoName = ((d.logoName as string | undefined) || "logo.png").replace(/[^\w.\-]+/g, "_");
+    const buffer = Buffer.from(logoBase64, "base64");
+    if (buffer.length > 5 * 1024 * 1024) throw new HttpsError("invalid-argument", "Logo too large (max 5 MB).");
+    const b = bucket();
+    const path = `quotation_settings/${enterpriseId}/${randomUUID()}-${logoName}`;
+    const token = randomUUID();
+    await b.file(path).save(buffer, {
+      contentType: logoType,
+      metadata: { metadata: { firebaseStorageDownloadTokens: token } },
+      resumable: false,
+    });
+    update.logo_url = `https://firebasestorage.googleapis.com/v0/b/${b.name}/o/${encodeURIComponent(path)}?alt=media&token=${token}`;
+    update.logo_path = path;
+  }
+
+  await db.doc(`quotation_settings/${enterpriseId}`).set(update, { merge: true });
+  return { ok: true, logo_url: update.logo_url };
+});
 
 /** Disconnect an integration and purge all data it produced (analytics, messages, sites). */
 export const disconnectIntegration = onCall(async (request) => {

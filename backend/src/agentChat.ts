@@ -39,6 +39,12 @@ const AGENT_LABEL: Record<string, string> = {
   mercury: "Mercury Store Agent",
 };
 
+const AGENT_LOGO: Record<string, string> = {
+  zoho: "/logos/zoho.png",
+  website: "/logos/web.png",
+  mercury: "/logos/mercury.png",
+};
+
 // ---------------------------------------------------------------------------
 // Tool declarations (Gemini function calling)
 // ---------------------------------------------------------------------------
@@ -201,6 +207,50 @@ const T = {
       required: ["resource", "id", "fields"],
     },
   },
+  create_quotation: {
+    name: "create_quotation",
+    description:
+      "Generate a branded proforma-invoice / quotation PDF and save it to the workspace Data page. " +
+      "The company letterhead (logo, name, TIN, address, VAT rate, terms, prepared-by) comes from the org's saved quotation branding — do NOT invent those. " +
+      "You provide the client details and the line items. Amounts, subtotal, VAT and total are computed automatically — never state or pre-compute them yourself. " +
+      "For each item pass its unit price as `rate` and quantity as `qty`. When items refer to store products, look up their real price first with store_list (q search). " +
+      "Set vatExempt:true only if the user says the quote is VAT/withholding exempt.",
+    parameters: {
+      type: "object",
+      properties: {
+        client: {
+          type: "object",
+          description: "Client / recipient details.",
+          properties: {
+            name: { type: "string" },
+            address: { type: "string" },
+            tin: { type: "string" },
+            contact_person: { type: "string" },
+            contact_no: { type: "string" },
+            email: { type: "string" },
+          },
+        },
+        items: {
+          type: "array",
+          description: "Line items.",
+          items: {
+            type: "object",
+            properties: {
+              description: { type: "string" },
+              rate: { type: "number", description: "Unit price." },
+              qty: { type: "number", description: "Quantity." },
+            },
+            required: ["description", "rate", "qty"],
+          },
+        },
+        currency: { type: "string", description: "Currency code, default UGX." },
+        vatExempt: { type: "boolean", description: "True if VAT/withholding exempt (VAT becomes 0)." },
+        preparedBy: { type: "string", description: "Name of the preparer (defaults to the branding setting)." },
+        title: { type: "string", description: "Optional document title." },
+      },
+      required: ["client", "items"],
+    },
+  },
   generate_owner_analysis: {
     name: "generate_owner_analysis",
     description:
@@ -210,6 +260,42 @@ const T = {
       properties: {
         period: { type: "string", description: "today | yesterday | week | month | quarter | year. Defaults to month." },
       },
+    },
+  },
+  get_zoho_quote: {
+    name: "get_zoho_quote",
+    description:
+      "Fetch a single existing Zoho CRM quote INCLUDING its line items (description, unit price, quantity), " +
+      "so you can turn it into a branded proforma with create_quotation. Look it up by proforma number, subject, or account name. " +
+      "Use when the user says things like 'make a quotation from the Zoho quote for <account>' or references a proforma number. " +
+      "Pass the returned items straight into create_quotation — do not alter the prices.",
+    parameters: {
+      type: "object",
+      properties: {
+        proforma: { type: "string", description: "Proforma / quote number to match exactly." },
+        subject: { type: "string", description: "Quote subject (prefix match)." },
+        account: { type: "string", description: "Account/company name on the quote." },
+      },
+    },
+  },
+  send_email: {
+    name: "send_email",
+    description:
+      "Send an email to ANY recipient address (a brand-new email, not a reply). " +
+      "Use when the user says something like 'email this to example@gmail.com'. " +
+      "Optionally attach a document created earlier in this chat (e.g. a quotation/proforma) by passing its documentId. " +
+      "The email is routed through the approval gate — in supervised mode it is queued in Approvals for the user to approve before it actually sends. " +
+      "Requires a connected email channel (Gmail, Microsoft 365/Outlook, or SMTP). Write a clear, professional subject and body.",
+    parameters: {
+      type: "object",
+      properties: {
+        to: { type: "string", description: "Recipient email address." },
+        subject: { type: "string", description: "Email subject." },
+        body: { type: "string", description: "Email body (plain text)." },
+        cc: { type: "string", description: "Optional CC address." },
+        attachDocumentId: { type: "string", description: "Optional: id of a document/quotation created earlier in this chat to attach." },
+      },
+      required: ["to", "subject", "body"],
     },
   },
   create_document: {
@@ -250,6 +336,9 @@ const TOOL_CATALOG: Record<string, ToolDecl> = {
   store_get: T.store_get,
   store_create: T.store_create,
   store_update: T.store_update,
+  create_quotation: T.create_quotation,
+  send_email: T.send_email,
+  get_zoho_quote: T.get_zoho_quote,
 };
 
 const BUILTIN_AGENTS = new Set(["ivy", "zoho", "website", "google-workspace", "smtp", "microsoft365", "whatsapp", "mercury"]);
@@ -261,10 +350,16 @@ function toolsFor(agentId: string, connected: Set<string>): ToolDecl[] {
 
   if (agentId === "ivy") {
     tools.push(T.search_conversations, T.get_reports, T.create_document);
-    if (has("zoho")) tools.push(T.get_sales_summary, T.create_crm_lead);
+    if (has("zoho")) tools.push(T.get_sales_summary, T.create_crm_lead, T.get_zoho_quote);
     if (has("website")) tools.push(T.get_web_analytics);
+    // Quotation generation is available whenever there's a data source to quote from.
+    if (has("zoho") || has("mercury")) tools.push(T.create_quotation);
     if (has("google-workspace") || has("smtp") || has("microsoft365") || has("whatsapp")) {
       tools.push(T.reply_to_conversation);
+    }
+    // Send a brand-new email to any address (gated) if an email channel is connected.
+    if (has("google-workspace") || has("smtp") || has("microsoft365")) {
+      tools.push(T.send_email);
     }
     // Ivy can generate reports across any connected source.
     if (has("zoho") || has("website") || has("google-workspace") || has("smtp") || has("microsoft365") || has("whatsapp")) {
@@ -278,7 +373,15 @@ function toolsFor(agentId: string, connected: Set<string>): ToolDecl[] {
   }
 
   if (agentId === "zoho") {
-    tools.push(T.get_sales_summary, T.create_crm_lead, T.search_conversations, T.create_document, T.generate_report);
+    tools.push(
+      T.get_sales_summary,
+      T.create_crm_lead,
+      T.search_conversations,
+      T.create_document,
+      T.generate_report,
+      T.get_zoho_quote,
+      T.create_quotation
+    );
     return tools;
   }
   if (agentId === "website") {
@@ -286,11 +389,15 @@ function toolsFor(agentId: string, connected: Set<string>): ToolDecl[] {
     return tools;
   }
   if (agentId === "mercury") {
-    tools.push(T.store_list, T.store_get, T.store_create, T.store_update, T.create_document);
+    tools.push(T.store_list, T.store_get, T.store_create, T.store_update, T.create_document, T.create_quotation);
     return tools;
   }
   // messaging agents
   tools.push(T.search_conversations, T.reply_to_conversation, T.create_document, T.generate_report);
+  // Email-capable channel agents can also send fresh emails to any address.
+  if (agentId === "google-workspace" || agentId === "smtp" || agentId === "microsoft365") {
+    tools.push(T.send_email);
+  }
   return tools;
 }
 
@@ -348,6 +455,12 @@ async function runTool(
       return toolStoreWrite(enterpriseId, "create_record", args);
     case "store_update":
       return toolStoreWrite(enterpriseId, "update_record", args);
+    case "create_quotation":
+      return toolCreateQuotation(enterpriseId, agentId, args);
+    case "send_email":
+      return toolSendEmail(enterpriseId, agentId, args);
+    case "get_zoho_quote":
+      return toolGetZohoQuote(enterpriseId, args);
     default:
       return `Unknown tool ${name}.`;
   }
@@ -706,6 +819,110 @@ async function toolStoreGet(enterpriseId: string, args: Record<string, unknown>)
   } catch (e) {
     return JSON.stringify({ error: `Mercury Store read failed: ${(e as Error).message}` });
   }
+}
+
+async function toolCreateQuotation(enterpriseId: string, agentId: string, args: Record<string, unknown>) {
+  try {
+    const items = Array.isArray(args.items)
+      ? (args.items as Record<string, unknown>[]).map((i) => ({
+          description: String(i.description ?? ""),
+          rate: Number(i.rate) || 0,
+          qty: Number(i.qty) || 0,
+        }))
+      : [];
+    if (!items.length) return JSON.stringify({ error: "No line items provided for the quotation." });
+
+    const { createQuotationPdf } = await import("./quotations");
+    const q = await createQuotationPdf({
+      enterpriseId,
+      agentId,
+      agentLabel: AGENT_LABEL[agentId] ?? "Agent",
+      logo: AGENT_LOGO[agentId],
+      client: (args.client as Record<string, string>) ?? {},
+      items,
+      currency: args.currency as string | undefined,
+      vatExempt: Boolean(args.vatExempt),
+      preparedBy: args.preparedBy as string | undefined,
+      title: args.title as string | undefined,
+    });
+    return JSON.stringify({
+      created: true,
+      documentId: q.id,
+      proforma_no: q.proforma_no,
+      total: q.total,
+      currency: q.currency,
+      name: q.name,
+      url: q.url,
+      type: "pdf",
+    });
+  } catch (e) {
+    return JSON.stringify({ error: `Quotation creation failed: ${(e as Error).message}` });
+  }
+}
+
+async function toolGetZohoQuote(enterpriseId: string, args: Record<string, unknown>) {
+  try {
+    const { getQuoteForQuotation } = await import("./connections/zoho");
+    const quote = await getQuoteForQuotation(enterpriseId, {
+      proforma: (args.proforma as string | undefined)?.trim(),
+      subject: (args.subject as string | undefined)?.trim(),
+      account: (args.account as string | undefined)?.trim(),
+    });
+    if (!quote) return JSON.stringify({ found: false, message: "No matching Zoho quote found." });
+    return JSON.stringify({ found: true, quote });
+  } catch (e) {
+    return JSON.stringify({ error: `Zoho quote lookup failed: ${(e as Error).message}` });
+  }
+}
+
+async function toolSendEmail(enterpriseId: string, agentId: string, args: Record<string, unknown>) {
+  const to = String(args.to ?? "").trim();
+  const subject = String(args.subject ?? "").trim();
+  const body = String(args.body ?? "").trim();
+  const cc = (args.cc as string | undefined)?.trim() || undefined;
+  const attachDocumentId = (args.attachDocumentId as string | undefined)?.trim();
+  if (!to || !/.+@.+\..+/.test(to)) return JSON.stringify({ error: "A valid recipient email address is required." });
+  if (!subject && !body) return JSON.stringify({ error: "Provide a subject and body for the email." });
+
+  // Pick a connected email channel: Gmail → Microsoft 365 → SMTP.
+  const connSnap = await db.collection("connections").where("enterprise_id", "==", enterpriseId).get();
+  const active = new Set(connSnap.docs.filter((d) => d.data().status === "active").map((d) => d.data().type as string));
+  let targetSystem: "gmail" | "microsoft365" | "smtp" | null = null;
+  if (active.has("google-workspace")) targetSystem = "gmail";
+  else if (active.has("microsoft365")) targetSystem = "microsoft365";
+  else if (active.has("smtp")) targetSystem = "smtp";
+  if (!targetSystem) return JSON.stringify({ error: "No email channel is connected (need Gmail, Microsoft 365, or SMTP)." });
+
+  // Resolve an attachment from a previously created document, if requested.
+  let attachment: { storagePath: string; fileName: string; contentType: string } | undefined;
+  let attachedName: string | undefined;
+  if (attachDocumentId) {
+    const docSnap = await db.doc(`documents/${attachDocumentId}`).get();
+    const d = docSnap.data();
+    if (!docSnap.exists || d?.enterprise_id !== enterpriseId) {
+      return JSON.stringify({ error: "Attachment document not found." });
+    }
+    const path = d?.storage_path as string | undefined;
+    const file = d?.file as { name?: string } | undefined;
+    if (!path) return JSON.stringify({ error: "That document can't be attached (missing stored file)." });
+    attachment = {
+      storagePath: path,
+      fileName: file?.name || "attachment",
+      contentType: (d?.content_type as string) || "application/octet-stream",
+    };
+    attachedName = attachment.fileName;
+  }
+
+  const res = await executeAgentAction({
+    enterpriseId,
+    agentId: `${agentId}-agent`,
+    domain: "assistant",
+    actionType: "send_email",
+    params: { to, subject, body, cc, attachment },
+    targetSystem,
+    reasoning: `Email "${subject}" to ${to}${attachedName ? ` with attachment ${attachedName}` : ""} (requested in chat).`,
+  });
+  return JSON.stringify({ action: "send_email", to, attached: attachedName ?? null, channel: targetSystem, ...res });
 }
 
 async function toolStoreWrite(enterpriseId: string, actionType: "create_record" | "update_record", args: Record<string, unknown>) {
@@ -1077,14 +1294,19 @@ export async function chatWithAgent(
       logger.info("tool result", { agentId, tool: call.name, enterpriseId, out: out.slice(0, 500) });
       results.push(`${call.name} → ${out}`);
       if (
-        ["create_crm_lead", "reply_to_conversation", "create_document", "generate_report", "generate_owner_analysis", "store_create", "store_update"].includes(
+        ["create_crm_lead", "reply_to_conversation", "create_document", "generate_report", "generate_owner_analysis", "store_create", "store_update", "create_quotation", "send_email"].includes(
           call.name
         )
       ) {
         actions.push({ name: call.name, args: call.args, result: out });
       }
       // Surface created documents/reports as downloadable file cards (not raw URLs in text).
-      if (call.name === "create_document" || call.name === "generate_report" || call.name === "generate_owner_analysis") {
+      if (
+        call.name === "create_document" ||
+        call.name === "generate_report" ||
+        call.name === "generate_owner_analysis" ||
+        call.name === "create_quotation"
+      ) {
         try {
           const parsed = JSON.parse(out) as { name?: string; url?: string; files?: { name: string; url: string; type?: string }[] };
           if (Array.isArray(parsed.files)) {
