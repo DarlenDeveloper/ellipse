@@ -55,7 +55,7 @@ export default function TasksPage() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Task Flow</h1>
-          <p className="text-gray-400 mt-1">Track progress across the Ellipse sprint.</p>
+          <p className="text-gray-400 mt-1">Track progress across the Mercury Computers sprint.</p>
         </div>
         <button className="flex items-center gap-2 bg-black text-white text-sm font-medium rounded-full px-5 py-2.5 hover:bg-gray-800">
           <Add size={18} variant="Linear" color="#ffffff" />

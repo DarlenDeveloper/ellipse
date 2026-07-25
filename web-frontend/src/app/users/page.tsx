@@ -63,7 +63,7 @@ export default function UsersPage() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Team Members</h1>
-          <p className="text-gray-400 mt-1">Manage your team and their roles within Ellipse.</p>
+          <p className="text-gray-400 mt-1">Manage your team and their roles within Mercury Computers.</p>
         </div>
         <button className="flex items-center gap-2 bg-black text-white text-sm font-medium rounded-full px-5 py-2.5 hover:bg-gray-800">
           <Add size={18} variant="Linear" color="#ffffff" />

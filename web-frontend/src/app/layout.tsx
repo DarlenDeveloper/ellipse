@@ -11,7 +11,7 @@ const poppins = Poppins({
 });
 
 export const metadata: Metadata = {
-  title: "Ellipse — Unified Agentic Communication Hub",
+  title: "Mercury Computers — Unified Agentic Communication Hub",
   description: "Connect all your channels. Let AI handle the rest.",
 };
 

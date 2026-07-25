@@ -33,9 +33,9 @@ export function AuthLayout({
         {/* Logo */}
         <div className="relative flex items-center gap-2.5">
           <div className="w-9 h-9 bg-white/10 backdrop-blur rounded-xl flex items-center justify-center p-1.5">
-            <Image src="/ellipse-logo.png" alt="Ellipse" width={24} height={24} className="w-6 h-6 object-contain" />
+            <Image src="/mercury-logo.png" alt="Mercury Computers" width={24} height={24} className="w-6 h-6 object-contain" />
           </div>
-          <span className="font-bold text-xl tracking-tight text-white">Ellipse</span>
+          <span className="font-bold text-xl tracking-tight text-white">Mercury Computers</span>
         </div>
 
         {/* Heading + steps */}

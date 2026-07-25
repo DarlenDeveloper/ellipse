@@ -234,7 +234,7 @@ export default function WebAgentsPage() {
             <div className="bg-white rounded-2xl p-6 border border-gray-100 space-y-5">
               <div>
                 <label className="text-sm font-medium text-gray-700 block mb-1.5">Bot Name</label>
-                <input defaultValue="Ellipse Assistant" className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-gray-200" />
+                <input defaultValue="Mercury Assistant" className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-gray-200" />
               </div>
               <div>
                 <label className="text-sm font-medium text-gray-700 block mb-1.5">Welcome Message</label>

@@ -55,7 +55,7 @@ export function ChatWidget() {
                 <MessageText1 size={18} variant="Bold" color="#ffffff" />
               </div>
               <div>
-                <p className="text-white text-sm font-semibold">Ellipse Support</p>
+                <p className="text-white text-sm font-semibold">Mercury Support</p>
                 <p className="text-gray-400 text-xs flex items-center gap-1.5">
                   <span className="w-2 h-2 bg-green-400 rounded-full" />
                   Online
@@ -125,7 +125,7 @@ export function ChatWidget() {
               </button>
             </div>
             <p className="text-[10px] text-gray-300 text-center mt-2">
-              Powered by Ellipse
+              Powered by Mercury Computers
             </p>
           </div>
         </div>

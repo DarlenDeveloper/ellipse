@@ -49,7 +49,7 @@ export default function LoginPage() {
     <AuthLayout heading="Welcome Back" subtitle="Sign in to pick up right where you left off.">
       <div className="text-center mb-8">
         <h2 className="text-3xl font-bold tracking-tight text-white">Log In</h2>
-        <p className="text-white/50 mt-2 text-sm">Sign in to your Ellipse workspace.</p>
+        <p className="text-white/50 mt-2 text-sm">Sign in to your Mercury Computers workspace.</p>
       </div>
 
       {/* SSO */}

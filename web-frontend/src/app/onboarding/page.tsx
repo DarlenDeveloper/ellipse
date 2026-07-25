@@ -197,9 +197,9 @@ export default function OnboardingPage() {
       <header className="relative flex items-center justify-between px-8 py-5 border-b border-white/10">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 bg-white/10 rounded-lg flex items-center justify-center p-1">
-            <Image src="/ellipse-logo.png" alt="Ellipse" width={24} height={24} className="w-6 h-6 object-contain" />
+            <Image src="/mercury-logo.png" alt="Mercury Computers" width={24} height={24} className="w-6 h-6 object-contain" />
           </div>
-          <span className="font-bold text-lg tracking-tight text-white">Ellipse</span>
+          <span className="font-bold text-lg tracking-tight text-white">Mercury Computers</span>
         </div>
         <button onClick={finish} className="text-sm text-white/40 hover:text-white/70">
           Skip for now
@@ -240,7 +240,7 @@ export default function OnboardingPage() {
         {step === 0 && (
           <div>
             <h1 className="text-3xl font-bold tracking-tight mb-2 text-white">Tell us about your company</h1>
-            <p className="text-white/50 mb-8">This creates your enterprise workspace on Ellipse.</p>
+            <p className="text-white/50 mb-8">This creates your enterprise workspace on Mercury Computers.</p>
             <div className="bg-white/5 border border-white/10 rounded-3xl p-6 space-y-5">
               <div>
                 <label className="text-xs font-medium text-white/60 block mb-1.5">Company name</label>

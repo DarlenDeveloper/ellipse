@@ -49,16 +49,15 @@ export function Sidebar() {
       )}
     >
       {/* Logo */}
-      <div className={cn("flex items-center mb-5", collapsed ? "justify-center" : "gap-2.5 px-2")}>
+      <div className={cn("flex items-center mb-5", collapsed ? "justify-center" : "px-2")}>
         <Image
-          src="/ellipse-logo.png"
-          alt="Ellipse"
-          width={36}
-          height={36}
-          className="w-9 h-9 object-contain shrink-0"
+          src="/mercury-logo.png"
+          alt="Mercury Computers"
+          width={180}
+          height={48}
+          className={cn("object-contain", collapsed ? "w-11 h-11" : "h-11 w-auto")}
           priority
         />
-        {!collapsed && <span className="font-bold text-xl tracking-tight">Ellipse</span>}
       </div>
 
       {/* Navigation */}

@@ -1,5 +1,7 @@
 # Ellipse
 
+> **White-label deployment:** This instance is branded as **Mercury Computers Ltd** in the UI (logo, wordmark, page titles, chat widget), but the underlying platform, codebase, and backend project are **Ellipse** (Firebase project `ellipse-desk`). Ellipse is the product; Mercury Computers is the customer it's white-labeled for. Branding lives in the frontend only — swapping `public/mercury-logo.png` + the wordmark strings re-brands it for any customer.
+
 ## Unified Agentic Communication Hub
 
 **One-liner:** Companies connect all their communication channels and let AI agents manage, prioritize, and act on conversations from a single intelligent inbox.
