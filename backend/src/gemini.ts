@@ -63,3 +63,37 @@ export async function callGemini(opts: {
     usageTokens,
   };
 }
+
+/**
+ * Extract the full text of an uploaded document (PDF/image) using Gemini's
+ * multimodal input. Used to ingest knowledge-base files (e.g. sample quotations)
+ * into plain text the agents can read. Returns "" on failure.
+ */
+export async function extractTextFromFile(base64: string, mimeType: string): Promise<string> {
+  try {
+    const ai = getClient();
+    const response = await ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { inlineData: { mimeType, data: base64 } },
+            {
+              text:
+                "Extract ALL text from this document as clean plain text. Preserve structure: " +
+                "headings, labelled fields, line items and tables (render tables as readable rows with their columns), " +
+                "and any totals. Do NOT summarise, add, infer, or omit anything — transcribe verbatim. " +
+                "Output only the extracted text.",
+            },
+          ],
+        },
+      ],
+      config: { temperature: 0 },
+    });
+    return response.text ?? "";
+  } catch (e) {
+    logger.error("extractTextFromFile failed", { mimeType, error: (e as Error).message });
+    return "";
+  }
+}

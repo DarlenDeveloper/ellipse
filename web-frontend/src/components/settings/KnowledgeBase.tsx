@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Add, Trash, Book1, DocumentText } from "iconsax-react";
+import { useEffect, useRef, useState } from "react";
+import { Add, Trash, Book1, DocumentText, DocumentUpload, ExportSquare } from "iconsax-react";
 import {
   collection,
   query,
@@ -12,15 +12,34 @@ import {
   doc,
   serverTimestamp,
 } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { httpsCallable } from "firebase/functions";
+import { db, functions } from "@/lib/firebase";
 import { useEnterpriseId } from "@/lib/use-enterprise";
+
+type KbFile = { name: string; url: string; type: string; size: number };
 
 type Entry = {
   id: string;
   title?: string;
   content?: string;
+  source?: string;
+  file?: KbFile;
   created_at?: { toDate: () => Date };
 };
+
+const ACCEPTED = ".pdf,.png,.jpg,.jpeg,.webp,.txt,.md,.csv";
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      resolve(result.split(",")[1] ?? ""); // strip the data: prefix
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
 function timeAgo(d?: Date): string {
   if (!d) return "";
@@ -43,6 +62,9 @@ export function KnowledgeBase() {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!enterpriseId) return;
@@ -81,6 +103,38 @@ export function KnowledgeBase() {
     await deleteDoc(doc(db, "knowledge_base", id));
   };
 
+  const onPickFile = () => fileInputRef.current?.click();
+
+  const uploadFile = async (file: File) => {
+    if (!enterpriseId) return;
+    setUploadError(null);
+    if (file.size > 15 * 1024 * 1024) {
+      setUploadError("File is too large (max 15 MB).");
+      return;
+    }
+    setUploading(true);
+    try {
+      const dataBase64 = await fileToBase64(file);
+      const fn = httpsCallable(functions, "ingestKnowledgeFile");
+      await fn({
+        enterpriseId,
+        fileName: file.name,
+        fileType: file.type || "application/octet-stream",
+        dataBase64,
+      });
+    } catch (e) {
+      setUploadError((e as Error).message || "Upload failed.");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) uploadFile(f);
+  };
+
   const inputClass =
     "w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-gray-200";
 
@@ -96,15 +150,36 @@ export function KnowledgeBase() {
             : `${entries.length} ${entries.length === 1 ? "entry" : "entries"} your agents use as context`}
         </p>
         {!open && (
-          <button
-            onClick={() => setOpen(true)}
-            className="flex items-center gap-2 bg-black text-white text-sm font-medium rounded-full px-4 py-2 hover:bg-gray-800"
-          >
-            <Add size={18} variant="Linear" color="#ffffff" />
-            Add Entry
-          </button>
+          <div className="flex items-center gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={ACCEPTED}
+              onChange={onFileChange}
+              className="hidden"
+            />
+            <button
+              onClick={onPickFile}
+              disabled={uploading}
+              className="flex items-center gap-2 border border-gray-200 text-gray-700 text-sm font-medium rounded-full px-4 py-2 hover:bg-gray-50 disabled:opacity-50"
+            >
+              <DocumentUpload size={18} variant="Linear" color="#374151" />
+              {uploading ? "Processing…" : "Upload File"}
+            </button>
+            <button
+              onClick={() => setOpen(true)}
+              className="flex items-center gap-2 bg-black text-white text-sm font-medium rounded-full px-4 py-2 hover:bg-gray-800"
+            >
+              <Add size={18} variant="Linear" color="#ffffff" />
+              Add Entry
+            </button>
+          </div>
         )}
       </div>
+
+      {uploadError && (
+        <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-2.5">{uploadError}</p>
+      )}
 
       {/* Add form (collapsible) */}
       {open && (
@@ -155,7 +230,8 @@ export function KnowledgeBase() {
           </div>
           <h4 className="text-base font-semibold">Teach your agents</h4>
           <p className="text-sm text-gray-400 mt-1 max-w-xs">
-            Add facts, policies, and FAQs. Every agent uses these as context when replying and qualifying leads.
+            Add facts, policies, and FAQs — or upload files like sample quotations (PDF). Every agent uses these as
+            context when replying, qualifying leads, and drafting documents.
           </p>
           <button
             onClick={() => setOpen(true)}
@@ -174,7 +250,11 @@ export function KnowledgeBase() {
             >
               <div className="flex items-start gap-3">
                 <span className="w-9 h-9 rounded-lg bg-gray-50 flex items-center justify-center shrink-0">
-                  <DocumentText size={17} variant="Bold" color="#6b7280" />
+                  {e.source === "file" ? (
+                    <DocumentUpload size={17} variant="Bold" color="#6b7280" />
+                  ) : (
+                    <DocumentText size={17} variant="Bold" color="#6b7280" />
+                  )}
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-2">
@@ -187,7 +267,26 @@ export function KnowledgeBase() {
                       <Trash size={16} variant="Linear" />
                     </button>
                   </div>
-                  <p className="text-sm text-gray-500 mt-1.5 whitespace-pre-wrap line-clamp-4">{e.content}</p>
+                  {e.source === "file" ? (
+                    <>
+                      <p className="text-sm text-gray-500 mt-1.5 line-clamp-3">
+                        {e.content ? e.content : "Stored file — text could not be extracted."}
+                      </p>
+                      {e.file?.url && (
+                        <a
+                          href={e.file.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-[12px] font-medium text-gray-600 hover:text-black mt-2.5"
+                        >
+                          <ExportSquare size={14} variant="Linear" color="currentColor" />
+                          Open {e.file.name}
+                        </a>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-sm text-gray-500 mt-1.5 whitespace-pre-wrap line-clamp-4">{e.content}</p>
+                  )}
                   {e.created_at && (
                     <p className="text-[11px] text-gray-300 mt-3">{timeAgo(e.created_at.toDate())}</p>
                   )}

@@ -30,18 +30,17 @@ export function AuthLayout({
         <div className="absolute bottom-0 right-0 w-[500px] h-[500px] rounded-full bg-blue-500/25 blur-[120px]" />
         <div className="absolute top-1/3 left-1/4 w-[300px] h-[300px] rounded-full bg-sky-400/15 blur-[100px]" />
 
-        {/* Logo (on a light plate so the brand mark reads on dark blue) */}
-        <div className="relative">
-          <div className="inline-flex items-center bg-white rounded-2xl px-4 py-2.5 shadow-lg">
-            <Image
-              src="/mercury-logo.png"
-              alt="Mercury Computers"
-              width={200}
-              height={44}
-              className="h-9 w-auto object-contain"
-              priority
-            />
-          </div>
+        {/* Logo — transparent PNG on the gradient, with a soft light halo for legibility */}
+        <div className="relative inline-flex">
+          <div className="absolute -inset-6 rounded-full bg-white/25 blur-2xl" aria-hidden />
+          <Image
+            src="/mercury-logo.png"
+            alt="Mercury Computers"
+            width={220}
+            height={48}
+            className="relative h-10 w-auto object-contain"
+            priority
+          />
         </div>
 
         {/* Heading + steps */}

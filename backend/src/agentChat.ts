@@ -141,9 +141,12 @@ const T = {
     name: "store_list",
     description:
       "Search or list records from the Mercury Store: products, orders, quotations, or repairs. " +
-      "ALWAYS pass `q` when the user asks whether a product/brand exists or to find items by name/brand/model " +
-      "(e.g. 'do you have Lenovo laptops?' -> q:'lenovo laptop'). Do NOT conclude a product is unavailable from a plain list — " +
-      "the catalog has 300+ items; use `q` (or `brand`/`category`) so all matches across the whole catalog are searched. " +
+      "You MUST call this before answering ANY question about store data — including whether records exist, " +
+      "counts, availability, or details. NEVER answer 'there are none' / 'no X in the system' without calling this first. " +
+      "Examples: 'are there any quotation requests?' -> resource:'quotations'; 'any pending orders?' -> resource:'orders', status:'pending'; " +
+      "'open repairs?' -> resource:'repairs'. " +
+      "For products, ALWAYS pass `q` to find items by name/brand/model (e.g. 'do you have Lenovo laptops?' -> resource:'products', q:'lenovo laptop'); " +
+      "the catalog has 300+ items, so never conclude a product is unavailable from a plain list — search with `q` (or `brand`/`category`). " +
       "The result includes `total` (exact match count) so you can answer 'how many' accurately.",
     parameters: {
       type: "object",
@@ -986,13 +989,17 @@ function buildSystem(
     scope = `\nYou are the ${label.replace(" Agent", "")} channel specialist: its conversations and replies. You know this channel deeply and defer questions about other channels.`;
   }
 
+  const storeRule = connected.has("mercury")
+    ? `\n\nMERCURY STORE DATA: For any question about store products, orders, quotations or repairs (does it exist, is it available, how many, details, status), you MUST call store_list (or store_get) FIRST and answer only from what it returns. Never say there are none / it doesn't exist / it's unavailable unless a tool result confirms zero. For product lookups always use the \`q\` search parameter.`
+    : "";
+
   const connectedNames = [...connected].map((t) => CONNECTION_LABEL[t]).filter(Boolean);
   const connLine = connectedNames.length
     ? `\n\nConnected integrations for this workspace: ${connectedNames.join(", ")}. When asking the user to choose a source/channel for a report or action, ONLY offer options from THIS list. NEVER offer or mention an integration that isn't in this list (e.g. don't suggest WhatsApp if it's not connected). Reports/exports as downloadable files are currently available for Zoho CRM only — if the user wants another source, answer from its data but say a file export isn't available for it yet.`
     : `\n\nNo integrations are connected yet — tell the user to connect one before you can pull data.`;
 
   const knowledge = kb ? `\n\n--- Company knowledge base (authoritative facts) ---\n${kb}` : "";
-  return base + scope + connLine + knowledge;
+  return base + scope + connLine + storeRule + knowledge;
 }
 
 function renderHistory(history: ChatTurn[]): string {

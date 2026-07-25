@@ -826,6 +826,75 @@ export const connectMercury = onCall(async (request) => {
   return { ok: true };
 });
 
+/**
+ * Ingest a knowledge-base file (PDF, image, or text) uploaded from Settings.
+ * Stores the original file, extracts its text (via Gemini for PDF/images) so
+ * agents can use it as context, and writes a `knowledge_base` entry.
+ * data: { enterpriseId, fileName, fileType (mime), dataBase64, title? }
+ */
+export const ingestKnowledgeFile = onCall(
+  { secrets: [geminiKey], memory: "512MiB", timeoutSeconds: 120 },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+    const d = request.data ?? {};
+    const enterpriseId = d.enterpriseId as string | undefined;
+    const fileName = (d.fileName as string | undefined)?.trim();
+    const fileType = (d.fileType as string | undefined)?.trim() || "application/octet-stream";
+    const dataBase64 = d.dataBase64 as string | undefined;
+    const title = (d.title as string | undefined)?.trim() || fileName;
+    if (!enterpriseId || !fileName || !dataBase64) {
+      throw new HttpsError("invalid-argument", "Missing enterpriseId, fileName or dataBase64.");
+    }
+
+    const buffer = Buffer.from(dataBase64, "base64");
+    const MAX_BYTES = 15 * 1024 * 1024; // 15 MB
+    if (buffer.length > MAX_BYTES) {
+      throw new HttpsError("invalid-argument", "File too large (max 15 MB).");
+    }
+
+    const { db, bucket, FieldValue } = await import("./admin");
+    const { randomUUID } = await import("crypto");
+
+    // Store the original file.
+    const docRef = db.collection("knowledge_base").doc();
+    const safeName = fileName.replace(/[^\w.\-]+/g, "_");
+    const path = `knowledge_base/${enterpriseId}/${docRef.id}/${safeName}`;
+    const b = bucket();
+    const token = randomUUID();
+    await b.file(path).save(buffer, {
+      contentType: fileType,
+      metadata: { metadata: { firebaseStorageDownloadTokens: token } },
+      resumable: false,
+    });
+    const url = `https://firebasestorage.googleapis.com/v0/b/${b.name}/o/${encodeURIComponent(path)}?alt=media&token=${token}`;
+
+    // Extract text content the agents can read.
+    let content = "";
+    if (fileType === "application/pdf" || fileType.startsWith("image/")) {
+      const { extractTextFromFile } = await import("./gemini");
+      content = await extractTextFromFile(dataBase64, fileType);
+    } else if (fileType.startsWith("text/") || fileType === "application/json") {
+      content = buffer.toString("utf8");
+    } else {
+      // Best effort for anything else (e.g. odd mime types on PDFs).
+      const { extractTextFromFile } = await import("./gemini");
+      content = await extractTextFromFile(dataBase64, "application/pdf");
+    }
+    content = content.trim().slice(0, 20000);
+
+    await docRef.set({
+      enterprise_id: enterpriseId,
+      title,
+      content,
+      source: "file",
+      file: { name: fileName, url, type: fileType, size: buffer.length },
+      created_at: FieldValue.serverTimestamp(),
+    });
+
+    return { ok: true, id: docRef.id, extracted: content.length, url };
+  }
+);
+
 /** Disconnect an integration and purge all data it produced (analytics, messages, sites). */
 export const disconnectIntegration = onCall(async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");

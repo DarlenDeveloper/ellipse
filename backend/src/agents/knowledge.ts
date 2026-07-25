@@ -11,10 +11,17 @@ export async function loadKnowledgeBase(enterpriseId: string): Promise<string> {
     .get();
   if (snap.empty) return "";
 
-  const entries = snap.docs
-    .map((d) => d.data() as { title?: string; content?: string })
-    .filter((e) => e.content)
-    .map((e) => `- ${e.title ?? "Note"}: ${e.content}`);
+  const PER_ENTRY_CAP = 6000; // keep any single file from dominating the prompt
+  const TOTAL_CAP = 24000;
 
-  return entries.join("\n");
+  const entries = snap.docs
+    .map((d) => d.data() as { title?: string; content?: string; source?: string })
+    .filter((e) => e.content)
+    .map((e) => {
+      const body = e.content!.length > PER_ENTRY_CAP ? `${e.content!.slice(0, PER_ENTRY_CAP)}…` : e.content!;
+      const tag = e.source === "file" ? " (from uploaded file)" : "";
+      return `- ${e.title ?? "Note"}${tag}: ${body}`;
+    });
+
+  return entries.join("\n").slice(0, TOTAL_CAP);
 }
