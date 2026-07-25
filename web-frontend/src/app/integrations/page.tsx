@@ -9,6 +9,7 @@ import { IntegrationCard } from "@/components/integrations/IntegrationCard";
 import { SmtpConnectModal } from "@/components/integrations/SmtpConnectModal";
 import { WhatsAppConnectModal } from "@/components/integrations/WhatsAppConnectModal";
 import { WebsiteConnectModal } from "@/components/integrations/WebsiteConnectModal";
+import { MercuryConnectModal } from "@/components/integrations/MercuryConnectModal";
 import { functions, db } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 
@@ -25,6 +26,8 @@ export default function IntegrationsPage() {
   const [showWhatsappModal, setShowWhatsappModal] = useState(false);
   const [websiteConnected, setWebsiteConnected] = useState(false);
   const [showWebsiteModal, setShowWebsiteModal] = useState(false);
+  const [mercuryConnected, setMercuryConnected] = useState(false);
+  const [showMercuryModal, setShowMercuryModal] = useState(false);
   const [msConnected, setMsConnected] = useState(false);
   const [connectingMs, setConnectingMs] = useState(false);
   const [disconnectTarget, setDisconnectTarget] = useState<{ id: string; name: string } | null>(null);
@@ -41,6 +44,7 @@ export default function IntegrationsPage() {
     setWhatsappConnected(active.has("whatsapp"));
     setWebsiteConnected(active.has("website"));
     setMsConnected(active.has("microsoft365"));
+    setMercuryConnected(active.has("mercury"));
     setItems((prev) => prev.map((it) => ({ ...it, connected: active.has(it.id) })));
   }, []);
 
@@ -259,6 +263,7 @@ export default function IntegrationsPage() {
           const isWhatsapp = integration.id === "whatsapp";
           const isWebsite = integration.id === "website";
           const isMicrosoft = integration.id === "microsoft365";
+          const isMercury = integration.id === "mercury";
           const openModal = (setter: (v: boolean) => void) => () => {
             if (!enterpriseId) {
               setBanner({ type: "error", text: "No workspace found. Finish onboarding first." });
@@ -284,6 +289,8 @@ export default function IntegrationsPage() {
                   ? openModal(setShowWebsiteModal)
                   : isMicrosoft
                   ? connectMicrosoft
+                  : isMercury
+                  ? openModal(setShowMercuryModal)
                   : undefined
               }
               onDisconnect={() => setDisconnectTarget({ id: integration.id, name: integration.name })}
@@ -292,6 +299,8 @@ export default function IntegrationsPage() {
                   ? openModal(setShowWhatsappModal)
                   : isSmtp && smtpConnected
                   ? openModal(setShowSmtpModal)
+                  : isMercury && mercuryConnected
+                  ? openModal(setShowMercuryModal)
                   : undefined
               }
               subtitle={
@@ -304,6 +313,8 @@ export default function IntegrationsPage() {
                   : isWebsite && websiteConnected
                   ? "Connected"
                   : isMicrosoft && msConnected
+                  ? "Connected"
+                  : isMercury && mercuryConnected
                   ? "Connected"
                   : undefined
               }
@@ -341,6 +352,17 @@ export default function IntegrationsPage() {
           onClose={() => setShowWebsiteModal(false)}
           onConnected={() => {
             setBanner({ type: "success", text: "Website connected — tag verified." });
+            refresh();
+          }}
+        />
+      )}
+
+      {showMercuryModal && enterpriseId && (
+        <MercuryConnectModal
+          enterpriseId={enterpriseId}
+          onClose={() => setShowMercuryModal(false)}
+          onConnected={() => {
+            setBanner({ type: "success", text: "Mercury Store connected successfully." });
             refresh();
           }}
         />

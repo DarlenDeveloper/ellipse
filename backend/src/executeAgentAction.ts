@@ -151,6 +151,9 @@ export async function executeAction(
   if (targetSystem === "microsoft365") {
     return executeMicrosoftAction(enterpriseId, actionType, params);
   }
+  if (targetSystem === "mercury") {
+    return executeMercuryAction(enterpriseId, actionType, params);
+  }
   // TODO: internal handlers + other connections (odoo, ...)
   logger.info("executeAction (stub)", { targetSystem, actionType });
   return `${targetSystem}:stub:${Date.now()}`;
@@ -243,6 +246,27 @@ async function executeWhatsappAction(
       return wa.sendWhatsAppMessage(enterpriseId, params.to as string, (params.body as string) ?? "");
     default:
       logger.warn("Unknown WhatsApp action", { actionType });
+      return null;
+  }
+}
+
+/** Routes a Mercury Store action: create/update/delete a product/order/quotation/repair. */
+async function executeMercuryAction(
+  enterpriseId: string,
+  actionType: string,
+  params: Record<string, unknown>
+): Promise<string | null> {
+  const m = await import("./connections/mercury");
+  const resource = (params.resource as string) ?? "";
+  switch (actionType) {
+    case "create_record":
+      return m.createResource(enterpriseId, resource, (params.fields as Record<string, unknown>) ?? {});
+    case "update_record":
+      return m.updateResource(enterpriseId, resource, params.id as string, (params.fields as Record<string, unknown>) ?? {});
+    case "delete_record":
+      return m.deleteResource(enterpriseId, resource, params.id as string);
+    default:
+      logger.warn("Unknown Mercury action", { actionType });
       return null;
   }
 }

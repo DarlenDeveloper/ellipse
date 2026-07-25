@@ -27,6 +27,7 @@ const AGENT_META: Record<string, { name: string; agentId: string; channel: strin
   odoo: { name: "Odoo Agent", agentId: "odoo-agent", channel: "Odoo", logo: "/logos/odoo.png" },
   salesforce: { name: "Salesforce Agent", agentId: "salesforce-agent", channel: "Salesforce", logo: "/logos/salesforce.png" },
   microsoft365: { name: "Microsoft 365 Agent", agentId: "microsoft365-agent", channel: "Outlook · Word · Excel", logo: "/logos/microsoft.png" },
+  mercury: { name: "Mercury Store Agent", agentId: "mercury-agent", channel: "Products · Orders · Quotations · Repairs", logo: "/logos/mercury.png" },
 };
 
 type Connection = { type: string; status: string };

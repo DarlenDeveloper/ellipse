@@ -38,6 +38,7 @@ const systemLogo: Record<string, string> = {
   odoo: "/logos/odoo.png",
   whatsapp: "/logos/whatsapp.png",
   salesforce: "/logos/salesforce.png",
+  mercury: "/logos/mercury.png",
 };
 
 const statusStyles: Record<string, string> = {

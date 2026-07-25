@@ -25,17 +25,23 @@ export function AuthLayout({
     <div className="min-h-screen flex bg-black p-3">
       {/* Left green gradient panel */}
       <div className="hidden lg:flex w-1/2 rounded-3xl relative overflow-hidden flex-col justify-between p-12">
-        {/* Gradient background */}
-        <div className="absolute inset-0 bg-gradient-to-br from-emerald-950 via-emerald-900 to-black" />
-        <div className="absolute bottom-0 right-0 w-[500px] h-[500px] rounded-full bg-emerald-500/20 blur-[120px]" />
-        <div className="absolute top-1/3 left-1/4 w-[300px] h-[300px] rounded-full bg-teal-400/10 blur-[100px]" />
+        {/* Gradient background (light + dark blue) */}
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-950 via-blue-900 to-black" />
+        <div className="absolute bottom-0 right-0 w-[500px] h-[500px] rounded-full bg-blue-500/25 blur-[120px]" />
+        <div className="absolute top-1/3 left-1/4 w-[300px] h-[300px] rounded-full bg-sky-400/15 blur-[100px]" />
 
-        {/* Logo */}
-        <div className="relative flex items-center gap-2.5">
-          <div className="w-9 h-9 bg-white/10 backdrop-blur rounded-xl flex items-center justify-center p-1.5">
-            <Image src="/mercury-logo.png" alt="Mercury Computers" width={24} height={24} className="w-6 h-6 object-contain" />
+        {/* Logo (on a light plate so the brand mark reads on dark blue) */}
+        <div className="relative">
+          <div className="inline-flex items-center bg-white rounded-2xl px-4 py-2.5 shadow-lg">
+            <Image
+              src="/mercury-logo.png"
+              alt="Mercury Computers"
+              width={200}
+              height={44}
+              className="h-9 w-auto object-contain"
+              priority
+            />
           </div>
-          <span className="font-bold text-xl tracking-tight text-white">Mercury Computers</span>
         </div>
 
         {/* Heading + steps */}

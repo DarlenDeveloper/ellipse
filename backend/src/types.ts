@@ -11,7 +11,8 @@ export type TargetSystem =
   | "odoo"
   | "whatsapp"
   | "salesforce"
-  | "microsoft365";
+  | "microsoft365"
+  | "mercury";
 
 export type ActionStatus =
   | "pending"

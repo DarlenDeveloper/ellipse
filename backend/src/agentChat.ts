@@ -19,7 +19,7 @@ import { TargetSystem } from "./types";
 
 export type ChatTurn = { role: "user" | "ivy"; text: string };
 
-type ConnType = "google-workspace" | "smtp" | "microsoft365" | "whatsapp" | "zoho" | "website";
+type ConnType = "google-workspace" | "smtp" | "microsoft365" | "whatsapp" | "zoho" | "website" | "mercury";
 
 const CHANNEL_TARGET: Record<string, TargetSystem> = {
   "google-workspace": "gmail",
@@ -36,6 +36,7 @@ const AGENT_LABEL: Record<string, string> = {
   whatsapp: "WhatsApp Agent",
   zoho: "Zoho CRM Agent",
   website: "Website Agent",
+  mercury: "Mercury Store Agent",
 };
 
 // ---------------------------------------------------------------------------
@@ -136,6 +137,67 @@ const T = {
       },
     },
   },
+  store_list: {
+    name: "store_list",
+    description:
+      "Search or list records from the Mercury Store: products, orders, quotations, or repairs. " +
+      "ALWAYS pass `q` when the user asks whether a product/brand exists or to find items by name/brand/model " +
+      "(e.g. 'do you have Lenovo laptops?' -> q:'lenovo laptop'). Do NOT conclude a product is unavailable from a plain list — " +
+      "the catalog has 300+ items; use `q` (or `brand`/`category`) so all matches across the whole catalog are searched. " +
+      "The result includes `total` (exact match count) so you can answer 'how many' accurately.",
+    parameters: {
+      type: "object",
+      properties: {
+        resource: { type: "string", description: "products | orders | quotations | repairs" },
+        q: { type: "string", description: "Text search across name/brand/category (products). Use for 'do you have X' / find-by-name questions." },
+        brand: { type: "string", description: "Exact brand filter, e.g. lenovo, hp, dell." },
+        category: { type: "string", description: "Exact category filter." },
+        categoryId: { type: "string", description: "Exact categoryId filter, e.g. laptops." },
+        status: { type: "string", description: "Status filter, e.g. pending, completed, published, out_of_stock." },
+        limit: { type: "number", description: "Max items when doing a plain list without search (default 50, max 200)." },
+      },
+      required: ["resource"],
+    },
+  },
+  store_get: {
+    name: "store_get",
+    description: "Get a single Mercury Store record by id (products/orders/quotations/repairs).",
+    parameters: {
+      type: "object",
+      properties: {
+        resource: { type: "string", description: "products | orders | quotations | repairs" },
+        id: { type: "string" },
+      },
+      required: ["resource", "id"],
+    },
+  },
+  store_create: {
+    name: "store_create",
+    description:
+      "Create a Mercury Store record (product/order/quotation/repair). Goes through the approval gate. Provide the fields as an object.",
+    parameters: {
+      type: "object",
+      properties: {
+        resource: { type: "string", description: "products | orders | quotations | repairs" },
+        fields: { type: "object", description: "The record fields to set." },
+      },
+      required: ["resource", "fields"],
+    },
+  },
+  store_update: {
+    name: "store_update",
+    description:
+      "Update a Mercury Store record by id (partial update). Goes through the approval gate. e.g. mark an order completed, adjust product stock, set a quotation's quoted price.",
+    parameters: {
+      type: "object",
+      properties: {
+        resource: { type: "string", description: "products | orders | quotations | repairs" },
+        id: { type: "string" },
+        fields: { type: "object", description: "Only the fields to change." },
+      },
+      required: ["resource", "id", "fields"],
+    },
+  },
   generate_owner_analysis: {
     name: "generate_owner_analysis",
     description:
@@ -181,9 +243,13 @@ const TOOL_CATALOG: Record<string, ToolDecl> = {
   create_document: T.create_document,
   generate_report: T.generate_report,
   generate_owner_analysis: T.generate_owner_analysis,
+  store_list: T.store_list,
+  store_get: T.store_get,
+  store_create: T.store_create,
+  store_update: T.store_update,
 };
 
-const BUILTIN_AGENTS = new Set(["ivy", "zoho", "website", "google-workspace", "smtp", "microsoft365", "whatsapp"]);
+const BUILTIN_AGENTS = new Set(["ivy", "zoho", "website", "google-workspace", "smtp", "microsoft365", "whatsapp", "mercury"]);
 
 /** Which tools each built-in agent gets, based on what's connected. */
 function toolsFor(agentId: string, connected: Set<string>): ToolDecl[] {
@@ -201,6 +267,10 @@ function toolsFor(agentId: string, connected: Set<string>): ToolDecl[] {
     if (has("zoho") || has("website") || has("google-workspace") || has("smtp") || has("microsoft365") || has("whatsapp")) {
       tools.push(T.generate_report);
     }
+    // Mercury Store (custom external API).
+    if (has("mercury")) {
+      tools.push(T.store_list, T.store_get, T.store_create, T.store_update);
+    }
     return tools;
   }
 
@@ -210,6 +280,10 @@ function toolsFor(agentId: string, connected: Set<string>): ToolDecl[] {
   }
   if (agentId === "website") {
     tools.push(T.get_web_analytics, T.create_document, T.generate_report);
+    return tools;
+  }
+  if (agentId === "mercury") {
+    tools.push(T.store_list, T.store_get, T.store_create, T.store_update, T.create_document);
     return tools;
   }
   // messaging agents
@@ -263,6 +337,14 @@ async function runTool(
       return toolGenerateReport(enterpriseId, agentId, args);
     case "generate_owner_analysis":
       return toolOwnerAnalysis(enterpriseId, agentId, args, isOwner);
+    case "store_list":
+      return toolStoreList(enterpriseId, args);
+    case "store_get":
+      return toolStoreGet(enterpriseId, args);
+    case "store_create":
+      return toolStoreWrite(enterpriseId, "create_record", args);
+    case "store_update":
+      return toolStoreWrite(enterpriseId, "update_record", args);
     default:
       return `Unknown tool ${name}.`;
   }
@@ -571,6 +653,76 @@ async function toolGenerateReport(enterpriseId: string, agentId: string, args: R
   });
 }
 
+// ---- Mercury Store tools ----
+
+async function toolStoreList(enterpriseId: string, args: Record<string, unknown>) {
+  const resource = String(args.resource ?? "");
+  const q = (args.q ?? args.query ?? args.search) as string | undefined;
+  try {
+    const { listResource, listAllResource } = await import("./connections/mercury");
+    const opts = {
+      status: args.status as string | undefined,
+      q: q ? String(q) : undefined,
+      brand: args.brand as string | undefined,
+      category: args.category as string | undefined,
+      categoryId: args.categoryId as string | undefined,
+    };
+    // When searching or filtering, sweep every page via the cursor so we never
+    // miss matches beyond the first page (the catalog spans 300+ products).
+    if (opts.q || opts.brand || opts.category || opts.categoryId || opts.status) {
+      const { items, total } = await listAllResource(enterpriseId, resource, opts, 1000);
+      return JSON.stringify({
+        resource,
+        query: opts.q,
+        count: items.length,
+        total: total ?? items.length,
+        items: items.slice(0, 200),
+      });
+    }
+    const limit = Number(args.limit) || 50;
+    const page = await listResource(enterpriseId, resource, { limit });
+    return JSON.stringify({
+      resource,
+      count: page.items.length,
+      total: page.total,
+      nextCursor: page.nextCursor,
+      items: page.items.slice(0, 100),
+    });
+  } catch (e) {
+    return JSON.stringify({ error: `Mercury Store read failed: ${(e as Error).message}` });
+  }
+}
+
+async function toolStoreGet(enterpriseId: string, args: Record<string, unknown>) {
+  const resource = String(args.resource ?? "");
+  const id = String(args.id ?? "");
+  try {
+    const { getResource } = await import("./connections/mercury");
+    const item = await getResource(enterpriseId, resource, id);
+    return JSON.stringify(item ? { resource, item } : { error: "Not found." });
+  } catch (e) {
+    return JSON.stringify({ error: `Mercury Store read failed: ${(e as Error).message}` });
+  }
+}
+
+async function toolStoreWrite(enterpriseId: string, actionType: "create_record" | "update_record", args: Record<string, unknown>) {
+  const resource = String(args.resource ?? "");
+  const fields = (args.fields as Record<string, unknown>) ?? {};
+  const id = args.id as string | undefined;
+  if (!resource) return JSON.stringify({ error: "Missing resource." });
+  const verb = actionType === "create_record" ? "Create" : "Update";
+  const res = await executeAgentAction({
+    enterpriseId,
+    agentId: "mercury-agent",
+    domain: "assistant",
+    actionType,
+    params: { resource, id, fields },
+    targetSystem: "mercury",
+    reasoning: `${verb} ${resource.replace(/s$/, "")}${id ? ` ${id}` : ""} in the Mercury Store (requested in chat).`,
+  });
+  return JSON.stringify({ action: actionType, resource, ...res });
+}
+
 async function toolCreateDocument(enterpriseId: string, agentId: string, args: Record<string, unknown>) {
   const title = String(args.title ?? "").trim();
   const kind = (args.kind as string) === "xlsx" ? "xlsx" : "docx";
@@ -801,6 +953,7 @@ const CONNECTION_LABEL: Record<string, string> = {
   whatsapp: "WhatsApp",
   zoho: "Zoho CRM",
   website: "Website analytics",
+  mercury: "Mercury Store (products, orders, quotations, repairs)",
 };
 
 function buildSystem(
@@ -827,6 +980,8 @@ function buildSystem(
     scope = `\nYou are the Zoho CRM specialist: sales figures, leads, contacts and deals. You are excellent at CRM work and nothing else — defer non-CRM questions.`;
   } else if (agentId === "website") {
     scope = `\nYou are the website analytics specialist: traffic, visitors, pages, geography. Defer non-analytics questions.`;
+  } else if (agentId === "mercury") {
+    scope = `\nYou are the Mercury Store specialist: products, orders, quotations and repairs. Read and act on store data via your tools; writes go through approval. Defer non-store questions.`;
   } else {
     scope = `\nYou are the ${label.replace(" Agent", "")} channel specialist: its conversations and replies. You know this channel deeply and defer questions about other channels.`;
   }
@@ -914,7 +1069,11 @@ export async function chatWithAgent(
       const out = await runTool(enterpriseId, agentId, call.name, call.args, isOwner);
       logger.info("tool result", { agentId, tool: call.name, enterpriseId, out: out.slice(0, 500) });
       results.push(`${call.name} → ${out}`);
-      if (["create_crm_lead", "reply_to_conversation", "create_document", "generate_report", "generate_owner_analysis"].includes(call.name)) {
+      if (
+        ["create_crm_lead", "reply_to_conversation", "create_document", "generate_report", "generate_owner_analysis", "store_create", "store_update"].includes(
+          call.name
+        )
+      ) {
         actions.push({ name: call.name, args: call.args, result: out });
       }
       // Surface created documents/reports as downloadable file cards (not raw URLs in text).

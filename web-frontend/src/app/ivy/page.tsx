@@ -50,6 +50,7 @@ const CONNECTION_AGENTS: Record<string, { name: string; logo: string }> = {
   website: { name: "Website Agent", logo: "/logos/web.png" },
   whatsapp: { name: "WhatsApp Agent", logo: "/logos/whatsapp.png" },
   microsoft365: { name: "Microsoft 365 Agent", logo: "/logos/microsoft.png" },
+  mercury: { name: "Mercury Store Agent", logo: "/logos/mercury.png" },
 };
 
 const CHIPS = [

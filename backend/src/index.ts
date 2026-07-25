@@ -777,6 +777,55 @@ export const pingStorage = onRequest(async (_req, res) => {
   }
 });
 
+/** TEMPORARY — inspect what the Mercury Store API returns. ?enterpriseId=&resource=products&limit=200. Remove before ship. */
+export const mercuryDebug = onRequest(async (req, res) => {
+  const enterpriseId = req.query.enterpriseId as string | undefined;
+  const resource = (req.query.resource as string | undefined) ?? "products";
+  const limit = Number(req.query.limit ?? 200);
+  const q = (req.query.q as string | undefined)?.toLowerCase();
+  if (!enterpriseId) {
+    res.status(400).json({ ok: false, error: "Missing enterpriseId" });
+    return;
+  }
+  const rawParam = req.query.raw as string | undefined; // e.g. raw=search=lenovo  (probe undocumented params)
+  try {
+    const { listResource, mercuryRawGet } = await import("./connections/mercury");
+    if (rawParam) {
+      const data = await mercuryRawGet(enterpriseId, `/v1/${resource}?${rawParam}`);
+      const arr = data?.data ?? [];
+      res.json({ ok: true, raw: rawParam, count: Array.isArray(arr) ? arr.length : undefined, apiCount: data?.count, total: data?.total, nextCursor: data?.nextCursor, sampleNames: Array.isArray(arr) ? arr.slice(0, 10).map((i: any) => i.name) : data });
+      return;
+    }
+    const { items } = await listResource(enterpriseId, resource, { limit: Math.min(limit, 200) });
+    const brands = Array.from(new Set(items.map((i: any) => i.brand).filter(Boolean))).sort();
+    const matches = q
+      ? items.filter((i: any) => JSON.stringify(i).toLowerCase().includes(q)).map((i: any) => ({ id: i.id, name: i.name, brand: i.brand, stock: i.stock }))
+      : undefined;
+    res.json({ ok: true, resource, count: items.length, brands, matches, sample: items.slice(0, 3) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: (e as Error).message });
+  }
+});
+
+/** Connect the Mercury Store API — verifies the key with a read probe, then stores it. */
+export const connectMercury = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const d = request.data ?? {};
+  const enterpriseId = d.enterpriseId as string | undefined;
+  const apiKey = (d.apiKey as string | undefined)?.trim();
+  const baseUrl = (d.baseUrl as string | undefined)?.trim() || undefined;
+  if (!enterpriseId || !apiKey) {
+    throw new HttpsError("invalid-argument", "Missing enterpriseId or apiKey.");
+  }
+  const { saveMercuryConnection } = await import("./connections/mercury");
+  try {
+    await saveMercuryConnection(enterpriseId, apiKey, baseUrl);
+  } catch (e) {
+    throw new HttpsError("failed-precondition", `Connection failed: ${(e as Error).message}`);
+  }
+  return { ok: true };
+});
+
 /** Disconnect an integration and purge all data it produced (analytics, messages, sites). */
 export const disconnectIntegration = onCall(async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");

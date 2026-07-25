@@ -72,4 +72,12 @@ export const integrations: Integration[] = [
     tileClass: "bg-indigo-50",
     connected: false,
   },
+  {
+    id: "mercury",
+    name: "Mercury Store",
+    description: "Connect the Mercury Computers store API — products, orders, quotations, and repairs.",
+    logo: "/logos/mercury.png",
+    tileClass: "bg-slate-100",
+    connected: false,
+  },
 ];
