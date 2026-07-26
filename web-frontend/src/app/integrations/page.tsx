@@ -19,6 +19,8 @@ export default function IntegrationsPage() {
   const [query, setQuery] = useState("");
   const [enterpriseId, setEnterpriseId] = useState<string | null>(null);
   const [canManage, setCanManage] = useState(true); // owner/admin may manage integrations
+  const [grantedTypes, setGrantedTypes] = useState<Set<string>>(new Set());
+  const [orgActive, setOrgActive] = useState<Set<string>>(new Set());
   const [googleEmail, setGoogleEmail] = useState<string | null>(null);
   const [zohoConnected, setZohoConnected] = useState(false);
   const [smtpConnected, setSmtpConnected] = useState(false);
@@ -39,6 +41,7 @@ export default function IntegrationsPage() {
 
   // Apply a set of active connection types to the UI state.
   const applyActive = useCallback((active: Set<string>, googleEmailValue: string | null) => {
+    setOrgActive(active);
     setGoogleEmail(active.has("google-workspace") ? googleEmailValue ?? "connected" : null);
     setZohoConnected(active.has("zoho"));
     setSmtpConnected(active.has("smtp"));
@@ -55,9 +58,16 @@ export default function IntegrationsPage() {
     const userSnap = await getDoc(doc(db, "users", user.uid));
     const entId = userSnap.data()?.enterprise_id as string | undefined;
     const role = userSnap.data()?.role as string | undefined;
-    setCanManage(role === "owner" || role === "admin");
+    const manager = role === "owner" || role === "admin";
+    setCanManage(manager);
     if (!entId) return;
     setEnterpriseId(entId);
+
+    // Employees: which shared connections have they been granted?
+    if (!manager) {
+      const g = await getDoc(doc(db, "connection_grants", `${entId}_${user.uid}`));
+      setGrantedTypes(new Set(((g.data()?.types as string[] | undefined) ?? [])));
+    }
 
     const snap = await getDocs(fsQuery(collection(db, "connections"), where("enterprise_id", "==", entId)));
     const active = new Set<string>();
@@ -218,7 +228,21 @@ export default function IntegrationsPage() {
   const blockedManage = () =>
     setBanner({ type: "error", text: "Only the owner or an admin can manage company integrations." });
 
-  const filtered = items.filter((it) => it.name.toLowerCase().includes(query.toLowerCase()));
+  const requestAccess = async (type: string) => {
+    try {
+      await httpsCallable(functions, "requestSharedAccess")({ types: [type] });
+      setBanner({ type: "success", text: "Access requested — pending owner/admin approval." });
+    } catch {
+      setBanner({ type: "error", text: "Could not send request. Try again." });
+    }
+  };
+
+  // Employees only see a shared connection as connected if they've been granted it.
+  const accessItems = canManage
+    ? items
+    : items.map((it) => ({ ...it, connected: it.connected && grantedTypes.has(it.id) }));
+
+  const filtered = accessItems.filter((it) => it.name.toLowerCase().includes(query.toLowerCase()));
 
   return (
     <main className="p-8 max-w-[1200px]">
@@ -291,7 +315,9 @@ export default function IntegrationsPage() {
               onToggle={toggle}
               onConnectClick={
                 !canManage
-                  ? blockedManage
+                  ? orgActive.has(integration.id) && !grantedTypes.has(integration.id)
+                    ? () => requestAccess(integration.id)
+                    : blockedManage
                   : isGoogle
                   ? connectGoogle
                   : isZoho
@@ -323,7 +349,9 @@ export default function IntegrationsPage() {
                   : undefined
               }
               subtitle={
-                isZoho && zohoConnected
+                !canManage && orgActive.has(integration.id) && !grantedTypes.has(integration.id)
+                  ? "No access — request it"
+                  : isZoho && zohoConnected
                   ? "Connected"
                   : isSmtp && smtpConnected
                   ? "Connected"

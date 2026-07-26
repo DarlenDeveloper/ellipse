@@ -9,13 +9,17 @@ import {
   where,
   onSnapshot,
   doc,
-  getDoc,
   updateDoc,
   serverTimestamp,
 } from "firebase/firestore";
 import { cn } from "@/lib/utils";
 import { db } from "@/lib/firebase";
-import { useAuth } from "@/lib/auth-context";
+import { useAccess } from "@/lib/use-access";
+
+function toType(agentId?: string, targetSystem?: string): string {
+  const base = (agentId?.replace(/-agent$/, "") || targetSystem || "").toLowerCase();
+  return base === "gmail" ? "google-workspace" : base;
+}
 
 type PendingAction = {
   id: string;
@@ -104,7 +108,8 @@ function summarizeParams(params?: Record<string, unknown>): string {
 }
 
 export default function ApprovalsPage() {
-  const { user } = useAuth();
+  const { enterpriseId, isManager, allowsType } = useAccess();
+  const accessKey = `${isManager}`;
   const [items, setItems] = useState<PendingAction[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -112,31 +117,22 @@ export default function ApprovalsPage() {
   const [filter, setFilter] = useState<Filter>("All");
 
   useEffect(() => {
-    if (!user) return;
-    let unsub: (() => void) | undefined;
-
-    (async () => {
-      const userSnap = await getDoc(doc(db, "users", user.uid));
-      const enterpriseId = userSnap.data()?.enterprise_id as string | undefined;
-      if (!enterpriseId) {
-        setLoading(false);
-        return;
-      }
-      const q = query(collection(db, "pending_actions"), where("enterprise_id", "==", enterpriseId));
-      unsub = onSnapshot(q, (snap) => {
-        const rows = snap.docs
-          .map((d) => ({ id: d.id, ...(d.data() as Omit<PendingAction, "id">) }))
-          .sort(
-            (a, b) =>
-              (b.created_at?.toDate?.().getTime() ?? 0) - (a.created_at?.toDate?.().getTime() ?? 0)
-          );
-        setItems(rows);
-        setLoading(false);
-      });
-    })();
-
-    return () => unsub?.();
-  }, [user]);
+    if (!enterpriseId) return;
+    const q = query(collection(db, "pending_actions"), where("enterprise_id", "==", enterpriseId));
+    const unsub = onSnapshot(q, (snap) => {
+      const rows = snap.docs
+        .map((d) => ({ id: d.id, ...(d.data() as Omit<PendingAction, "id">) }))
+        // Employees only see approvals for connections they've been granted.
+        .filter((r) => isManager || allowsType(toType(r.agent_id, r.target_system)))
+        .sort(
+          (a, b) => (b.created_at?.toDate?.().getTime() ?? 0) - (a.created_at?.toDate?.().getTime() ?? 0)
+        );
+      setItems(rows);
+      setLoading(false);
+    });
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enterpriseId, accessKey]);
 
   const decide = async (id: string, status: "approved" | "rejected") => {
     setBusyId(id);

@@ -11,12 +11,17 @@ import {
   CloseCircle,
   DocumentDownload,
 } from "iconsax-react";
-import { collection, query, where, onSnapshot, doc, getDoc } from "firebase/firestore";
+import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { db, functions } from "@/lib/firebase";
-import { useEnterpriseId } from "@/lib/use-enterprise";
-import { useAuth } from "@/lib/auth-context";
+import { useAccess } from "@/lib/use-access";
 import { cn } from "@/lib/utils";
+
+// Report/document agent id → connection type (for per-user access scoping).
+const agentToType = (agent?: string) => {
+  const a = (agent || "").toLowerCase();
+  return a === "gmail" ? "google-workspace" : a;
+};
 
 type Period = "daily" | "weekly" | "monthly" | "quarterly" | "annual";
 
@@ -67,9 +72,8 @@ function fmtSize(bytes: number) {
 }
 
 export default function DataPage() {
-  const { enterpriseId } = useEnterpriseId();
-  const { user } = useAuth();
-  const [isOwner, setIsOwner] = useState(false);
+  const { enterpriseId, role, isManager, allowsType } = useAccess();
+  const isOwner = role === "owner";
   const [reports, setReports] = useState<Report[]>([]);
   const [documents, setDocuments] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
@@ -80,11 +84,6 @@ export default function DataPage() {
   const [generating, setGenerating] = useState(false);
 
   useEffect(() => {
-    if (!user) return;
-    getDoc(doc(db, "users", user.uid)).then((snap) => setIsOwner((snap.data()?.role as string) === "owner"));
-  }, [user]);
-
-  useEffect(() => {
     if (!enterpriseId) return;
     const unsubReports = onSnapshot(
       query(collection(db, "reports"), where("enterprise_id", "==", enterpriseId)),
@@ -93,6 +92,8 @@ export default function DataPage() {
           .map((d) => ({ id: d.id, ...(d.data() as Omit<Report, "id">) }))
           // Owner-only digests (e.g. the daily team activity report) hidden from non-owners.
           .filter((r) => !r.owner_only || isOwner)
+          // Employees only see reports for connections they've been granted.
+          .filter((r) => isManager || r.agent === "org-users" || allowsType(agentToType(r.agent)))
           .sort(
             (a, b) =>
               (b.period_start?.toDate?.().getTime() ?? 0) - (a.period_start?.toDate?.().getTime() ?? 0)
@@ -105,7 +106,9 @@ export default function DataPage() {
     const unsubDocs = onSnapshot(
       query(collection(db, "documents"), where("enterprise_id", "==", enterpriseId)),
       (snap) => {
-        const rows: Report[] = snap.docs.map((d) => {
+        const rows: Report[] = snap.docs
+          .filter((d) => isManager || allowsType(agentToType(d.data().agent as string)))
+          .map((d) => {
           const data = d.data() as Record<string, unknown>;
           const file = data.file as ReportFile | undefined;
           return {
@@ -132,7 +135,8 @@ export default function DataPage() {
       unsubReports();
       unsubDocs();
     };
-  }, [enterpriseId, isOwner]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enterpriseId, isOwner, isManager]);
 
   const allItems = useMemo(
     () =>

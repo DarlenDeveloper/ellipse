@@ -7,7 +7,7 @@ import { ArrowRight2, Sms } from "iconsax-react";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { cn } from "@/lib/utils";
 import { db } from "@/lib/firebase";
-import { useEnterpriseId } from "@/lib/use-enterprise";
+import { useAccess } from "@/lib/use-access";
 
 type Conversation = {
   id: string;
@@ -49,7 +49,8 @@ function fmtDate(ts?: { toDate: () => Date }): string {
 }
 
 export function RecentThreads() {
-  const { enterpriseId } = useEnterpriseId();
+  const { enterpriseId, isManager, allowsChannel } = useAccess();
+  const accessKey = `${isManager}`;
   const [threads, setThreads] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -60,6 +61,7 @@ export function RecentThreads() {
       (snap) => {
         const rows = snap.docs
           .map((d) => ({ id: d.id, ...(d.data() as Omit<Conversation, "id">) }))
+          .filter((c) => allowsChannel(c.channel ?? ""))
           .sort(
             (a, b) =>
               (b.last_message_at?.toDate?.().getTime() ?? 0) -
@@ -71,7 +73,8 @@ export function RecentThreads() {
       }
     );
     return () => unsub();
-  }, [enterpriseId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enterpriseId, accessKey]);
 
   return (
     <div className="bg-white rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">

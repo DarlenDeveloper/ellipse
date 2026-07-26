@@ -4,17 +4,23 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Cpu, ArrowRight2 } from "iconsax-react";
-import { collection, query, where, onSnapshot, doc, getDoc } from "firebase/firestore";
+import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { useAuth } from "@/lib/auth-context";
+import { useAccess } from "@/lib/use-access";
 
 type PendingAction = {
   id: string;
   agent_id?: string;
+  target_system?: string;
   action_type?: string;
   status?: string;
   created_at?: { toDate: () => Date };
 };
+
+function toType(agentId?: string, targetSystem?: string): string {
+  const base = (agentId?.replace(/-agent$/, "") || targetSystem || "").toLowerCase();
+  return base === "gmail" ? "google-workspace" : base;
+}
 
 // agent_id → connection logo.
 const agentLogos: Record<string, string> = {
@@ -50,37 +56,28 @@ function formatDate(ts?: { toDate: () => Date }): string {
 }
 
 export function PendingApprovals() {
-  const { user } = useAuth();
+  const { enterpriseId, isManager, allowsType } = useAccess();
+  const accessKey = `${isManager}`;
   const [items, setItems] = useState<PendingAction[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!user) return;
-    let unsub: (() => void) | undefined;
-
-    (async () => {
-      const userSnap = await getDoc(doc(db, "users", user.uid));
-      const enterpriseId = userSnap.data()?.enterprise_id as string | undefined;
-      if (!enterpriseId) {
-        setLoading(false);
-        return;
-      }
-      const q = query(collection(db, "pending_actions"), where("enterprise_id", "==", enterpriseId));
-      unsub = onSnapshot(q, (snap) => {
-        const rows = snap.docs
-          .map((d) => ({ id: d.id, ...(d.data() as Omit<PendingAction, "id">) }))
-          .filter((r) => r.status === "pending")
-          .sort(
-            (a, b) =>
-              (b.created_at?.toDate?.().getTime() ?? 0) - (a.created_at?.toDate?.().getTime() ?? 0)
-          );
-        setItems(rows);
-        setLoading(false);
-      });
-    })();
-
-    return () => unsub?.();
-  }, [user]);
+    if (!enterpriseId) return;
+    const q = query(collection(db, "pending_actions"), where("enterprise_id", "==", enterpriseId));
+    const unsub = onSnapshot(q, (snap) => {
+      const rows = snap.docs
+        .map((d) => ({ id: d.id, ...(d.data() as Omit<PendingAction, "id">) }))
+        .filter((r) => r.status === "pending")
+        .filter((r) => isManager || allowsType(toType(r.agent_id, r.target_system)))
+        .sort(
+          (a, b) => (b.created_at?.toDate?.().getTime() ?? 0) - (a.created_at?.toDate?.().getTime() ?? 0)
+        );
+      setItems(rows);
+      setLoading(false);
+    });
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enterpriseId, accessKey]);
 
   return (
     <div className="bg-white rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">

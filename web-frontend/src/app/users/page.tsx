@@ -54,7 +54,7 @@ export default function UsersPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [accessRequests, setAccessRequests] = useState<{ uid: string; name: string; email: string; note?: string }[]>([]);
+  const [accessRequests, setAccessRequests] = useState<{ uid: string; name: string; email: string; types: string[] }[]>([]);
   const [myHasAccess, setMyHasAccess] = useState(false);
   const [myRequestStatus, setMyRequestStatus] = useState<string | null>(null);
 
@@ -102,7 +102,15 @@ export default function UsersPage() {
     // Pending shared-integration access requests (for owner/admin).
     const unsubReq = onSnapshot(
       query(collection(db, "access_requests"), where("enterprise_id", "==", enterpriseId), where("status", "==", "pending")),
-      (snap) => setAccessRequests(snap.docs.map((d) => ({ uid: d.data().uid, name: d.data().name || d.data().email, email: d.data().email, note: d.data().note })))
+      (snap) =>
+        setAccessRequests(
+          snap.docs.map((d) => ({
+            uid: d.data().uid,
+            name: d.data().name || d.data().email,
+            email: d.data().email,
+            types: (d.data().types as string[] | undefined) ?? [],
+          }))
+        )
     );
     // My own access grant + request status (for employees).
     const unsubGrant = onSnapshot(doc(db, "connection_grants", `${enterpriseId}_${user.uid}`), (snap) =>
@@ -216,7 +224,10 @@ export default function UsersPage() {
               <div key={r.uid} className="flex items-center justify-between gap-3 py-2 border-b border-gray-50 last:border-0">
                 <div className="min-w-0">
                   <p className="text-sm font-medium truncate">{r.name}</p>
-                  <p className="text-xs text-gray-400 truncate">{r.email}</p>
+                  <p className="text-xs text-gray-400 truncate">
+                    {r.email}
+                    {r.types.length ? ` · wants: ${r.types.join(", ")}` : ""}
+                  </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <button

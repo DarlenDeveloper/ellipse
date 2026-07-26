@@ -5,10 +5,17 @@ import { Messages2, Hierarchy, Routing, Clock, Cpu, Data } from "iconsax-react";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { cn } from "@/lib/utils";
 import { db } from "@/lib/firebase";
-import { useEnterpriseId } from "@/lib/use-enterprise";
+import { useAccess } from "@/lib/use-access";
+
+// pending_actions.target_system uses "gmail"; connection/channel type is "google-workspace".
+const TARGET_TO_TYPE: Record<string, string> = { gmail: "google-workspace" };
+const asType = (t?: string) => (t ? TARGET_TO_TYPE[t] ?? t : "");
 
 export function QuickStats() {
-  const { enterpriseId } = useEnterpriseId();
+  const { enterpriseId, isManager, allowsType, allowsChannel } = useAccess();
+  const accessKey = `${isManager}|${["google-workspace", "smtp", "microsoft365", "whatsapp", "zoho", "website", "mercury"]
+    .filter((t) => allowsType(t))
+    .join(",")}`;
   const [counts, setCounts] = useState({
     messages: 0,
     channels: 0,
@@ -29,9 +36,14 @@ export function QuickStats() {
           let messages = 0;
           let records = 0;
           snap.docs.forEach((d) => {
-            const s = d.data().source;
-            if (s === "message") messages++;
-            else if (s === "zoho_record") records++;
+            const data = d.data();
+            const s = data.source;
+            if (s === "message") {
+              const ch = (data.payload as { channel?: string } | undefined)?.channel ?? data.channel;
+              if (isManager || !ch || allowsChannel(ch as string)) messages++;
+            } else if (s === "zoho_record") {
+              if (allowsType("zoho")) records++;
+            }
           });
           setCounts((c) => ({ ...c, messages, records }));
         }
@@ -42,7 +54,9 @@ export function QuickStats() {
       onSnapshot(
         query(collection(db, "connections"), where("enterprise_id", "==", enterpriseId)),
         (snap) => {
-          const active = snap.docs.filter((d) => d.data().status === "active").length;
+          const active = snap.docs.filter(
+            (d) => d.data().status === "active" && allowsType(d.data().type as string)
+          ).length;
           setCounts((c) => ({ ...c, channels: active, agents: active }));
         }
       )
@@ -52,7 +66,9 @@ export function QuickStats() {
       onSnapshot(
         query(collection(db, "conversations"), where("enterprise_id", "==", enterpriseId)),
         (snap) => {
-          const open = snap.docs.filter((d) => d.data().status === "open").length;
+          const open = snap.docs.filter(
+            (d) => d.data().status === "open" && allowsChannel(d.data().channel as string)
+          ).length;
           setCounts((c) => ({ ...c, threads: open }));
         }
       )
@@ -62,14 +78,19 @@ export function QuickStats() {
       onSnapshot(
         query(collection(db, "pending_actions"), where("enterprise_id", "==", enterpriseId)),
         (snap) => {
-          const pending = snap.docs.filter((d) => d.data().status === "pending").length;
+          const pending = snap.docs.filter((d) => {
+            const a = d.data();
+            if (a.status !== "pending") return false;
+            return isManager || allowsType(asType(a.target_system as string));
+          }).length;
           setCounts((c) => ({ ...c, pending }));
         }
       )
     );
 
     return () => unsubs.forEach((u) => u());
-  }, [enterpriseId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enterpriseId, accessKey]);
 
   const stats = [
     { icon: Messages2, value: counts.messages, label: "Messages" },

@@ -17,12 +17,18 @@ import {
   Legend,
 } from "recharts";
 import { Messages2, Data, TickCircle, Clock } from "iconsax-react";
-import { collection, query, where, onSnapshot, doc, getDoc } from "firebase/firestore";
+import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { useAuth } from "@/lib/auth-context";
+import { useAccess } from "@/lib/use-access";
 
-type Ev = { source?: string; payload?: Record<string, unknown>; timestamp?: { toDate: () => Date } };
-type Action = { agent_id?: string; status?: string };
+type Ev = { source?: string; channel?: string; payload?: Record<string, unknown>; timestamp?: { toDate: () => Date } };
+type Action = { agent_id?: string; target_system?: string; status?: string };
+
+// agent_id / target_system → connection type.
+const toType = (agentId?: string, targetSystem?: string) => {
+  const base = (agentId?.replace(/-agent$/, "") || targetSystem || "").toLowerCase();
+  return base === "gmail" ? "google-workspace" : base;
+};
 
 const channelLabel: Record<string, string> = {
   "google-workspace": "Gmail",
@@ -63,39 +69,42 @@ function agentLabel(agentId?: string): string {
 }
 
 export default function AnalyticsPage() {
-  const { user } = useAuth();
+  const { enterpriseId, isManager, allowsType, allowsChannel } = useAccess();
+  const accessKey = `${isManager}`;
   const [events, setEvents] = useState<Ev[]>([]);
   const [actions, setActions] = useState<Action[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!user) return;
-    let unsubE: (() => void) | undefined;
-    let unsubA: (() => void) | undefined;
-    (async () => {
-      const userSnap = await getDoc(doc(db, "users", user.uid));
-      const enterpriseId = userSnap.data()?.enterprise_id as string | undefined;
-      if (!enterpriseId) {
+    if (!enterpriseId) return;
+    const unsubE = onSnapshot(
+      query(collection(db, "analytics_events"), where("workspace_id", "==", enterpriseId)),
+      (snap) => {
+        const rows = snap.docs.map((d) => d.data() as Ev).filter((e) => {
+          if (isManager) return true;
+          if (e.source === "zoho_record") return allowsType("zoho");
+          const ch = (e.payload?.channel as string) ?? e.channel;
+          return !ch || allowsChannel(ch);
+        });
+        setEvents(rows);
         setLoading(false);
-        return;
       }
-      unsubE = onSnapshot(
-        query(collection(db, "analytics_events"), where("workspace_id", "==", enterpriseId)),
-        (snap) => {
-          setEvents(snap.docs.map((d) => d.data() as Ev));
-          setLoading(false);
-        }
-      );
-      unsubA = onSnapshot(
-        query(collection(db, "pending_actions"), where("enterprise_id", "==", enterpriseId)),
-        (snap) => setActions(snap.docs.map((d) => d.data() as Action))
-      );
-    })();
+    );
+    const unsubA = onSnapshot(
+      query(collection(db, "pending_actions"), where("enterprise_id", "==", enterpriseId)),
+      (snap) =>
+        setActions(
+          snap.docs
+            .map((d) => d.data() as Action)
+            .filter((a) => isManager || allowsType(toType(a.agent_id, a.target_system)))
+        )
+    );
     return () => {
-      unsubE?.();
-      unsubA?.();
+      unsubE();
+      unsubA();
     };
-  }, [user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enterpriseId, accessKey]);
 
   const stats = useMemo(() => {
     const messages = events.filter((e) => e.source === "message");

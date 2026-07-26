@@ -2,12 +2,12 @@ import { HttpsError } from "firebase-functions/v2/https";
 import { db, FieldValue } from "./admin";
 
 /**
- * Per-user access to the organization's SHARED integrations (the owner's/admin's
- * connections). Owner and admins can use every shared connection. An employee
- * must REQUEST access; the owner or an admin approves it, which writes a grant.
+ * Per-connection access to the organization's SHARED integrations.
  *
- * Personal integrations a user adds themselves are always usable by that user
- * (no approval) — their activity is logged into the owner's daily summary.
+ * Owner and admins can use every shared connection. An employee can only use the
+ * specific shared connection TYPES they've been granted (e.g. just "whatsapp").
+ * They may also use any PERSONAL connection they added themselves. Access is
+ * requested per connection and approved by the owner or an admin.
  */
 
 type Role = "owner" | "admin" | "employee";
@@ -31,91 +31,101 @@ async function loadUser(uid: string): Promise<{ enterpriseId: string; role: Role
   };
 }
 
-/** Does this user currently have access to the org's shared integrations? */
-export async function hasSharedAccess(enterpriseId: string, uid: string, role: Role): Promise<boolean> {
-  if (role === "owner" || role === "admin") return true;
+function requireManager(role: Role) {
+  if (role !== "owner" && role !== "admin") {
+    throw new HttpsError("permission-denied", "Only the owner or an admin can manage integration access.");
+  }
+}
+
+/** The shared connection types a user has been granted (owner/admin implicitly get everything → "all"). */
+export async function grantedTypesFor(enterpriseId: string, uid: string, role: Role): Promise<Set<string> | "all"> {
+  if (role === "owner" || role === "admin") return "all";
   const g = await grantRef(enterpriseId, uid).get();
-  return g.exists && g.data()?.shared_access === true;
+  return new Set((g.data()?.types as string[] | undefined) ?? []);
 }
 
 /**
  * The connection types a given user may use in direct agent chat:
- *  - owner/admin OR granted employee → all active org connections
- *  - ungranted employee → only their own personal connections
+ *  - owner/admin → all active org connections
+ *  - employee → granted shared types + their own personal connections
  */
 export async function allowedConnectionTypes(
   enterpriseId: string,
   uid: string | undefined,
   activeConnections: { type: string; scope?: string; owner_uid?: string }[]
 ): Promise<Set<string>> {
-  // No caller (e.g. automated agent run) → no per-user restriction.
-  if (!uid) return new Set(activeConnections.map((c) => c.type));
+  if (!uid) return new Set(activeConnections.map((c) => c.type)); // automated run — no per-user limit
 
   const uSnap = await db.doc(`users/${uid}`).get();
   const role = (uSnap.data()?.role as Role) ?? "employee";
-  const shared = await hasSharedAccess(enterpriseId, uid, role);
+  const granted = await grantedTypesFor(enterpriseId, uid, role);
 
   const out = new Set<string>();
   for (const c of activeConnections) {
     const isPersonal = c.scope === "personal";
     if (isPersonal) {
       if (c.owner_uid === uid) out.add(c.type); // your own personal connection
-    } else if (shared) {
-      out.add(c.type); // shared/org connection, and you're allowed
+    } else if (granted === "all" || granted.has(c.type)) {
+      out.add(c.type); // shared/org connection you're allowed to use
     }
   }
   return out;
 }
 
-/** Employee asks for access to the company's shared integrations. */
-export async function requestSharedAccess(callerUid: string, args: { note?: string }) {
+/** Employee requests access to specific shared connection types. */
+export async function requestSharedAccess(callerUid: string, args: { types?: string[]; note?: string }) {
   const u = await loadUser(callerUid);
-  if (u.role === "owner" || u.role === "admin") {
-    return { ok: true, alreadyHasAccess: true };
-  }
-  const existing = await grantRef(u.enterpriseId, callerUid).get();
-  if (existing.exists && existing.data()?.shared_access === true) {
-    return { ok: true, alreadyHasAccess: true };
-  }
+  if (u.role === "owner" || u.role === "admin") return { ok: true, alreadyHasAccess: true };
+
+  const types = Array.isArray(args.types) ? args.types.filter(Boolean) : [];
+  // Merge into any existing pending request so requesting a second connection doesn't drop the first.
+  const existing = await requestRef(u.enterpriseId, callerUid).get();
+  const prior = (existing.data()?.types as string[] | undefined) ?? [];
+  const merged = Array.from(new Set([...prior, ...types]));
+
   await requestRef(u.enterpriseId, callerUid).set({
     enterprise_id: u.enterpriseId,
     uid: callerUid,
     email: u.email,
     name: u.name,
+    types: merged,
     note: (args.note ?? "").slice(0, 300),
     status: "pending",
     requested_at: FieldValue.serverTimestamp(),
   });
-  return { ok: true, requested: true };
+  return { ok: true, requested: merged };
 }
 
-/** Owner/admin approves or denies a shared-access request. */
-export async function respondAccessRequest(callerUid: string, args: { uid?: string; approve?: boolean }) {
-  const caller = await loadUser(callerUid);
-  if (caller.role !== "owner" && caller.role !== "admin") {
-    throw new HttpsError("permission-denied", "Only the owner or an admin can approve integration access.");
-  }
-  const targetUid = args.uid;
-  if (!targetUid) throw new HttpsError("invalid-argument", "Missing user uid.");
-
-  // Ensure the target is in the caller's org.
+async function assertSameOrg(enterpriseId: string, targetUid: string) {
   const tSnap = await db.doc(`users/${targetUid}`).get();
-  if (tSnap.data()?.enterprise_id !== caller.enterpriseId) {
+  if (tSnap.data()?.enterprise_id !== enterpriseId) {
     throw new HttpsError("not-found", "That user is not in your organization.");
   }
+}
+
+/** Owner/admin approves (grants specific types) or denies a request. */
+export async function respondAccessRequest(
+  callerUid: string,
+  args: { uid?: string; approve?: boolean; types?: string[] }
+) {
+  const caller = await loadUser(callerUid);
+  requireManager(caller.role);
+  const targetUid = args.uid;
+  if (!targetUid) throw new HttpsError("invalid-argument", "Missing user uid.");
+  await assertSameOrg(caller.enterpriseId, targetUid);
 
   const approve = args.approve !== false;
-  if (approve) {
-    await grantRef(caller.enterpriseId, targetUid).set({
-      enterprise_id: caller.enterpriseId,
-      uid: targetUid,
-      shared_access: true,
-      granted_by: callerUid,
-      granted_at: FieldValue.serverTimestamp(),
-    });
-  } else {
+  const reqSnap = await requestRef(caller.enterpriseId, targetUid).get();
+  const requestedTypes = (reqSnap.data()?.types as string[] | undefined) ?? [];
+  // Grant either the explicitly-provided types or everything the user requested.
+  const toGrant = Array.isArray(args.types) && args.types.length ? args.types : requestedTypes;
+
+  if (approve && toGrant.length) {
+    const existing = await grantRef(caller.enterpriseId, targetUid).get();
+    const prior = (existing.data()?.types as string[] | undefined) ?? [];
+    const merged = Array.from(new Set([...prior, ...toGrant]));
     await grantRef(caller.enterpriseId, targetUid).set(
-      { shared_access: false, updated_by: callerUid, updated_at: FieldValue.serverTimestamp() },
+      { enterprise_id: caller.enterpriseId, uid: targetUid, types: merged, granted_by: callerUid, granted_at: FieldValue.serverTimestamp() },
       { merge: true }
     );
   }
@@ -123,18 +133,30 @@ export async function respondAccessRequest(callerUid: string, args: { uid?: stri
     { status: approve ? "approved" : "denied", responded_by: callerUid, responded_at: FieldValue.serverTimestamp() },
     { merge: true }
   );
-  return { ok: true, uid: targetUid, approved: approve };
+  return { ok: true, uid: targetUid, approved: approve, granted: approve ? toGrant : [] };
 }
 
-/** Owner/admin revokes a member's shared-integration access. */
+/** Owner/admin sets the EXACT set of shared connection types a member may use. */
+export async function setConnectionGrants(callerUid: string, args: { uid?: string; types?: string[] }) {
+  const caller = await loadUser(callerUid);
+  requireManager(caller.role);
+  if (!args.uid) throw new HttpsError("invalid-argument", "Missing user uid.");
+  await assertSameOrg(caller.enterpriseId, args.uid);
+  const types = Array.isArray(args.types) ? Array.from(new Set(args.types.filter(Boolean))) : [];
+  await grantRef(caller.enterpriseId, args.uid).set(
+    { enterprise_id: caller.enterpriseId, uid: args.uid, types, granted_by: callerUid, granted_at: FieldValue.serverTimestamp() },
+    { merge: true }
+  );
+  return { ok: true, uid: args.uid, types };
+}
+
+/** Owner/admin revokes all of a member's shared-integration access. */
 export async function revokeSharedAccess(callerUid: string, args: { uid?: string }) {
   const caller = await loadUser(callerUid);
-  if (caller.role !== "owner" && caller.role !== "admin") {
-    throw new HttpsError("permission-denied", "Only the owner or an admin can change integration access.");
-  }
+  requireManager(caller.role);
   if (!args.uid) throw new HttpsError("invalid-argument", "Missing user uid.");
   await grantRef(caller.enterpriseId, args.uid).set(
-    { shared_access: false, updated_by: callerUid, updated_at: FieldValue.serverTimestamp() },
+    { types: [], updated_by: callerUid, updated_at: FieldValue.serverTimestamp() },
     { merge: true }
   );
   return { ok: true, uid: args.uid };

@@ -12,8 +12,9 @@ import {
 } from "recharts";
 import { Eye, Profile2User, ArrowSwapHorizontal, Global, Location } from "iconsax-react";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { Lock1 } from "iconsax-react";
 import { db } from "@/lib/firebase";
-import { useEnterpriseId } from "@/lib/use-enterprise";
+import { useAccess } from "@/lib/use-access";
 
 type WebEvent = {
   source?: string;
@@ -94,20 +95,21 @@ const RANGES = [
 ] as const;
 
 export default function WebsitePage() {
-  const { enterpriseId } = useEnterpriseId();
+  const { enterpriseId, allowsType, loading: accessLoading } = useAccess();
+  const canView = allowsType("website");
   const [events, setEvents] = useState<WebEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(Date.now());
   const [rangeDays, setRangeDays] = useState(14);
 
   useEffect(() => {
-    if (!enterpriseId) return;
+    if (!enterpriseId || !canView) return;
     const q = query(collection(db, "analytics_events"), where("workspace_id", "==", enterpriseId));
     return onSnapshot(q, (snap) => {
       setEvents(snap.docs.map((d) => d.data() as WebEvent).filter((e) => e.source === "web"));
       setLoading(false);
     });
-  }, [enterpriseId]);
+  }, [enterpriseId, canView]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 20000);
@@ -195,6 +197,23 @@ export default function WebsitePage() {
       <p className="text-xs text-gray-400 mt-1">{label}</p>
     </div>
   );
+
+  if (!accessLoading && !canView) {
+    return (
+      <main className="p-8">
+        <h1 className="text-3xl font-bold tracking-tight">Website Analytics</h1>
+        <div className="mt-6 bg-white rounded-2xl p-10 shadow-[0_4px_20px_rgba(0,0,0,0.04)] flex flex-col items-center text-center">
+          <span className="w-14 h-14 rounded-2xl bg-gray-50 flex items-center justify-center mb-4">
+            <Lock1 size={26} variant="Bold" color="#9ca3af" />
+          </span>
+          <h3 className="text-base font-semibold">No access to Website analytics</h3>
+          <p className="text-sm text-gray-400 mt-1 max-w-xs">
+            You haven&apos;t been granted access to this connection. Request it on the Team page.
+          </p>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="p-8 space-y-6 max-w-[1200px]">

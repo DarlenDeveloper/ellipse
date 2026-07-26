@@ -13,10 +13,16 @@ import {
 import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { cn } from "@/lib/utils";
 import { db } from "@/lib/firebase";
-import { useEnterpriseId } from "@/lib/use-enterprise";
+import { useAccess } from "@/lib/use-access";
 
-type Ev = { source?: string; timestamp?: { toDate: () => Date } };
-type Action = { status?: string; created_at?: { toDate: () => Date } };
+type Ev = { source?: string; channel?: string; payload?: { channel?: string }; timestamp?: { toDate: () => Date } };
+type Action = { status?: string; agent_id?: string; target_system?: string; created_at?: { toDate: () => Date } };
+
+// Map an agent_id / target_system to its connection type.
+function toType(agentId?: string, targetSystem?: string): string {
+  const base = (agentId?.replace(/-agent$/, "") || targetSystem || "").toLowerCase();
+  return base === "gmail" ? "google-workspace" : base;
+}
 
 type Granularity = "hourly" | "daily" | "weekly" | "monthly";
 const GRANS: { id: Granularity; label: string; keep: number }[] = [
@@ -55,7 +61,7 @@ function bucketLabel(key: string, g: Granularity): string {
 }
 
 export function Statistics() {
-  const { enterpriseId } = useEnterpriseId();
+  const { enterpriseId, isManager, allowsChannel, allowsType } = useAccess();
   const [events, setEvents] = useState<Ev[]>([]);
   const [actions, setActions] = useState<Action[]>([]);
   const [metric, setMetric] = useState<"messages" | "agentActions">("messages");
@@ -84,11 +90,14 @@ export function Statistics() {
     const buckets: Record<string, { messages: number; agentActions: number }> = {};
     for (const e of events) {
       if (e.source !== "message") continue;
+      const ch = e.payload?.channel ?? e.channel;
+      if (!(isManager || !ch || allowsChannel(ch))) continue;
       const d = e.timestamp?.toDate?.();
       if (!d) continue;
       (buckets[bucketKey(d, gran)] ??= { messages: 0, agentActions: 0 }).messages++;
     }
     for (const a of actions) {
+      if (!(isManager || allowsType(toType(a.agent_id, a.target_system)))) continue;
       const d = a.created_at?.toDate?.();
       if (!d) continue;
       (buckets[bucketKey(d, gran)] ??= { messages: 0, agentActions: 0 }).agentActions++;
@@ -97,7 +106,7 @@ export function Statistics() {
       .sort()
       .slice(-keep)
       .map((k) => ({ label: bucketLabel(k, gran), ...buckets[k] }));
-  }, [events, actions, gran]);
+  }, [events, actions, gran, isManager, allowsChannel, allowsType]);
 
   return (
     <div className="bg-white rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">

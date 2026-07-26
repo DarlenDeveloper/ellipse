@@ -1169,6 +1169,12 @@ export const revokeSharedAccess = onCall(async (request) => {
   return revokeSharedAccess(request.auth.uid, request.data ?? {});
 });
 
+export const setConnectionGrants = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const { setConnectionGrants } = await import("./access");
+  return setConnectionGrants(request.auth.uid, request.data ?? {});
+});
+
 /** Disconnect an integration and purge all data it produced (analytics, messages, sites). */
 export const disconnectIntegration = onCall(async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");

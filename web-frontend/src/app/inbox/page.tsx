@@ -7,6 +7,7 @@ import { httpsCallable } from "firebase/functions";
 import { DirectInbox, RefreshCircle } from "iconsax-react";
 import { db, functions } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
+import { useAccess } from "@/lib/use-access";
 import { InboxTopBar } from "@/components/inbox/InboxTopBar";
 import { ReadingPane } from "@/components/inbox/ReadingPane";
 import { cn } from "@/lib/utils";
@@ -54,6 +55,7 @@ function fmtTime(ts?: { toDate: () => Date }): string {
 
 export default function InboxPage() {
   const { user } = useAuth();
+  const { allowsChannel } = useAccess();
   const [enterpriseId, setEnterpriseId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -74,12 +76,15 @@ export default function InboxPage() {
     if (!enterpriseId) return;
     const q = query(collection(db, "conversations"), where("enterprise_id", "==", enterpriseId));
     return onSnapshot(q, (snap) => {
-      const convs = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Conversation, "id">) }));
+      const convs = snap.docs
+        .map((d) => ({ id: d.id, ...(d.data() as Omit<Conversation, "id">) }))
+        // Employees only see conversations from channels they've been granted.
+        .filter((c) => allowsChannel(c.channel));
       convs.sort((a, b) => (b.last_message_at?.toDate().getTime() ?? 0) - (a.last_message_at?.toDate().getTime() ?? 0));
       setConversations(convs);
-      setSelectedId((cur) => cur ?? convs[0]?.id ?? null);
+      setSelectedId((cur) => (cur && convs.some((c) => c.id === cur) ? cur : convs[0]?.id ?? null));
     });
-  }, [enterpriseId]);
+  }, [enterpriseId, allowsChannel]);
 
   // Live messages for selected conversation
   useEffect(() => {
