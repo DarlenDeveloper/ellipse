@@ -2,5 +2,8 @@
   "functions": {
     "source": "backend",
     "codebase": "default"
+  },
+  "firestore": {
+    "rules": "firestore.rules"
   }
 }

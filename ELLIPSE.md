@@ -163,8 +163,12 @@ Integration ownership: an employee may use the **owner's shared integrations wit
 
 **Live:** Unified inbox (Gmail, SMTP, Outlook, WhatsApp) · per-connection agents + triage · Zoho CRM (enrich, write, rich reporting, `list_leads`, `get_zoho_quote`) · Website analytics · **Mercury Store** (custom key-auth API: products/orders/quotations/repairs with search + pagination) · Ivy + direct agent chat (floating bubble + `/ivy` page) · custom agents · document + multi-source report generation (deterministic, saved to Data, mirrored to OneDrive) · owner-only Quote Owner analysis · **quotation/proforma PDF generation** (branded, Settings → Quotation) · **send email with attachments** (gated) · **knowledge-base file upload** (PDF/image text extraction) · approvals flow · Data page.
 
-**Note on this doc:** it's the original vision spec. For the accurate current state and build order, see **`IMPLEMENTATION.md`** (source of truth); Zoho capabilities in **`ZOHO.md`**; live task list in **`TODO.md`**.
+**Users & roles (live):** owner/admin/employee + `can_approve`; invited employees auto-join their org (`acceptInvite`); member management (invite/role/approve/remove/revoke); **per-connection shared access** (employees request specific connections, owner/admin approve); every data surface scoped to a member's granted connections (`useAccess`); daily owner-only team-activity digest on the Data page.
 
-**Roadmap:** users & roles (join flow, shared vs personal integrations, daily per-user digest) → security pass (Firestore rules, tokens → Secret Manager, remove debug fns, role enforcement, invite emails) → live Excel append (Graph workbook) → agent memory.
+**Security (started):** Firestore **security rules** deployed (tenant isolation, role/owner write control, deny-by-default, private chats); connection **secrets** (OAuth tokens, API keys, SMTP passwords) moved to a locked `connection_secrets` collection no client can read.
+
+**Note on this doc:** it's the original vision spec. For the accurate current state and build order, see **`IMPLEMENTATION.md`** (source of truth); Zoho capabilities in **`ZOHO.md`**; live task list in **`TODO.md`**; users/roles/access in **`USERS_AND_ROLES.md`**.
+
+**Roadmap:** finish security pass (per-connection read rules hardening, tokens → Secret Manager, remove debug fns, invite emails) → live Excel append (Graph workbook) → agent memory.
 
 **Reality vs. this spec:** agents are **per-connection + Ivy** (not domain agents); Ivy was built after the connections, not first; wallet = subscription window (no credits). Backend is Firebase Functions; frontend deploys to Vercel.

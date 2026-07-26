@@ -71,10 +71,25 @@ Connections first (CRM → communication → marketing much later), Ivy (persona
 - On-demand `generate_report(period, sources, detail)` — one Excel per connected source (Zoho / Website / messaging channels). Zoho detailed = Quotes line-items; **detailed is the default**.
 - All report numbers come straight from the source API into the cells via `exceljs`/`docx` — the AI only picks the tool and phrases the message.
 
+### Done — users, roles & access (this pass)
+- **Roles**: `owner` / `admin` / `employee` + orthogonal `can_approve`.
+- **Join flow** (`acceptInvite`): invited emails auto-link to the right org on signup/login (not a new org); wired into `getLandingRoute` + signup.
+- **Member management** (role-checked + seat-limited callables): `inviteMember`, `updateMemberRole`, `setMemberCanApprove`, `removeMember`, `revokeInvite`. Owner untouchable; only owner manages admins.
+- **Per-connection shared access**: employees request specific connections (`requestSharedAccess`), owner/admin approve/deny (`respondAccessRequest`) or set exact grants (`setConnectionGrants`); grants in `connection_grants/{eid}_{uid}.types`. Agent tools gated per user (`allowedConnectionTypes`).
+- **Real Users page** on live data (members + pending invites + access requests), actions gated by viewer role.
+- **Data scoping** via `useAccess` hook — Inbox, Dashboard (QuickStats/Statistics/RecentThreads/PendingApprovals), Approvals, Website, Data, Analytics all filter to the member's granted connections (owner/admin see all). Integrations shows per-connection "Connected" vs "No access — request it"; non-admins can't connect/disconnect.
+- **Daily owner-only team digest** (`orgUsers.ts` → hooked into `scheduledReports`/`generateReportsNow`): per-member chats/agents/topics + shared-connection snapshot; `owner_only:true`; Data page shows it to the owner only.
+
+### Done — security pass (started)
+- **Firestore rules** (`firestore.rules`, deployed): tenant isolation, deny-by-default, role/owner write control, approvals limited to managers/approvers, `ivy_chats` author-only, `connection_secrets` fully locked.
+- **Secret split**: OAuth tokens / API keys / SMTP passwords → locked `connection_secrets` (`connectionSecrets.ts`); `connections` now secret-free; one-time `migrateConnectionSecrets` run on existing data.
+
 ### Next
-- **Users & roles** (next up) — see the dedicated section below
-- Ivy dashboard briefing card
-- Live Excel append via Graph workbook API
+- Per-connection within-org read enforcement in rules (needs query rewrites; currently app-layer)
+- Tokens `connection_secrets` → Secret Manager
+- Remove all debug fns + one-time `migrateConnectionSecrets`
+- Ivy dashboard briefing card; live Excel append via Graph workbook API
+- See `USERS_AND_ROLES.md` for the full users/roles/access spec + status
 
 ## Users & Roles — plan (next up)
 
@@ -95,10 +110,12 @@ Build steps (once confirmed):
 6. Frontend permission gating on settings/integrations for non-admins.
 
 ## Deferred / flagged (security pass before production)
-- Firestore **security rules** still test mode ⚠️ (add owner-only mode, per-user `ivy_chats`, per-enterprise `custom_agents`/`documents`/`reports`)
-- All refresh tokens/creds Firestore → **Secret Manager**
-- **Remove debug fns**: `pingGemini`, `pingZoho`, `pingMicrosoft`, `pingStorage`, `zohoSearchDebug`, `zohoBackfillDebug`, `zohoFieldsDebug`, `crmReportDebug`, `reportGenDebug`, `runGmailAgentDebug`, `runZohoAgentDebug`, `mercuryDebug`, `quotationDebug`, `zohoQuoteDebug`, `zohoLeadsDebug` (+ helpers `mercuryRawGet`, `debugRecentQuote`, `debugLeadsRaw`)
-- Role enforcement (owner-gated so far: mode, quotation branding, owner analysis) + invite **emails**
+- ✅ Firestore **security rules** deployed (`firestore.rules`): tenant isolation, deny-by-default, role/owner write control, `connection_secrets` fully locked, `ivy_chats` author-only.
+- ✅ **Secret split**: OAuth tokens / API keys / SMTP passwords → locked `connection_secrets` collection (clients denied); `connections` is now secret-free. Migration run.
+- Per-connection within-org read enforcement is still app-layer (`useAccess`) — rules can't filter queries; hardening needs query rewrites (follow-up).
+- All refresh tokens/creds → **Secret Manager** (interim: `connection_secrets`, function-only)
+- **Remove debug fns**: `pingGemini`, `pingZoho`, `pingMicrosoft`, `pingStorage`, `zohoSearchDebug`, `zohoBackfillDebug`, `zohoFieldsDebug`, `crmReportDebug`, `reportGenDebug`, `runGmailAgentDebug`, `runZohoAgentDebug`, `mercuryDebug`, `quotationDebug`, `zohoQuoteDebug`, `zohoLeadsDebug` (+ helpers `mercuryRawGet`, `debugRecentQuote`, `debugLeadsRaw`) + one-time `migrateConnectionSecrets`
+- ✅ Firestore rules deployed; ✅ role enforcement in member/access callables (+ owner-gated mode, quotation branding, owner analysis). Remaining: invite **emails**, per-connection read rules hardening
 - Vercel production wiring: `FRONTEND_URL`, OAuth redirect allowlists, Firebase Auth authorized domains
 - WhatsApp **permanent** (System User) token
 - Real-time push (Gmail/Zoho webhooks) instead of polling

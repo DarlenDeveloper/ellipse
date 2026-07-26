@@ -1,0 +1,188 @@
+rules_version = '2';
+
+// Ellipse Firestore security rules.
+//
+// Core boundaries enforced here (Cloud Functions use the Admin SDK and bypass
+// all of these — most writes happen server-side):
+//   • Tenant isolation: a user can only touch data belonging to THEIR enterprise.
+//   • Secret lockdown: connection_secrets (OAuth tokens, API keys, passwords)
+//     are NEVER readable/writable by any client.
+//   • Role control: only owner/admin manage members, connections, agents, KB;
+//     only the owner edits enterprise settings.
+//   • Private data: ivy_chats are readable only by their author.
+//
+// NOTE: Firestore rules cannot filter query results, so per-connection *within
+// an org* view scoping (e.g. an employee only seeing WhatsApp threads) is done
+// in the app layer (useAccess). Rules guarantee the enterprise boundary; the app
+// narrows further per grant.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    function myEid() {
+      return signedIn() ? userDoc().enterprise_id : null;
+    }
+    function myRole() {
+      return signedIn() ? userDoc().role : null;
+    }
+    function isMember(eid) {
+      return signedIn() && eid != null && myEid() == eid;
+    }
+    function isManager(eid) {
+      return isMember(eid) && (myRole() == 'owner' || myRole() == 'admin');
+    }
+    function isOwner(eid) {
+      return isMember(eid) && myRole() == 'owner';
+    }
+
+    // ---- Users ----
+    match /users/{uid} {
+      // See yourself, and teammates in your org.
+      allow read: if signedIn() && (uid == request.auth.uid || resource.data.enterprise_id == myEid());
+      // Create your own user doc on signup.
+      allow create: if signedIn() && uid == request.auth.uid;
+      // Update your own doc: profile-only edits (privileged fields unchanged), OR
+      // the one-time owner claim during onboarding (was unlinked, now owner of an
+      // enterprise you created). Role/enterprise/approval changes otherwise go
+      // through server callables (admin SDK).
+      allow update: if signedIn() && uid == request.auth.uid && (
+        (request.resource.data.enterprise_id == resource.data.enterprise_id
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.can_approve == resource.data.can_approve)
+        ||
+        (resource.data.enterprise_id == null
+          && request.resource.data.role == 'owner'
+          && exists(/databases/$(database)/documents/enterprises/$(request.resource.data.enterprise_id))
+          && get(/databases/$(database)/documents/enterprises/$(request.resource.data.enterprise_id)).data.owner_id == request.auth.uid)
+      );
+      allow delete: if false;
+    }
+
+    // ---- Enterprises ----
+    match /enterprises/{eid} {
+      allow read: if isMember(eid);
+      allow create: if signedIn() && request.resource.data.owner_id == request.auth.uid;
+      allow update: if isOwner(eid);
+      allow delete: if false;
+    }
+
+    // ---- Wallets (subscription window) ----
+    match /wallets/{id} {
+      allow read: if isMember(resource.data.enterprise_id);
+      allow create: if isOwner(request.resource.data.enterprise_id);
+      allow update, delete: if false; // freezing handled server-side
+    }
+
+    // ---- Connections (secret-free metadata; secrets live elsewhere) ----
+    match /connections/{id} {
+      allow read: if isMember(resource.data.enterprise_id);
+      allow create: if isManager(request.resource.data.enterprise_id);
+      allow update: if isManager(resource.data.enterprise_id);
+      allow delete: if false; // disconnect purges via a callable
+    }
+
+    // ---- Connection secrets: NEVER exposed to any client ----
+    match /connection_secrets/{id} {
+      allow read, write: if false;
+    }
+
+    // ---- Invites ----
+    match /invites/{id} {
+      allow read: if isManager(resource.data.enterprise_id);
+      allow create: if isManager(request.resource.data.enterprise_id);
+      allow update, delete: if isManager(resource.data.enterprise_id);
+    }
+
+    // ---- Shared-connection grants + access requests (managed server-side) ----
+    match /connection_grants/{id} {
+      allow read: if signedIn() && (resource.data.uid == request.auth.uid || isManager(resource.data.enterprise_id));
+      allow write: if false;
+    }
+    match /access_requests/{id} {
+      allow read: if signedIn() && (resource.data.uid == request.auth.uid || isManager(resource.data.enterprise_id));
+      allow write: if false;
+    }
+
+    // ---- Inbox: conversations + messages (read within org; ingest is server-side) ----
+    match /conversations/{id} {
+      allow read: if isMember(resource.data.enterprise_id);
+      allow write: if false;
+    }
+    match /messages/{id} {
+      allow read: if isMember(resource.data.enterprise_id);
+      allow write: if false;
+    }
+
+    // ---- Analytics events (workspace_id == enterprise) ----
+    match /analytics_events/{id} {
+      allow read: if isMember(resource.data.workspace_id);
+      allow write: if false; // written by ingest/collector functions
+    }
+
+    // ---- Pending actions / approvals ----
+    match /pending_actions/{id} {
+      allow read: if isMember(resource.data.enterprise_id);
+      // Approve/reject: managers or members explicitly granted approval rights.
+      allow update: if isMember(resource.data.enterprise_id)
+        && (myRole() == 'owner' || myRole() == 'admin' || userDoc().can_approve == true)
+        && request.resource.data.enterprise_id == resource.data.enterprise_id;
+      allow create, delete: if false;
+    }
+
+    // ---- Knowledge base (managers curate; all members read) ----
+    match /knowledge_base/{id} {
+      allow read: if isMember(resource.data.enterprise_id);
+      allow create: if isManager(request.resource.data.enterprise_id);
+      allow update, delete: if isManager(resource.data.enterprise_id);
+    }
+
+    // ---- Custom agents (management) ----
+    match /custom_agents/{id} {
+      allow read: if isMember(resource.data.enterprise_id);
+      allow create: if isManager(request.resource.data.enterprise_id);
+      allow update, delete: if isManager(resource.data.enterprise_id);
+    }
+
+    // ---- Documents + reports (generated server-side; read within org) ----
+    match /documents/{id} {
+      allow read: if isMember(resource.data.enterprise_id);
+      allow write: if false;
+    }
+    match /reports/{id} {
+      allow read: if isMember(resource.data.enterprise_id);
+      allow write: if false;
+    }
+
+    // ---- Quotation branding ----
+    match /quotation_settings/{eid} {
+      allow read: if isMember(eid);
+      allow write: if false; // saveQuotationBranding callable (owner-gated)
+    }
+
+    // ---- Web sites (tracking config) ----
+    match /web_sites/{id} {
+      allow read: if isMember(resource.data.enterprise_id);
+      allow write: if false;
+    }
+
+    // ---- Ivy chats: private to their author ----
+    match /ivy_chats/{id} {
+      allow read: if signedIn() && resource.data.user_id == request.auth.uid;
+      allow create: if signedIn()
+        && request.resource.data.user_id == request.auth.uid
+        && request.resource.data.enterprise_id == myEid();
+      allow update, delete: if signedIn() && resource.data.user_id == request.auth.uid;
+    }
+
+    // Deny everything else by default.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

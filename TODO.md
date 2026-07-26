@@ -9,7 +9,12 @@ Core principle: **one agent per connection**, plus **Ivy** (boss agent) built LA
 All connections live (incl. Mercury Store custom API). Triage, reports (multi-source + detailed + owner analysis), documents, Data page, Ivy + direct agent chat, custom agents, quotation PDFs, send-email, and KB file upload are done. Remaining big rocks:
 
 1. ✅ **Users & roles** — DONE. Roles `owner`/`admin`/`employee` + `can_approve`; invited users join via `acceptInvite` (not a new org); member-management callables (invite/role/approve/remove/revoke); shared-integration request→approve + per-user agent gating; daily owner-only team digest (Data page); Integrations view-only for non-admins. Deferred: personal per-user OAuth connect pipeline + tokened invite emails (→ security pass). See `USERS_AND_ROLES.md`.
-2. **Security pass (before production)** — Firestore rules are the big one: ⚠️ **users & roles is currently UI-scoped only** (test-mode rules mean an employee could read org data via the SDK). Rules must scope reads by enterprise + role + granted connection types (`connection_grants`), owner-only mode/digests, per-user `ivy_chats`, per-enterprise `custom_agents`/`documents`/`reports`/`quotation_settings`. Plus tokens Firestore → Secret Manager, remove all debug fns.
+2. **Security pass (before production)** — IN PROGRESS:
+   - [x] **Firestore rules** (`firestore.rules`, deployed) — tenant isolation on every collection, deny-by-default, role/owner-gated writes, approvals limited to managers/approvers, `ivy_chats` private to author.
+   - [x] **Secret split** — OAuth tokens / API keys / SMTP passwords moved to a locked `connection_secrets` collection (clients denied); `connections` keeps only non-secret status. One-time `migrateConnectionSecrets` run on existing data.
+   - [ ] ⚠️ **Per-connection within-org reads are still app-layer** (`useAccess`) — Firestore rules can't filter query results, so making it a hard boundary needs query rewrites (employees query with `where(channel in grantedTypes)`), or move those reads behind callables. Follow-up.
+   - [ ] Tokens → Secret Manager (currently `connection_secrets` in Firestore, function-only — a solid interim).
+   - [ ] Remove all debug fns + `migrateConnectionSecrets` (one-time) before ship.
 3. **Live Excel workbook edit** (`append_row`) via Graph workbook API.
 4. **Agent memory** (WAY later) — persistent per-agent memory across chats/conversations.
 

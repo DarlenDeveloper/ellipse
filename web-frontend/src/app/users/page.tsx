@@ -95,38 +95,48 @@ export default function UsersPage() {
         setLoading(false);
       }
     );
-    const unsubInvites = onSnapshot(
-      query(collection(db, "invites"), where("enterprise_id", "==", enterpriseId), where("status", "==", "pending")),
-      (snap) => setInvites(snap.docs.map((d) => ({ email: d.data().email, role: (d.data().role as Role) ?? "employee", can_approve: !!d.data().can_approve })))
-    );
-    // Pending shared-integration access requests (for owner/admin).
-    const unsubReq = onSnapshot(
-      query(collection(db, "access_requests"), where("enterprise_id", "==", enterpriseId), where("status", "==", "pending")),
-      (snap) =>
-        setAccessRequests(
-          snap.docs.map((d) => ({
-            uid: d.data().uid,
-            name: d.data().name || d.data().email,
-            email: d.data().email,
-            types: (d.data().types as string[] | undefined) ?? [],
-          }))
+    // Pending invites (owner/admin only — rules block employees from reading invites).
+    const unsubInvites = canManage
+      ? onSnapshot(
+          query(collection(db, "invites"), where("enterprise_id", "==", enterpriseId), where("status", "==", "pending")),
+          (snap) =>
+            setInvites(
+              snap.docs.map((d) => ({ email: d.data().email, role: (d.data().role as Role) ?? "employee", can_approve: !!d.data().can_approve }))
+            )
         )
-    );
+      : undefined;
+    // Pending shared-integration access requests (owner/admin only — rules block employees).
+    const unsubReq =
+      canManage
+        ? onSnapshot(
+            query(collection(db, "access_requests"), where("enterprise_id", "==", enterpriseId), where("status", "==", "pending")),
+            (snap) =>
+              setAccessRequests(
+                snap.docs.map((d) => ({
+                  uid: d.data().uid,
+                  name: d.data().name || d.data().email,
+                  email: d.data().email,
+                  types: (d.data().types as string[] | undefined) ?? [],
+                }))
+              )
+          )
+        : undefined;
     // My own access grant + request status (for employees).
     const unsubGrant = onSnapshot(doc(db, "connection_grants", `${enterpriseId}_${user.uid}`), (snap) =>
-      setMyHasAccess(snap.exists() && snap.data()?.shared_access === true)
+      setMyHasAccess(snap.exists() && ((snap.data()?.types as string[] | undefined)?.length ?? 0) > 0)
     );
     const unsubMyReq = onSnapshot(doc(db, "access_requests", `${enterpriseId}_${user.uid}`), (snap) =>
       setMyRequestStatus(snap.exists() ? (snap.data()?.status as string) : null)
     );
     return () => {
       unsubMembers();
-      unsubInvites();
-      unsubReq();
+      unsubInvites?.();
+      unsubReq?.();
       unsubGrant();
       unsubMyReq();
     };
-  }, [enterpriseId, user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enterpriseId, user, canManage]);
 
   const call = async (name: string, data: Record<string, unknown>) => {
     setBusy(true);
@@ -150,7 +160,6 @@ export default function UsersPage() {
   };
   const revoke = (email: string) => call("revokeInvite", { email });
   const respondAccess = (uid: string, approve: boolean) => call("respondAccessRequest", { uid, approve });
-  const requestAccess = () => call("requestSharedAccess", {});
 
   const filtered = useMemo(
     () =>
@@ -205,13 +214,12 @@ export default function UsersPage() {
               </p>
             </div>
           </div>
-          <button
-            onClick={requestAccess}
-            disabled={busy || myRequestStatus === "pending"}
-            className="bg-black text-white text-sm font-medium rounded-full px-5 py-2.5 hover:bg-gray-800 disabled:opacity-50 shrink-0"
+          <a
+            href="/integrations"
+            className="bg-black text-white text-sm font-medium rounded-full px-5 py-2.5 hover:bg-gray-800 shrink-0"
           >
-            {myRequestStatus === "pending" ? "Requested" : "Request access"}
-          </button>
+            Choose integrations
+          </a>
         </div>
       )}
 
