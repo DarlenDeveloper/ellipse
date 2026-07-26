@@ -112,8 +112,17 @@ Every one re-checks the caller's role server-side (like `saveQuotationBranding` 
 **Milestone complete.** (Deferred: personal per-user OAuth connect pipeline; tokened invite emails — both in the security pass.)
 
 ### Confirmed rule (from the client)
-- **Shared integrations** (owner's connections): an employee may use them **only when the owner or an admin approves their request**.
+- **Shared integrations** (owner's connections): an employee may use them **only when the owner or an admin approves their request** — and access is **per connection type** (e.g. grant WhatsApp only), not all-or-nothing.
 - **Additional integrations a user adds** are always allowed for that user, and are **logged and rolled into the owner's end-of-day summary**.
+
+### Access model (implemented)
+- `connection_grants/{enterpriseId}_{uid}.types: string[]` — the specific shared connection types a member may use. Owner/admin implicitly get all.
+- `access_requests/{enterpriseId}_{uid}` — carries the requested `types`; owner/admin approve (grants those types) or deny. `setConnectionGrants` lets a manager set the exact set directly.
+- Backend gating: `allowedConnectionTypes` (in `access.ts`) → agent tools per user = granted shared types + own personal connections.
+- **Frontend data scoping** via `useAccess()` hook: Inbox, Dashboard (QuickStats/Statistics/RecentThreads/PendingApprovals), Approvals, Website, Data, Analytics all filter to the member's granted connections; Integrations shows per-connection "Connected" vs "No access — request it".
+
+### ⚠️ Critical: this is UI scoping only
+Firestore is still in **test mode**, so an employee could bypass the UI and read org data directly via the SDK. **Real enforcement requires Firestore security rules** — must be done in the security pass before production (rules need to scope reads by enterprise AND, ideally, by the member's granted connection types / role).
 
 ---
 
