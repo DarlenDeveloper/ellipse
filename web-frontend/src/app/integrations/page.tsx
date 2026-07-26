@@ -18,6 +18,7 @@ export default function IntegrationsPage() {
   const [items, setItems] = useState(seed);
   const [query, setQuery] = useState("");
   const [enterpriseId, setEnterpriseId] = useState<string | null>(null);
+  const [canManage, setCanManage] = useState(true); // owner/admin may manage integrations
   const [googleEmail, setGoogleEmail] = useState<string | null>(null);
   const [zohoConnected, setZohoConnected] = useState(false);
   const [smtpConnected, setSmtpConnected] = useState(false);
@@ -53,6 +54,8 @@ export default function IntegrationsPage() {
     if (!user) return;
     const userSnap = await getDoc(doc(db, "users", user.uid));
     const entId = userSnap.data()?.enterprise_id as string | undefined;
+    const role = userSnap.data()?.role as string | undefined;
+    setCanManage(role === "owner" || role === "admin");
     if (!entId) return;
     setEnterpriseId(entId);
 
@@ -174,6 +177,7 @@ export default function IntegrationsPage() {
   };
 
   const doDisconnect = async () => {
+    if (!canManage) return;
     if (!enterpriseId || !disconnectTarget) return;
     setDisconnecting(true);
     const id = disconnectTarget.id;
@@ -211,6 +215,9 @@ export default function IntegrationsPage() {
   const toggle = (id: string) =>
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, connected: !it.connected } : it)));
 
+  const blockedManage = () =>
+    setBanner({ type: "error", text: "Only the owner or an admin can manage company integrations." });
+
   const filtered = items.filter((it) => it.name.toLowerCase().includes(query.toLowerCase()));
 
   return (
@@ -222,6 +229,12 @@ export default function IntegrationsPage() {
           <p className="text-gray-400 mt-2">
             Supercharge your workflow and connect the tools you and your team use every day.
           </p>
+          {!canManage && (
+            <p className="text-xs text-gray-500 mt-2 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 inline-block">
+              View only — only the owner or an admin can connect or disconnect company integrations. Need access?
+              Request it on the Team page.
+            </p>
+          )}
         </div>
         <div className="relative w-64 shrink-0">
           <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
@@ -277,7 +290,9 @@ export default function IntegrationsPage() {
               integration={integration}
               onToggle={toggle}
               onConnectClick={
-                isGoogle
+                !canManage
+                  ? blockedManage
+                  : isGoogle
                   ? connectGoogle
                   : isZoho
                   ? connectZoho
@@ -293,9 +308,13 @@ export default function IntegrationsPage() {
                   ? openModal(setShowMercuryModal)
                   : undefined
               }
-              onDisconnect={() => setDisconnectTarget({ id: integration.id, name: integration.name })}
+              onDisconnect={
+                canManage ? () => setDisconnectTarget({ id: integration.id, name: integration.name }) : blockedManage
+              }
               onUpdate={
-                isWhatsapp && whatsappConnected
+                !canManage
+                  ? undefined
+                  : isWhatsapp && whatsappConnected
                   ? openModal(setShowWhatsappModal)
                   : isSmtp && smtpConnected
                   ? openModal(setShowSmtpModal)

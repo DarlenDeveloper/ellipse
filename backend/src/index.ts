@@ -1051,6 +1051,124 @@ export const saveQuotationBranding = onCall(async (request) => {
   return { ok: true, logo_url: update.logo_url };
 });
 
+/**
+ * Link a freshly signed-up user to the org that invited them, so invited
+ * employees join the right workspace instead of creating a new one.
+ * Matches a pending invite by the authenticated user's own (verified) email,
+ * sets their enterprise/role/can_approve, and marks the invite accepted.
+ */
+export const acceptInvite = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const uid = request.auth.uid;
+  const email = (request.auth.token?.email as string | undefined)?.trim().toLowerCase();
+
+  const { db, FieldValue } = await import("./admin");
+
+  // Already a member of an org? Nothing to do.
+  const uRef = db.doc(`users/${uid}`);
+  const uSnap = await uRef.get();
+  const existing = uSnap.data()?.enterprise_id as string | undefined;
+  if (existing) return { ok: true, alreadyMember: true, enterpriseId: existing };
+
+  if (!email) return { ok: false, reason: "no_email" };
+
+  // Find a pending invite for this email.
+  const invQ = await db
+    .collection("invites")
+    .where("email", "==", email)
+    .where("status", "==", "pending")
+    .limit(1)
+    .get();
+  if (invQ.empty) return { ok: false, reason: "no_invite" };
+
+  const invDoc = invQ.docs[0];
+  const inv = invDoc.data();
+  const enterpriseId = inv.enterprise_id as string;
+
+  // Seat-limit re-check (Starter 1 / Business 5 / Enterprise unlimited).
+  const entSnap = await db.doc(`enterprises/${enterpriseId}`).get();
+  if (!entSnap.exists) return { ok: false, reason: "org_missing" };
+  const tier = (entSnap.data()?.subscription_tier as string) ?? "business";
+  const seatLimits: Record<string, number> = { starter: 1, business: 5, enterprise: 999 };
+  const limit = seatLimits[tier] ?? 5;
+  const membersSnap = await db.collection("users").where("enterprise_id", "==", enterpriseId).get();
+  const activeMembers = membersSnap.docs.filter((d) => (d.data().status ?? "active") !== "disabled").length;
+  if (activeMembers >= limit) {
+    return { ok: false, reason: "seat_limit", limit };
+  }
+
+  // Link the user to the org with the invited role.
+  await uRef.set(
+    {
+      enterprise_id: enterpriseId,
+      role: (inv.role as string) || "employee",
+      can_approve: !!inv.can_approve,
+      status: "active",
+      joined_at: FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+  await invDoc.ref.update({
+    status: "accepted",
+    accepted_uid: uid,
+    accepted_at: FieldValue.serverTimestamp(),
+  });
+
+  return { ok: true, enterpriseId, role: (inv.role as string) || "employee" };
+});
+
+// ---- Team member management (owner/admin, role-checked in ./members) ----
+
+export const inviteMember = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const { inviteMember } = await import("./members");
+  return inviteMember(request.auth.uid, request.data ?? {});
+});
+
+export const updateMemberRole = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const { updateMemberRole } = await import("./members");
+  return updateMemberRole(request.auth.uid, request.data ?? {});
+});
+
+export const setMemberCanApprove = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const { setCanApprove } = await import("./members");
+  return setCanApprove(request.auth.uid, request.data ?? {});
+});
+
+export const removeMember = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const { removeMember } = await import("./members");
+  return removeMember(request.auth.uid, request.data ?? {});
+});
+
+export const revokeInvite = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const { revokeInvite } = await import("./members");
+  return revokeInvite(request.auth.uid, request.data ?? {});
+});
+
+// ---- Shared-integration access (request / approve; role-checked in ./access) ----
+
+export const requestSharedAccess = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const { requestSharedAccess } = await import("./access");
+  return requestSharedAccess(request.auth.uid, request.data ?? {});
+});
+
+export const respondAccessRequest = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const { respondAccessRequest } = await import("./access");
+  return respondAccessRequest(request.auth.uid, request.data ?? {});
+});
+
+export const revokeSharedAccess = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const { revokeSharedAccess } = await import("./access");
+  return revokeSharedAccess(request.auth.uid, request.data ?? {});
+});
+
 /** Disconnect an integration and purge all data it produced (analytics, messages, sites). */
 export const disconnectIntegration = onCall(async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");

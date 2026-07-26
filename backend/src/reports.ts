@@ -589,6 +589,16 @@ export async function generateDueReports(now = new Date()): Promise<{ enterprise
           logger.error("generateReport failed", { enterprise: doc.id, agent: meta.agent, period, error: (e as Error).message });
         }
       }
+      // Daily owner-only team activity digest.
+      if (period === "daily") {
+        try {
+          const { generateOrgUsersReport } = await import("./orgUsers");
+          const r = await generateOrgUsersReport(doc.id, w, orgName);
+          if (r.created) reports++;
+        } catch (e) {
+          logger.error("org-users report failed", { enterprise: doc.id, error: (e as Error).message });
+        }
+      }
     }
   }
   return { enterprises, reports };
@@ -617,6 +627,16 @@ export async function generateReportsNow(
   for (const meta of agents) {
     const r = await generateReport(enterpriseId, meta, period, w, orgName);
     out.push(`${meta.label}:${r.created ? "created" : "exists"}`);
+  }
+  // Owner-only team activity digest (daily only).
+  if (period === "daily") {
+    try {
+      const { generateOrgUsersReport } = await import("./orgUsers");
+      const r = await generateOrgUsersReport(enterpriseId, w, orgName);
+      out.push(`Team:${r.created ? "created" : "exists"}`);
+    } catch (e) {
+      out.push(`Team:error(${(e as Error).message})`);
+    }
   }
   return { reports: out };
 }

@@ -100,14 +100,20 @@ Every one re-checks the caller's role server-side (like `saveQuotationBranding` 
 
 ---
 
-## Build order (tonight)
+## Build order / progress
 
-1. `acceptInvite` callable + landing wiring (invited users join the right org). **Highest priority — unblocks employee signup.**
-2. Member-management callables (`inviteMember`, `updateMemberRole`, `setCanApprove`, `removeMember`, `revokeInvite`) — role-checked + seat-limited.
-3. Rebuild the Users page on real data with gated actions.
-4. Connection ownership model (shared vs personal + grants) + per-user tool gating in `askAgent`.
-5. Daily `orgUsersReport` scheduled function → owner digest.
-6. Frontend permission gating on settings/integrations for non-admins.
+1. ✅ `acceptInvite` callable + landing wiring (invited users join the right org via login/signup/Google). **Done + deployed.**
+2. ✅ Member-management callables (`inviteMember`, `updateMemberRole`, `setMemberCanApprove`, `removeMember`, `revokeInvite`) — role-checked + seat-limited. **Done + deployed.**
+3. ✅ Users page rebuilt on real data (members + pending invites), actions gated by viewer role. **Done.**
+4. 🟡 Shared-integration access — **request/approve + per-user gating done + deployed** (`access.ts`: `requestSharedAccess`/`respondAccessRequest`/`revokeSharedAccess`; `askAgent` filters connections per user). **Deferred:** the per-user *personal-connection connect pipeline* (employee OAuth-adds their own integration tagged `scope:"personal"`, `owner_uid`). The data model already supports it; today connections are added at org level. The daily owner digest (step 5) covers logging additional integrations.
+5. ✅ Daily owner-only team digest (`orgUsers.ts` → `generateOrgUsersReport`, hooked into `scheduledReports` + `generateReportsNow`): per-member chats/messages/agents/topics (from `ivy_chats`), personal integrations, shared-access status, + org connection snapshot; Ivy writes a grounded narrative + Word/Excel. Stored `owner_only:true`; **Data page shows it to the owner only.** **Done + deployed.**
+6. ✅ Frontend permission gating — Integrations page is view-only for non-admins (connect/disconnect/update blocked, with a pointer to request access on Team); settings mode + quotation branding already owner-gated. **Done.**
+
+**Milestone complete.** (Deferred: personal per-user OAuth connect pipeline; tokened invite emails — both in the security pass.)
+
+### Confirmed rule (from the client)
+- **Shared integrations** (owner's connections): an employee may use them **only when the owner or an admin approves their request**.
+- **Additional integrations a user adds** are always allowed for that user, and are **logged and rolled into the owner's end-of-day summary**.
 
 ---
 

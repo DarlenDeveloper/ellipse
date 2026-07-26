@@ -1291,9 +1291,15 @@ export async function chatWithAgent(
   }
 
   const connSnap = await db.collection("connections").where("enterprise_id", "==", enterpriseId).get();
-  const connected = new Set(
-    connSnap.docs.map((d) => d.data()).filter((c) => c.status === "active").map((c) => c.type as string)
-  );
+  const activeConns = connSnap.docs
+    .map((d) => d.data())
+    .filter((c) => c.status === "active")
+    .map((c) => ({ type: c.type as string, scope: c.scope as string | undefined, owner_uid: c.owner_uid as string | undefined }));
+
+  // Per-user access: owner/admin (or granted employees) get all shared connections;
+  // ungranted employees only get their own personal connections.
+  const { allowedConnectionTypes } = await import("./access");
+  const connected = await allowedConnectionTypes(enterpriseId, callerUid, activeConns);
 
   const kb = await loadKnowledgeBase(enterpriseId);
 

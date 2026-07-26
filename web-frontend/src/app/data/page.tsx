@@ -11,10 +11,11 @@ import {
   CloseCircle,
   DocumentDownload,
 } from "iconsax-react";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { collection, query, where, onSnapshot, doc, getDoc } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { db, functions } from "@/lib/firebase";
 import { useEnterpriseId } from "@/lib/use-enterprise";
+import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
 
 type Period = "daily" | "weekly" | "monthly" | "quarterly" | "annual";
@@ -40,6 +41,7 @@ type Report = {
   summary: string;
   metrics?: Record<string, number>;
   files?: ReportFile[];
+  owner_only?: boolean;
   period_start?: { toDate: () => Date };
   created_at?: { toDate: () => Date };
 };
@@ -66,6 +68,8 @@ function fmtSize(bytes: number) {
 
 export default function DataPage() {
   const { enterpriseId } = useEnterpriseId();
+  const { user } = useAuth();
+  const [isOwner, setIsOwner] = useState(false);
   const [reports, setReports] = useState<Report[]>([]);
   const [documents, setDocuments] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
@@ -76,12 +80,19 @@ export default function DataPage() {
   const [generating, setGenerating] = useState(false);
 
   useEffect(() => {
+    if (!user) return;
+    getDoc(doc(db, "users", user.uid)).then((snap) => setIsOwner((snap.data()?.role as string) === "owner"));
+  }, [user]);
+
+  useEffect(() => {
     if (!enterpriseId) return;
     const unsubReports = onSnapshot(
       query(collection(db, "reports"), where("enterprise_id", "==", enterpriseId)),
       (snap) => {
         const rows = snap.docs
           .map((d) => ({ id: d.id, ...(d.data() as Omit<Report, "id">) }))
+          // Owner-only digests (e.g. the daily team activity report) hidden from non-owners.
+          .filter((r) => !r.owner_only || isOwner)
           .sort(
             (a, b) =>
               (b.period_start?.toDate?.().getTime() ?? 0) - (a.period_start?.toDate?.().getTime() ?? 0)
@@ -121,7 +132,7 @@ export default function DataPage() {
       unsubReports();
       unsubDocs();
     };
-  }, [enterpriseId]);
+  }, [enterpriseId, isOwner]);
 
   const allItems = useMemo(
     () =>

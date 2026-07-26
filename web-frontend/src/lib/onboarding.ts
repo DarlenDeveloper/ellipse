@@ -10,7 +10,8 @@ import {
   where,
   serverTimestamp,
 } from "firebase/firestore";
-import { db } from "./firebase";
+import { httpsCallable } from "firebase/functions";
+import { db, functions } from "./firebase";
 
 export type Tier = "starter" | "business" | "enterprise";
 export type Role = "admin" | "employee";
@@ -39,7 +40,19 @@ export type OnboardingState = {
 // No enterprise or incomplete onboarding → /onboarding, else → /dashboard
 export async function getLandingRoute(uid: string): Promise<string> {
   const userSnap = await getDoc(doc(db, "users", uid));
-  const enterpriseId = userSnap.data()?.enterprise_id as string | undefined;
+  let enterpriseId = userSnap.data()?.enterprise_id as string | undefined;
+
+  // Not linked to an org yet? They may have been invited — try to join.
+  if (!enterpriseId) {
+    try {
+      const res = await httpsCallable(functions, "acceptInvite")({});
+      const data = res.data as { ok?: boolean; enterpriseId?: string };
+      if (data?.ok && data.enterpriseId) enterpriseId = data.enterpriseId;
+    } catch {
+      /* no invite / non-fatal — fall through to onboarding */
+    }
+  }
+
   if (!enterpriseId) return "/onboarding";
 
   const entSnap = await getDoc(doc(db, "enterprises", enterpriseId));

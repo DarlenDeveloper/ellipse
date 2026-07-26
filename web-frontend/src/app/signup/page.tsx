@@ -32,8 +32,9 @@ export default function SignupPage() {
     setLoading(true);
     try {
       const name = `${form.firstName} ${form.lastName}`.trim();
-      await signUpWithEmail(name, form.email, form.password);
-      router.push("/onboarding");
+      const cred = await signUpWithEmail(name, form.email, form.password);
+      // Invited employees get auto-linked to their org; everyone else onboards.
+      router.push(await getLandingRoute(cred.user.uid));
     } catch (err: unknown) {
       setError(mapError((err as { code?: string })?.code ?? ""));
     } finally {
