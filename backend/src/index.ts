@@ -777,6 +777,35 @@ export const pingStorage = onRequest(async (_req, res) => {
   }
 });
 
+/** ONE-TIME — move secret fields out of connections docs into connection_secrets, then strip them. Remove after running. */
+export const migrateConnectionSecrets = onRequest(async (_req, res) => {
+  try {
+    const { db, FieldValue } = await import("./admin");
+    const { SECRET_FIELDS, saveConnectionSecret } = await import("./connectionSecrets");
+    const snap = await db.collection("connections").get();
+    let moved = 0;
+    for (const d of snap.docs) {
+      const data = d.data();
+      const secret: Record<string, unknown> = {};
+      const strip: Record<string, unknown> = {};
+      for (const f of SECRET_FIELDS) {
+        if (data[f] !== undefined) {
+          secret[f] = data[f];
+          strip[f] = FieldValue.delete();
+        }
+      }
+      if (Object.keys(secret).length) {
+        await saveConnectionSecret(data.enterprise_id, data.type, secret);
+        await d.ref.update(strip);
+        moved++;
+      }
+    }
+    res.json({ ok: true, connections: snap.size, migrated: moved });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: (e as Error).message });
+  }
+});
+
 /** TEMPORARY — inspect what the Mercury Store API returns. ?enterpriseId=&resource=products&limit=200. Remove before ship. */
 export const mercuryDebug = onRequest(async (req, res) => {
   const enterpriseId = req.query.enterpriseId as string | undefined;

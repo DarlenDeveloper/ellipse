@@ -40,8 +40,10 @@ export async function handleCallback(code: string, enterpriseId: string): Promis
   const me = await oauth2.userinfo.get();
   const email = me.data.email ?? "unknown";
 
-  // NOTE (tech debt / security): refresh token stored in Firestore for speed.
-  // TODO: move to Secret Manager, keyed by enterprise+connection, per architecture doc.
+  // Secret (refresh token) goes to the locked connection_secrets collection;
+  // the public connections doc holds only non-secret metadata.
+  const { saveConnectionSecret } = await import("../connectionSecrets");
+  await saveConnectionSecret(enterpriseId, "google-workspace", { refresh_token: tokens.refresh_token ?? null });
   await db.doc(`connections/${enterpriseId}_google-workspace`).set(
     {
       enterprise_id: enterpriseId,
@@ -49,7 +51,6 @@ export async function handleCallback(code: string, enterpriseId: string): Promis
       auth_type: "oauth2",
       status: "active",
       account_email: email,
-      refresh_token: tokens.refresh_token ?? null,
       scopes: SCOPES,
       connected_at: FieldValue.serverTimestamp(),
     },
@@ -172,7 +173,9 @@ export async function sendGmailEmail(
 /** Return an authed OAuth client for a connected enterprise (for API calls). */
 export async function authedClientFor(enterpriseId: string) {
   const snap = await db.doc(`connections/${enterpriseId}_google-workspace`).get();
-  const refresh = snap.data()?.refresh_token as string | undefined;
+  const { getConnectionSecret } = await import("../connectionSecrets");
+  const secret = await getConnectionSecret(enterpriseId, "google-workspace", snap.data());
+  const refresh = secret.refresh_token as string | undefined;
   const accountEmail = snap.data()?.account_email as string | undefined;
   if (!refresh) throw new Error("google-workspace not connected");
   const client = oauthClient();

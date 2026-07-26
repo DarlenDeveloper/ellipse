@@ -29,6 +29,9 @@ function connDoc(enterpriseId: string) {
 
 /** Persist the connection config after a successful connection test. */
 export async function saveSmtpConnection(enterpriseId: string, cfg: SmtpConfig): Promise<void> {
+  const { password, ...nonSecret } = cfg;
+  const { saveConnectionSecret } = await import("../connectionSecrets");
+  await saveConnectionSecret(enterpriseId, "smtp", { password });
   await connDoc(enterpriseId).set(
     {
       enterprise_id: enterpriseId,
@@ -36,7 +39,7 @@ export async function saveSmtpConnection(enterpriseId: string, cfg: SmtpConfig):
       auth_type: "password",
       status: "active",
       account_email: cfg.from_email || cfg.username,
-      ...cfg,
+      ...nonSecret,
       connected_at: FieldValue.serverTimestamp(),
     },
     { merge: true }
@@ -47,7 +50,9 @@ async function loadConfig(enterpriseId: string): Promise<SmtpConfig> {
   const snap = await connDoc(enterpriseId).get();
   const d = snap.data() as SmtpConfig | undefined;
   if (!d?.imap_host) throw new Error("smtp not connected");
-  return d;
+  const { getConnectionSecret } = await import("../connectionSecrets");
+  const secret = await getConnectionSecret(enterpriseId, "smtp", d as Record<string, unknown>);
+  return { ...d, password: secret.password };
 }
 
 /** Verify IMAP + SMTP credentials work. Throws on failure. */

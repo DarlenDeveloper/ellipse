@@ -25,8 +25,10 @@ type MercuryConfig = { api_key: string; base_url: string };
 async function loadConfig(enterpriseId: string): Promise<MercuryConfig> {
   const snap = await connDoc(enterpriseId).get();
   const d = snap.data() as { api_key?: string; base_url?: string; status?: string } | undefined;
-  if (!d?.api_key) throw new Error("Mercury Store not connected");
-  return { api_key: d.api_key, base_url: d.base_url || DEFAULT_BASE_URL };
+  const { getConnectionSecret } = await import("../connectionSecrets");
+  const secret = await getConnectionSecret(enterpriseId, "mercury", d as Record<string, unknown>);
+  if (!secret.api_key) throw new Error("Mercury Store not connected");
+  return { api_key: secret.api_key, base_url: d?.base_url || DEFAULT_BASE_URL };
 }
 
 /** Low-level request to the Mercury Store API. */
@@ -72,13 +74,14 @@ export async function saveMercuryConnection(
   const cfg: MercuryConfig = { api_key: apiKey, base_url: baseUrl || DEFAULT_BASE_URL };
   // Probe a lightweight read to validate the key/scope.
   await mercuryRequest(cfg, "GET", "/v1/products?limit=1");
+  const { saveConnectionSecret } = await import("../connectionSecrets");
+  await saveConnectionSecret(enterpriseId, "mercury", { api_key: apiKey });
   await connDoc(enterpriseId).set(
     {
       enterprise_id: enterpriseId,
       type: "mercury",
       auth_type: "api_key",
       status: "active",
-      api_key: apiKey,
       base_url: cfg.base_url,
       connected_at: FieldValue.serverTimestamp(),
     },

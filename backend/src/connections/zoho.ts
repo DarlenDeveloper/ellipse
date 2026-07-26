@@ -82,6 +82,12 @@ export async function handleCallback(
   const apiDomain = tokens.api_domain ?? "https://www.zohoapis.com";
   const expiresAt = Date.now() + (tokens.expires_in ?? 3600) * 1000;
 
+  const { saveConnectionSecret } = await import("../connectionSecrets");
+  await saveConnectionSecret(enterpriseId, "zoho", {
+    refresh_token: tokens.refresh_token ?? null,
+    access_token: tokens.access_token,
+    access_token_expires_at: expiresAt,
+  });
   await connDoc(enterpriseId).set(
     {
       enterprise_id: enterpriseId,
@@ -90,9 +96,6 @@ export async function handleCallback(
       status: "active",
       api_domain: apiDomain,
       accounts_domain: accounts,
-      refresh_token: tokens.refresh_token ?? null,
-      access_token: tokens.access_token,
-      access_token_expires_at: expiresAt,
       scopes: SCOPES,
       connected_at: FieldValue.serverTimestamp(),
     },
@@ -117,7 +120,14 @@ export async function authedClientFor(
   enterpriseId: string
 ): Promise<{ accessToken: string; apiDomain: string }> {
   const snap = await connDoc(enterpriseId).get();
-  const data = snap.data() as
+  const { getConnectionSecret, saveConnectionSecret } = await import("../connectionSecrets");
+  const secret = await getConnectionSecret(enterpriseId, "zoho", snap.data());
+  const data = {
+    ...(snap.data() as Record<string, unknown>),
+    refresh_token: secret.refresh_token,
+    access_token: secret.access_token,
+    access_token_expires_at: secret.access_token_expires_at,
+  } as
     | {
         refresh_token?: string;
         access_token?: string;
@@ -154,10 +164,9 @@ export async function authedClientFor(
   }
 
   const expiresAt = Date.now() + (tokens.expires_in ?? 3600) * 1000;
-  await connDoc(enterpriseId).update({
+  await saveConnectionSecret(enterpriseId, "zoho", {
     access_token: tokens.access_token,
     access_token_expires_at: expiresAt,
-    updated_at: FieldValue.serverTimestamp(),
   });
 
   return { accessToken: tokens.access_token, apiDomain };

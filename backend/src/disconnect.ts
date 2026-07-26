@@ -32,8 +32,9 @@ export async function disconnectIntegration(
 ): Promise<{ ok: true; deleted: Record<string, number> }> {
   const deleted: Record<string, number> = {};
 
-  // 1) The connection document itself.
+  // 1) The connection document + its secrets.
   await db.doc(`connections/${enterpriseId}_${type}`).delete().catch(() => {});
+  await db.doc(`connection_secrets/${enterpriseId}_${type}`).delete().catch(() => {});
 
   // 2) Type-specific data.
   if (type === "website") {

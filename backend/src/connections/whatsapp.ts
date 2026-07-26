@@ -49,12 +49,13 @@ export async function saveWhatsappConnection(
     status: "active",
     account_email: cfg.display_phone_number || cfg.phone_number_id,
     phone_number_id: cfg.phone_number_id,
-    access_token: cfg.access_token,
     connected_at: FieldValue.serverTimestamp(),
   };
   if (cfg.waba_id) doc.waba_id = cfg.waba_id;
   if (cfg.display_phone_number) doc.display_phone_number = cfg.display_phone_number;
 
+  const { saveConnectionSecret } = await import("../connectionSecrets");
+  await saveConnectionSecret(enterpriseId, "whatsapp", { access_token: cfg.access_token });
   await connDoc(enterpriseId).set(doc, { merge: true });
 }
 
@@ -68,14 +69,18 @@ async function enterpriseForPhoneNumber(phoneNumberId: string): Promise<{ enterp
   const doc = snap.docs[0];
   if (!doc) return null;
   const d = doc.data();
-  return { enterpriseId: d.enterprise_id, access_token: d.access_token };
+  const { getConnectionSecret } = await import("../connectionSecrets");
+  const secret = await getConnectionSecret(d.enterprise_id, "whatsapp", d);
+  return { enterpriseId: d.enterprise_id, access_token: secret.access_token };
 }
 
 async function loadConfig(enterpriseId: string): Promise<WhatsAppConfig> {
   const snap = await connDoc(enterpriseId).get();
   const d = snap.data() as WhatsAppConfig | undefined;
   if (!d?.phone_number_id) throw new Error("whatsapp not connected");
-  return d;
+  const { getConnectionSecret } = await import("../connectionSecrets");
+  const secret = await getConnectionSecret(enterpriseId, "whatsapp", d as Record<string, unknown>);
+  return { ...d, access_token: secret.access_token };
 }
 
 /**
