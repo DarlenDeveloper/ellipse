@@ -679,6 +679,40 @@ export const askAgent = onCall(
   }
 );
 
+/** Extract structured task proposals from an inbox conversation. */
+export const extractConversationTasks = onCall({ secrets: [geminiKey] }, async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const { extractConversationTasks } = await import("./tasks");
+  return extractConversationTasks(request.auth.uid, request.data ?? {});
+});
+
+/** Human-confirmed task creation. */
+export const createTask = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const { createTask } = await import("./tasks");
+  return createTask(request.auth.uid, request.data ?? {});
+});
+
+/** Update status, priority, ownership, due date, or task content. */
+export const updateTask = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const { updateTask } = await import("./tasks");
+  return updateTask(request.auth.uid, request.data ?? {});
+});
+
+/** Create a private Ellipse calendar event for the signed-in employee. */
+export const createCalendarEvent = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const { createCalendarEvent } = await import("./calendar");
+  return createCalendarEvent(request.auth.uid, request.data ?? {});
+});
+
+export const updateCalendarEvent = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const { updateCalendarEvent } = await import("./calendar");
+  return updateCalendarEvent(request.auth.uid, request.data ?? {});
+});
+
 /**
  * Human-sent reply from the inbox reading pane. Sends immediately via the
  * conversation's channel (this is a person clicking send, not an agent, so it

@@ -159,6 +159,23 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ---- Tasks (writes go through authenticated callables) ----
+    match /tasks/{id} {
+      allow read: if isMember(resource.data.enterprise_id)
+        && (myRole() == 'owner' || myRole() == 'admin'
+          || resource.data.assignee_uid == request.auth.uid
+          || resource.data.created_by_uid == request.auth.uid);
+      allow write: if false;
+    }
+
+    // Personal calendar: managers do not automatically receive or read every
+    // employee event. Team oversight belongs in Tasks, not private calendars.
+    match /calendar_events/{id} {
+      allow read: if signedIn() && resource.data.owner_uid == request.auth.uid
+        && resource.data.enterprise_id == myEid();
+      allow write: if false;
+    }
+
     // ---- Quotation branding ----
     match /quotation_settings/{eid} {
       allow read: if isMember(eid);

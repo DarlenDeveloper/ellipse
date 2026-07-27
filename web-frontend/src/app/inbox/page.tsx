@@ -64,6 +64,11 @@ export default function InboxPage() {
   const [messagesError, setMessagesError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [search, setSearch] = useState("");
+  const [requestedConversation, setRequestedConversation] = useState<string | null>(null);
+
+  useEffect(() => {
+    setRequestedConversation(new URLSearchParams(window.location.search).get("conversation"));
+  }, []);
 
   // Resolve enterprise
   useEffect(() => {
@@ -85,9 +90,12 @@ export default function InboxPage() {
         .filter((c) => allowsChannel(c.channel));
       convs.sort((a, b) => (b.last_message_at?.toDate().getTime() ?? 0) - (a.last_message_at?.toDate().getTime() ?? 0));
       setConversations(convs);
-      setSelectedId((cur) => (cur && convs.some((c) => c.id === cur) ? cur : convs[0]?.id ?? null));
+      setSelectedId((cur) => {
+        if (requestedConversation && convs.some((c) => c.id === requestedConversation)) return requestedConversation;
+        return cur && convs.some((c) => c.id === cur) ? cur : convs[0]?.id ?? null;
+      });
     });
-  }, [enterpriseId, allowsChannel]);
+  }, [enterpriseId, allowsChannel, requestedConversation]);
 
   // Live messages for selected conversation
   useEffect(() => {

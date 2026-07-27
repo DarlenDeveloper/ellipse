@@ -6,6 +6,7 @@ import { httpsCallable } from "firebase/functions";
 import { functions } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
 import { MarkdownText } from "@/components/MarkdownText";
+import { useAuth } from "@/lib/auth-context";
 
 type Conversation = {
   id: string;
@@ -23,6 +24,18 @@ type Message = {
   snippet: string;
   sender_type: "us" | "customer";
   timestamp?: { toDate: () => Date };
+};
+
+type ProposedTask = {
+  title: string;
+  description: string;
+  priority: "low" | "medium" | "high" | "urgent";
+  due_at: string | null;
+  due_text: string;
+  confidence: number;
+  calendar_recommended: boolean;
+  add_to_calendar?: boolean;
+  saved?: boolean;
 };
 
 function fmtFull(ts?: { toDate: () => Date }): string {
@@ -118,6 +131,7 @@ export function ReadingPane({
   messagesLoading?: boolean;
   messagesError?: string | null;
 }) {
+  const { user } = useAuth();
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -126,6 +140,8 @@ export function ReadingPane({
   const [aiQuestion, setAiQuestion] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [proposedTasks, setProposedTasks] = useState<ProposedTask[]>([]);
+  const [savingTasks, setSavingTasks] = useState(false);
   const replyRef = useRef<HTMLTextAreaElement>(null);
   const canReply = ["google-workspace", "smtp", "microsoft365", "whatsapp"].includes(conversation?.channel ?? "");
 
@@ -134,6 +150,7 @@ export function ReadingPane({
     setAiResult("");
     setAiQuestion("");
     setAiError(null);
+    setProposedTasks([]);
   }, [conversation?.id]);
 
   const conversationContext = () => {
@@ -157,13 +174,25 @@ export function ReadingPane({
     setAiResult("");
     setAiError(null);
     setAiLoading(true);
+    setProposedTasks([]);
+    if (mode === "tasks") {
+      try {
+        const result = await httpsCallable(functions, "extractConversationTasks")({ conversationId: conversation.id });
+        const data = result.data as { tasks?: ProposedTask[] };
+        setProposedTasks((data.tasks ?? []).map((task) => ({ ...task, add_to_calendar: task.calendar_recommended && !!task.due_at })));
+        if (!data.tasks?.length) setAiResult("No concrete tasks were found in this conversation.");
+      } catch (e) {
+        setAiError((e as Error).message || "Ivy could not extract tasks from this conversation.");
+      } finally {
+        setAiLoading(false);
+      }
+      return;
+    }
     const instruction =
       mode === "brief"
         ? "Create a concise personalized AI brief for me. Use headings: Why this matters to me, What changed, My actions, Risks or deadlines, Suggested next step. Do not invent facts."
         : mode === "draft"
         ? "Draft a ready-to-send reply in the appropriate tone for this channel. Return only the reply text, with no commentary or markdown heading."
-        : mode === "tasks"
-        ? "Extract concrete action items. For each, state the task, suggested owner, due date if explicitly known, and priority. Clearly label missing dates instead of inventing them."
         : `Answer my question about this conversation using only grounded workspace and transcript context. Question: ${question ?? ""}`;
     try {
       const result = await httpsCallable(functions, "askAgent")({
@@ -178,6 +207,51 @@ export function ReadingPane({
       setAiError((e as Error).message || "Ivy could not analyze this conversation.");
     } finally {
       setAiLoading(false);
+    }
+  };
+
+  const updateProposedTask = (index: number, patch: Partial<ProposedTask>) => {
+    setProposedTasks((current) => current.map((task, taskIndex) => taskIndex === index ? { ...task, ...patch } : task));
+  };
+
+  const saveProposedTasks = async () => {
+    if (!conversation || !user || savingTasks) return;
+    const unsaved = proposedTasks.map((task, index) => ({ task, index })).filter(({ task }) => !task.saved && task.title.trim());
+    if (!unsaved.length) return;
+    setSavingTasks(true); setAiError(null);
+    try {
+      for (const { task, index } of unsaved) {
+        const created = await httpsCallable(functions, "createTask")({
+          title: task.title,
+          description: task.description,
+          priority: task.priority,
+          dueAt: task.due_at,
+          assigneeUid: user.uid,
+          conversationId: conversation.id,
+          sourceChannel: conversation.channel,
+          aiGenerated: true,
+          aiReasoning: `Extracted from conversation with ${Math.round(task.confidence * 100)}% confidence`,
+        });
+        const taskId = (created.data as { id?: string }).id;
+        if (task.add_to_calendar && task.due_at && taskId) {
+          const start = new Date(task.due_at);
+          await httpsCallable(functions, "createCalendarEvent")({
+            title: task.title,
+            description: task.description,
+            startAt: start.toISOString(),
+            endAt: new Date(start.getTime() + 30 * 60_000).toISOString(),
+            taskId,
+            conversationId: conversation.id,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          });
+        }
+        updateProposedTask(index, { saved: true });
+      }
+      setAiResult(`${unsaved.length} task${unsaved.length === 1 ? "" : "s"} added to Tasks.`);
+    } catch (e) {
+      setAiError((e as Error).message || "The tasks could not be saved.");
+    } finally {
+      setSavingTasks(false);
     }
   };
 
@@ -252,6 +326,31 @@ export function ReadingPane({
               )}
               {aiLoading && <p className="text-sm text-gray-500 mt-2 animate-pulse">Ivy is analyzing this conversation…</p>}
               {aiError && <p className="text-sm text-red-600 mt-2">{aiError}</p>}
+              {aiMode === "tasks" && proposedTasks.length > 0 && (
+                <div className="space-y-3 mt-3 max-h-80 overflow-y-auto pr-2">
+                  {proposedTasks.map((task, index) => (
+                    <div key={index} className={cn("bg-white border rounded-2xl p-3", task.saved ? "border-green-200 opacity-70" : "border-purple-100")}>
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <span className="text-[10px] font-semibold uppercase text-purple-600">{task.saved ? "Saved" : `${Math.round(task.confidence * 100)}% confidence`}</span>
+                        {task.calendar_recommended && <span className="text-[10px] bg-blue-50 text-blue-700 rounded-full px-2 py-1">Calendar suggested</span>}
+                      </div>
+                      <input disabled={task.saved} value={task.title} onChange={(event) => updateProposedTask(index, { title: event.target.value })} className="w-full text-sm font-semibold bg-transparent outline-none border-b border-gray-100 pb-2 disabled:opacity-70" />
+                      <textarea disabled={task.saved} value={task.description} onChange={(event) => updateProposedTask(index, { description: event.target.value })} rows={2} className="w-full text-xs text-gray-600 bg-transparent resize-none outline-none mt-2 disabled:opacity-70" />
+                      <div className="grid grid-cols-2 gap-2 mt-2">
+                        <select disabled={task.saved} value={task.priority} onChange={(event) => updateProposedTask(index, { priority: event.target.value as ProposedTask["priority"] })} className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select>
+                        <input disabled={task.saved} type="datetime-local" value={task.due_at ? task.due_at.slice(0, 16) : ""} onChange={(event) => updateProposedTask(index, { due_at: event.target.value || null })} className="text-xs border border-gray-200 rounded-lg px-2 py-1.5" />
+                      </div>
+                      {task.due_at && (
+                        <label className="flex items-center gap-2 mt-2 text-xs text-gray-600">
+                          <input type="checkbox" disabled={task.saved} checked={!!task.add_to_calendar} onChange={(event) => updateProposedTask(index, { add_to_calendar: event.target.checked })} />
+                          Add a 30-minute block to my calendar
+                        </label>
+                      )}
+                    </div>
+                  ))}
+                  <button disabled={savingTasks || proposedTasks.every((task) => task.saved)} onClick={saveProposedTasks} className="bg-black text-white text-xs font-semibold rounded-full px-4 py-2 disabled:opacity-40">{savingTasks ? "Adding tasks…" : "Add to Tasks"}</button>
+                </div>
+              )}
               {aiResult && <MarkdownText text={aiResult} className="text-sm text-gray-700 mt-2 max-h-64 overflow-y-auto pr-2" />}
               {aiMode === "draft" && aiResult && canReply && (
                 <button
