@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DocumentText, Send2, Messages2, Clock, CloseCircle } from "iconsax-react";
 import { httpsCallable } from "firebase/functions";
 import { functions } from "@/lib/firebase";
@@ -126,6 +126,8 @@ export function ReadingPane({
   const [aiQuestion, setAiQuestion] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const replyRef = useRef<HTMLTextAreaElement>(null);
+  const canReply = ["google-workspace", "smtp", "microsoft365", "whatsapp"].includes(conversation?.channel ?? "");
 
   useEffect(() => {
     setAiMode(null);
@@ -192,11 +194,9 @@ export function ReadingPane({
       setReply("");
     } catch (e) {
       const msg = (e as { message?: string })?.message || "";
-      setError(
-        /access blocked|token|expired|OAuth/i.test(msg)
-          ? "WhatsApp rejected the send — the access token has expired or is blocked. Reconnect WhatsApp with a fresh token."
-          : msg || "Couldn't send. Please try again."
-      );
+      setError(/access blocked|token|expired|OAuth/i.test(msg)
+        ? "The connected channel rejected the send. Reconnect it with fresh credentials and try again."
+        : msg || "Couldn't send. Please try again.");
       console.error(e);
     } finally {
       setSending(false);
@@ -253,8 +253,17 @@ export function ReadingPane({
               {aiLoading && <p className="text-sm text-gray-500 mt-2 animate-pulse">Ivy is analyzing this conversation…</p>}
               {aiError && <p className="text-sm text-red-600 mt-2">{aiError}</p>}
               {aiResult && <MarkdownText text={aiResult} className="text-sm text-gray-700 mt-2 max-h-64 overflow-y-auto pr-2" />}
-              {aiMode === "draft" && aiResult && conversation.channel === "whatsapp" && (
-                <button onClick={() => setReply(aiResult)} className="mt-3 text-xs font-semibold text-purple-700 hover:text-purple-900">Use this reply</button>
+              {aiMode === "draft" && aiResult && canReply && (
+                <button
+                  onClick={() => {
+                    setReply(aiResult);
+                    setAiMode(null);
+                    requestAnimationFrame(() => replyRef.current?.focus());
+                  }}
+                  className="mt-3 inline-flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold rounded-full px-4 py-2"
+                >
+                  <Send2 size={14} variant="Linear" color="#ffffff" /> Use this reply
+                </button>
               )}
             </div>
             <button onClick={() => setAiMode(null)} className="text-gray-400 hover:text-gray-700" aria-label="Close AI panel">
@@ -303,12 +312,13 @@ export function ReadingPane({
 
       </div>
 
-      {/* Reply composer — WhatsApp only */}
-      {conversation.channel === "whatsapp" && (
+      {/* Human-reviewed reply composer for every supported messaging channel. */}
+      {canReply && (
       <div className="border-t border-gray-100 px-6 py-4 bg-white">
         {error && <p className="text-xs text-red-500 mb-2">{error}</p>}
         <div className="flex items-end gap-3 bg-gray-50 rounded-2xl px-4 py-2.5">
           <textarea
+            ref={replyRef}
             value={reply}
             onChange={(e) => setReply(e.target.value)}
             onKeyDown={(e) => {
@@ -326,7 +336,7 @@ export function ReadingPane({
             disabled={!reply.trim() || sending}
             className="w-9 h-9 rounded-full bg-black text-white flex items-center justify-center hover:bg-gray-800 disabled:opacity-40 shrink-0"
           >
-            <Send2 size={16} variant="Bold" color="#ffffff" />
+            {sending ? <span className="text-[10px] px-1">Sending</span> : <Send2 size={16} variant="Bold" color="#ffffff" />}
           </button>
         </div>
       </div>
