@@ -36,7 +36,9 @@ function fmtFull(ts?: { toDate: () => Date }): string {
 
 // Strip HTML/CSS down to clean, readable text.
 function htmlToText(input: string): string {
-  let s = input;
+  // Normalize line endings first. Many HTML emails use CRLF; leaving the `\r`
+  // behind prevents repeated blank lines from collapsing correctly.
+  let s = input.replace(/\r\n?/g, "\n");
   // Drop non-content blocks entirely.
   s = s.replace(/<style[\s\S]*?<\/style>/gi, "");
   s = s.replace(/<script[\s\S]*?<\/script>/gi, "");
@@ -57,8 +59,15 @@ function htmlToText(input: string): string {
     .replace(/&quot;/gi, '"')
     .replace(/&#39;|&apos;/gi, "'")
     .replace(/&#(\d+);/g, (_m, n) => String.fromCharCode(Number(n)));
-  // Collapse whitespace.
-  s = s.replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+  // Email templates frequently use invisible characters and whitespace-only
+  // table rows as visual spacers. They have no meaning in the text view.
+  s = s
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
   return s;
 }
 
@@ -89,7 +98,7 @@ function MessageBody({ body, snippet }: { body?: string; snippet?: string }) {
   const text = htmlToText(raw);
 
   return (
-    <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap max-w-3xl break-words">
+    <div className="text-sm text-gray-700 leading-7 whitespace-pre-wrap max-w-[760px] break-words">
       {linkify(text)}
     </div>
   );
