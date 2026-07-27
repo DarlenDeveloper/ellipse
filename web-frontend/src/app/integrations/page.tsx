@@ -38,6 +38,7 @@ export default function IntegrationsPage() {
   const [connecting, setConnecting] = useState(false);
   const [connectingZoho, setConnectingZoho] = useState(false);
   const [banner, setBanner] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [employeeChoice, setEmployeeChoice] = useState<{ id: string; name: string } | null>(null);
 
   // Apply a set of active connection types to the UI state.
   const applyActive = useCallback((active: Set<string>, googleEmailValue: string | null) => {
@@ -237,6 +238,10 @@ export default function IntegrationsPage() {
     }
   };
 
+  const chooseEmployeeConnection = (id: string, name: string) => {
+    setEmployeeChoice({ id, name });
+  };
+
   // Employees only see a shared connection as connected if they've been granted it.
   const accessItems = canManage
     ? items
@@ -315,9 +320,7 @@ export default function IntegrationsPage() {
               onToggle={toggle}
               onConnectClick={
                 !canManage
-                  ? orgActive.has(integration.id) && !grantedTypes.has(integration.id)
-                    ? () => requestAccess(integration.id)
-                    : blockedManage
+                  ? () => chooseEmployeeConnection(integration.id, integration.name)
                   : isGoogle
                   ? connectGoogle
                   : isZoho
@@ -370,6 +373,56 @@ export default function IntegrationsPage() {
           );
         })}
       </div>
+
+      {employeeChoice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-lg shadow-xl">
+            <h3 className="text-xl font-bold">Connect {employeeChoice.name}</h3>
+            <p className="text-sm text-gray-500 mt-2">Choose which account you want Ellipse to use.</p>
+            <div className="grid gap-3 mt-6">
+              <button
+                type="button"
+                disabled={!orgActive.has(employeeChoice.id)}
+                onClick={async () => {
+                  await requestAccess(employeeChoice.id);
+                  setEmployeeChoice(null);
+                }}
+                className="text-left border border-gray-200 rounded-2xl p-4 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <span className="block text-sm font-semibold">Use company connection</span>
+                <span className="block text-xs text-gray-500 mt-1">
+                  {orgActive.has(employeeChoice.id)
+                    ? "Ask an owner or admin to approve access to the organization’s connection."
+                    : "The organization has not connected this integration yet."}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setBanner({
+                    type: "error",
+                    text: "Personal connections need separate credential storage and are not enabled yet.",
+                  });
+                  setEmployeeChoice(null);
+                }}
+                className="text-left border border-gray-200 rounded-2xl p-4 hover:bg-gray-50"
+              >
+                <span className="block text-sm font-semibold">Connect my own account</span>
+                <span className="block text-xs text-gray-500 mt-1">Use a personal connection that only you can access.</span>
+              </button>
+            </div>
+            <div className="flex justify-end mt-5">
+              <button
+                type="button"
+                onClick={() => setEmployeeChoice(null)}
+                className="text-sm font-medium text-gray-600 px-4 py-2"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showSmtpModal && enterpriseId && (
         <SmtpConnectModal

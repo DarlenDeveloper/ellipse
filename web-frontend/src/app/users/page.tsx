@@ -17,6 +17,7 @@ import { httpsCallable } from "firebase/functions";
 import { db, functions } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
+import { integrations } from "@/components/integrations/data";
 
 type Role = "owner" | "admin" | "employee";
 
@@ -55,6 +56,8 @@ export default function UsersPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [accessRequests, setAccessRequests] = useState<{ uid: string; name: string; email: string; types: string[] }[]>([]);
+  const [connectionGrants, setConnectionGrants] = useState<Record<string, string[]>>({});
+  const [accessMember, setAccessMember] = useState<Member | null>(null);
   const [myHasAccess, setMyHasAccess] = useState(false);
   const [myRequestStatus, setMyRequestStatus] = useState<string | null>(null);
 
@@ -121,6 +124,19 @@ export default function UsersPage() {
               )
           )
         : undefined;
+    const unsubGrants = canManage
+      ? onSnapshot(
+          query(collection(db, "connection_grants"), where("enterprise_id", "==", enterpriseId)),
+          (snap) => {
+            const next: Record<string, string[]> = {};
+            snap.docs.forEach((d) => {
+              const data = d.data();
+              if (data.uid) next[data.uid as string] = (data.types as string[] | undefined) ?? [];
+            });
+            setConnectionGrants(next);
+          }
+        )
+      : undefined;
     // My own access grant + request status (for employees).
     const unsubGrant = onSnapshot(doc(db, "connection_grants", `${enterpriseId}_${user.uid}`), (snap) =>
       setMyHasAccess(snap.exists() && ((snap.data()?.types as string[] | undefined)?.length ?? 0) > 0)
@@ -132,6 +148,7 @@ export default function UsersPage() {
       unsubMembers();
       unsubInvites?.();
       unsubReq?.();
+      unsubGrants?.();
       unsubGrant();
       unsubMyReq();
     };
@@ -160,6 +177,10 @@ export default function UsersPage() {
   };
   const revoke = (email: string) => call("revokeInvite", { email });
   const respondAccess = (uid: string, approve: boolean) => call("respondAccessRequest", { uid, approve });
+  const removeIntegrationAccess = async (m: Member, type: string) => {
+    const current = connectionGrants[m.id] ?? [];
+    await call("setConnectionGrants", { uid: m.id, types: current.filter((value) => value !== type) });
+  };
 
   const filtered = useMemo(
     () =>
@@ -341,7 +362,17 @@ export default function UsersPage() {
                         {m.role === "owner" ? "Always" : m.can_approve ? "Can approve" : "No"}
                       </button>
                     </div>
-                    <div className="flex justify-end">
+                    <div className="flex justify-end gap-2">
+                      {actionable && (connectionGrants[m.id]?.length ?? 0) > 0 && (
+                        <button
+                          onClick={() => setAccessMember(m)}
+                          disabled={busy}
+                          className="text-xs font-medium text-gray-700 border border-gray-200 hover:bg-gray-50 rounded-full px-3 py-1.5"
+                          title={`Access: ${connectionGrants[m.id].join(", ")}`}
+                        >
+                          Manage access
+                        </button>
+                      )}
                       {actionable ? (
                         <button onClick={() => remove(m)} disabled={busy} className="text-gray-300 hover:text-red-600" title="Remove member">
                           <Trash size={17} variant="Linear" />
@@ -389,6 +420,65 @@ export default function UsersPage() {
           )}
         </div>
       </div>
+
+      {accessMember && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-lg shadow-xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-xl font-bold">Integration access</h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  Company integrations available to {accessMember.name}.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAccessMember(null)}
+                className="text-gray-400 hover:text-gray-700"
+                aria-label="Close"
+              >
+                <CloseCircle size={24} variant="Linear" />
+              </button>
+            </div>
+
+            <div className="mt-5 border border-gray-100 rounded-2xl divide-y divide-gray-100 overflow-hidden">
+              {(connectionGrants[accessMember.id] ?? []).length > 0 ? (
+                (connectionGrants[accessMember.id] ?? []).map((type) => {
+                  const integration = integrations.find((item) => item.id === type);
+                  return (
+                    <div key={type} className="flex items-center justify-between gap-4 px-4 py-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold truncate">{integration?.name ?? type}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">Granted company connection</p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => removeIntegrationAccess(accessMember, type)}
+                        className="text-xs font-medium text-red-600 border border-red-100 hover:bg-red-50 rounded-full px-3 py-1.5 disabled:opacity-50"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  );
+                })
+              ) : (
+                <p className="text-sm text-gray-400 px-4 py-6 text-center">No company integration access.</p>
+              )}
+            </div>
+
+            <div className="flex justify-end mt-5">
+              <button
+                type="button"
+                onClick={() => setAccessMember(null)}
+                className="bg-black text-white text-sm font-medium rounded-full px-5 py-2.5 hover:bg-gray-800"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Role legend */}
       <div className="mt-8 bg-white rounded-2xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">
