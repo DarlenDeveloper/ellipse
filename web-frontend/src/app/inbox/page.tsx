@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import Image from "next/image";
 import { collection, query, where, onSnapshot, doc, getDoc } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
@@ -61,6 +61,7 @@ export default function InboxPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [syncing, setSyncing] = useState(false);
+  const [search, setSearch] = useState("");
 
   // Resolve enterprise
   useEffect(() => {
@@ -109,11 +110,33 @@ export default function InboxPage() {
     setSyncing(false);
   }, [enterpriseId, syncing]);
 
+  const filteredConversations = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return conversations;
+    return conversations.filter((conversation) => {
+      const channel = channelInfo(conversation.channel);
+      return [
+        conversation.subject,
+        conversation.customer_ref,
+        conversation.channel,
+        channel.name,
+      ].some((value) => value?.toLowerCase().includes(term));
+    });
+  }, [conversations, search]);
+
+  useEffect(() => {
+    setSelectedId((current) =>
+      current && filteredConversations.some((conversation) => conversation.id === current)
+        ? current
+        : filteredConversations[0]?.id ?? null
+    );
+  }, [filteredConversations]);
+
   const selectedConv = conversations.find((c) => c.id === selectedId) ?? null;
 
   return (
     <div className="flex flex-col h-screen">
-      <InboxTopBar />
+      <InboxTopBar value={search} onChange={setSearch} />
       <div className="flex flex-1 min-h-0">
         {/* Conversation list */}
         <div className="w-[380px] shrink-0 border-r border-gray-100 flex flex-col bg-white">
@@ -130,12 +153,16 @@ export default function InboxPage() {
           </div>
 
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {conversations.length === 0 && (
+            {filteredConversations.length === 0 && (
               <div className="text-center text-sm text-gray-400 mt-10 px-6">
-                {syncing ? "Syncing your mail…" : "No messages yet. Hit sync to pull your channels."}
+                {syncing
+                  ? "Syncing your mail…"
+                  : search.trim()
+                  ? `No conversations match “${search.trim()}”.`
+                  : "No messages yet. Hit sync to pull your channels."}
               </div>
             )}
-            {conversations.map((conv) => {
+            {filteredConversations.map((conv) => {
               const active = conv.id === selectedId;
               const ch = channelInfo(conv.channel);
               return (
