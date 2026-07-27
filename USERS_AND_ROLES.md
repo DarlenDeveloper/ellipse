@@ -105,7 +105,7 @@ Every one re-checks the caller's role server-side (like `saveQuotationBranding` 
 1. ✅ `acceptInvite` callable + landing wiring (invited users join the right org via login/signup/Google). **Done + deployed.**
 2. ✅ Member-management callables (`inviteMember`, `updateMemberRole`, `setMemberCanApprove`, `removeMember`, `revokeInvite`) — role-checked + seat-limited. **Done + deployed.**
 3. ✅ Users page rebuilt on real data (members + pending invites), actions gated by viewer role. **Done.**
-4. 🟡 Shared-integration access — **request/approve + per-user gating done + deployed** (`access.ts`: `requestSharedAccess`/`respondAccessRequest`/`revokeSharedAccess`; `askAgent` filters connections per user). **Deferred:** the per-user *personal-connection connect pipeline* (employee OAuth-adds their own integration tagged `scope:"personal"`, `owner_uid`). The data model already supports it; today connections are added at org level. The daily owner digest (step 5) covers logging additional integrations.
+4. 🟡 Shared-integration access — **request/approve + per-user gating done + deployed** (`access.ts`: `requestSharedAccess`/`respondAccessRequest`/`revokeSharedAccess`; `askAgent` filters connections per user). Employee Connect now opens a company-vs-personal choice; company requests are live. Owners/admins have a member-specific Manage access popup and can remove individual grants after approval. **Deferred:** the per-user *personal-connection connect pipeline* (employee OAuth-adds their own integration tagged `scope:"personal"`, `owner_uid`); the personal choice is shown but safely blocked rather than overwriting org credentials.
 5. ✅ Daily owner-only team digest (`orgUsers.ts` → `generateOrgUsersReport`, hooked into `scheduledReports` + `generateReportsNow`): per-member chats/messages/agents/topics (from `ivy_chats`), personal integrations, shared-access status, + org connection snapshot; Ivy writes a grounded narrative + Word/Excel. Stored `owner_only:true`; **Data page shows it to the owner only.** **Done + deployed.**
 6. ✅ Frontend permission gating — Integrations page is view-only for non-admins (connect/disconnect/update blocked, with a pointer to request access on Team); settings mode + quotation branding already owner-gated. **Done.**
 
@@ -121,8 +121,8 @@ Every one re-checks the caller's role server-side (like `saveQuotationBranding` 
 - Backend gating: `allowedConnectionTypes` (in `access.ts`) → agent tools per user = granted shared types + own personal connections.
 - **Frontend data scoping** via `useAccess()` hook: Inbox, Dashboard (QuickStats/Statistics/RecentThreads/PendingApprovals), Approvals, Website, Data, Analytics all filter to the member's granted connections; Integrations shows per-connection "Connected" vs "No access — request it".
 
-### ⚠️ Critical: this is UI scoping only
-Firestore is still in **test mode**, so an employee could bypass the UI and read org data directly via the SDK. **Real enforcement requires Firestore security rules** — must be done in the security pass before production (rules need to scope reads by enterprise AND, ideally, by the member's granted connection types / role).
+### ⚠️ Remaining access hardening
+Firestore tenant rules are deployed and deny unknown collections by default. Task reads are assignee/creator-or-manager; personal calendar reads are owner-only. Per-connection filtering for Inbox/analytics within the same organization is still app-layer (`useAccess`), because the current document/query shape does not let rules authorize grant arrays cleanly. That boundary still needs query/data-model hardening before production.
 
 ---
 

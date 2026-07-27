@@ -6,7 +6,7 @@ Core principle: **one agent per connection**, plus **Ivy** (boss agent) built LA
 
 ## 🎯 Next major milestones (in order)
 
-All connections live (incl. Mercury Store custom API). Triage, reports (multi-source + detailed + owner analysis), documents, Data page, Ivy + direct agent chat, custom agents, quotation PDFs, send-email, and KB file upload are done. Remaining big rocks:
+All connections live (incl. Mercury Store custom API). Triage, reports, documents, Data, Ivy/direct agent chat, custom agents, quotations, send-email, KB upload, Inbox AI actions, and the Tasks/personal Calendar foundation are done. Remaining big rocks:
 
 1. ✅ **Users & roles** — DONE. Roles `owner`/`admin`/`employee` + `can_approve`; invited users join via `acceptInvite` (not a new org); member-management callables (invite/role/approve/remove/revoke); shared-integration request→approve + per-user agent gating; daily owner-only team digest (Data page); Integrations view-only for non-admins. Deferred: personal per-user OAuth connect pipeline + tokened invite emails (→ security pass). See `USERS_AND_ROLES.md`.
 2. **Security pass (before production)** — IN PROGRESS:
@@ -16,9 +16,35 @@ All connections live (incl. Mercury Store custom API). Triage, reports (multi-so
    - [ ] Tokens → Secret Manager (currently `connection_secrets` in Firestore, function-only — a solid interim).
    - [ ] Remove all debug fns + `migrateConnectionSecrets` (one-time) before ship.
 3. **Live Excel workbook edit** (`append_row`) via Graph workbook API.
-4. **Agent memory** (WAY later) — persistent per-agent memory across chats/conversations.
+4. **External calendar sync** — push explicitly confirmed local events to Google Calendar / Microsoft Graph; never sync every task deadline or flood owner/admin calendars.
+5. **Agent memory** (WAY later) — persistent per-agent memory across chats/conversations.
 
-Supporting: real-time push (Gmail/Zoho webhooks), Search Console, website chat agent, Ivy dashboard briefing card, inbox "Summarise" button.
+Supporting: real-time push (Gmail/Zoho webhooks), Search Console, website chat agent, Ivy dashboard briefing card.
+
+## ✅ Inbox AI + rendering improvements (DONE 2026-07-27)
+- [x] Working search by subject/title, sender/customer, and integration/channel (Gmail, Outlook, WhatsApp, SMTP)
+- [x] Removed decorative top-right Inbox controls
+- [x] AI Brief, Draft reply, Create tasks, Ask Ivy toolbar
+- [x] Drafts feed the editable human-send composer for Gmail, Outlook, SMTP, and WhatsApp
+- [x] Shared safe Markdown renderer for Inbox AI, full Ivy, and floating Ivy (`**bold**`, headings, lists, links, code)
+- [x] Email body cleanup for CRLF/invisible newsletter spacers; readable width; loading/error/empty states
+- [x] Message Firestore query includes `enterprise_id` for deployed tenant rules
+
+## ✅ Tasks + personal Calendar foundation (DONE + DEPLOYED 2026-07-27)
+- [x] Real Firestore Tasks Kanban; dummy data removed
+- [x] Manual task create + live status updates; assignee, priority, due date, description
+- [x] Employee task visibility = assigned to me or created by me; manager view = organization tasks
+- [x] Structured conversation extraction (`extractConversationTasks`) with editable review before creation
+- [x] Duplicate prevention fingerprint + source conversation backlinks
+- [x] Real private Calendar page; dummy events removed
+- [x] Optional employee-controlled 30-minute calendar block from a dated extracted task
+- [x] Owner/admin calendars stay private and uncluttered; oversight lives in Tasks
+- [x] Deployed functions: `extractConversationTasks`, `createTask`, `updateTask`, `createCalendarEvent`, `updateCalendarEvent`
+- [x] Deployed Firestore task/calendar rules
+- [ ] Google Calendar provider sync
+- [ ] Microsoft Graph Calendar provider sync
+- [ ] Team task oversight dashboard (overdue, blocked, unassigned, workload, escalation)
+- [ ] Task edit/details drawer and calendar-event edit UI
 
 ## ✅ Mercury Store — custom external integration (DONE)
 - [x] `connections/mercury.ts` — key auth (`mck_live_…`), CRUD helpers, connect probe, `isMercuryConnected`
@@ -115,7 +141,8 @@ Supporting: real-time push (Gmail/Zoho webhooks), Search Console, website chat a
 - [ ] Quotation PDFs; live Excel append via Graph workbook API
 
 ## ✅ Inbox reply (DONE)
-- [x] Reply composer in the reading pane — **WhatsApp only** → `sendReply` sends immediately (human send, bypasses gate) and reflects the message instantly. Email channels reply via the agent/draft flow.
+- [x] Reply composer in the reading pane for Gmail, Outlook/MS365, SMTP/IMAP, and WhatsApp → `sendReply` sends immediately after an explicit human click and reflects the message instantly.
+- [x] AI-generated draft can be inserted into the composer for review/editing; generation alone never sends.
 
 ---
 
@@ -127,7 +154,7 @@ Supporting: real-time push (Gmail/Zoho webhooks), Search Console, website chat a
 - [ ] Send/reply UI button in reading pane
 - [ ] True real-time push (`users.watch` + Pub/Sub)
 - [ ] Refresh token → Secret Manager
-- [ ] Calendar + Contacts
+- [ ] Google Calendar + Contacts provider synchronization (local Ellipse calendar is live)
 
 ### WhatsApp — ✅ working (Meta Cloud API, production)
 - [x] Config store, webhook (verified), Graph send, connect modal, dedicated agent, live end-to-end
@@ -172,13 +199,13 @@ Supporting: real-time push (Gmail/Zoho webhooks), Search Console, website chat a
 - [x] Real transparent per-connection logos; standalone (no colored tiles); blue active states
 - [x] Dashboard/Website charts with granularity + ranges
 - [x] Settings + Knowledge Base redesign; Data page; Ivy orb/bubble
-- [ ] Wire inbox "Summarise" button
+- [x] Replace Inbox "Summarise" placeholder with working AI Brief / Draft / Tasks / Ask Ivy actions
 
 ## Deferred / flagged (security pass before production)
-- [ ] Firestore security rules (still test mode ⚠️)
+- [x] Firestore security rules deployed (tenant/role boundaries plus task assignee/creator reads and private personal calendar events)
 - [ ] All refresh tokens/creds Firestore → Secret Manager
 - [ ] Remove all debug fns (`ping*`, `*Debug` incl. `mercuryDebug`/`quotationDebug`/`zohoQuoteDebug`/`zohoLeadsDebug`, `runGmailAgentDebug`, `runZohoAgentDebug`) + helpers (`mercuryRawGet`, `debugRecentQuote`, `debugLeadsRaw`)
 - [ ] Invite emails (currently just a doc) — plus `acceptInvite` join flow (users & roles milestone)
-- [ ] Node 20 → newer runtime; bump firebase-functions
+- [ ] Node 20 → newer runtime before **2026-10-30**; bump `firebase-functions` with breaking-change review
 - [ ] Web widget (Intercom-style)
 - [ ] Consider unified API (Nango/Merge) for remaining connections

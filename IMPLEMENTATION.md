@@ -47,7 +47,7 @@ Connections first (CRM → communication → marketing much later), Ivy (persona
 - **Gmail / Google Workspace** — OAuth, ingest, 5-min auto-sync, agent, threaded reply (gated)
 - **SMTP / IMAP** — connect/test/ingest/send, auto-sync, agent
 - **Microsoft 365 (Outlook)** — OAuth, ingest, auto-sync, threaded reply, **OneDrive file upload (gated)**
-- **WhatsApp** (Meta Cloud API) — webhook, send, agent; WhatsApp-only reply composer in inbox
+- **WhatsApp** (Meta Cloud API) — webhook, send, agent; shared human-reviewed Inbox reply composer alongside Gmail, SMTP, and Outlook
 - **Zoho CRM** — OAuth (DC-aware), enrich, backfill, write executors, **rich reporting** (see ZOHO.md)
 - **Website analytics** — tracker, collector, verify-install, `/website` analytics page
 - **Mercury Store** (custom external REST API, key-auth) — products/orders/quotations/repairs read+write; server-side `q` search + cursor pagination sweep (whole catalog, not just first page); standalone Mercury agent + Ivy tools (`store_list`/`store_get`/`store_create`/`store_update`, writes gated). See `External-integration-API.md`.
@@ -57,6 +57,7 @@ Connections first (CRM → communication → marketing much later), Ivy (persona
 - **Triage gate** (`agents/triage.ts`): heuristic (skip no-reply/automated) + Gemini classifier → `{engage,is_lead}`. Personal-assistant mode: engages real human emails incl. personal; leads stay strict. WhatsApp inbound always engages.
 - **Ivy + direct agent chat** (`askAgent`): two-pass Gemini (reason → tools → grounded reply), temperature 0 on final answer, strict no-hallucination. Ivy orchestrates across all agents; each agent scoped to its own tools. Connected-integration list injected so clarifying questions only offer connected sources.
 - **Chat UI**: animated `IvyOrb`, floating `IvyBubble` (all pages), wide `/ivy` page with agent selector + history dropdown (persisted to `ivy_chats`).
+- **Safe Markdown rendering across agent surfaces**: Ivy/full agent chat, floating Ivy bubble, and Inbox AI panels render headings, bold text, lists, links, inline code, and fenced code blocks as React elements (no raw HTML injection).
 - **Custom agents**: user-defined agents (name, specialty, ability checklist) in `custom_agents`; appear in the selector; scoped tools.
 - **Document creation** (`create_document`) + **multi-source reports** (`generate_report`): deterministic Excel/Word built in code from live data (NO AI-authored figures). Saved to `documents` → Data page; mirrored to OneDrive when MS365 connected (gated).
 - **Owner-only Quote Owner analysis** (`generate_owner_analysis`): per-employee quote performance, gated to org owner (role check).
@@ -65,6 +66,26 @@ Connections first (CRM → communication → marketing much later), Ivy (persona
 - **List leads** (`list_leads`): real Zoho lead rows (name, company, owner, status, source, date), newest-first, optional period filter — fixes agents guessing lead lists from the aggregate summary.
 - **Knowledge base file upload** (`ingestKnowledgeFile`): upload PDFs/images/text (e.g. sample quotations); text extracted via Gemini multimodal (verbatim) and fed to agents as context. Settings → Knowledge Base "Upload File".
 - Approvals page, Agents page (live monitoring), Data page (folder/file repository)
+
+### Done — Inbox intelligence & usability (2026-07-27)
+- **Working global Inbox search** across conversation title, sender/customer, raw channel ID, and friendly integration names (Gmail, Outlook, WhatsApp, SMTP/IMAP); first match auto-selects and empty states are explicit.
+- Removed the decorative Inbox top-right icons/filter and replaced the old message toolbar with working **AI Brief**, **Draft reply**, **Create tasks**, and **Ask Ivy** actions.
+- **Personalized AI Brief** is grounded in the selected conversation and authenticated employee context; structured sections cover relevance, changes, actions, risks/deadlines, and next step.
+- **Human-reviewed AI replies**: generated drafts flow into the real reply composer for Gmail, Outlook/MS365, SMTP/IMAP, and WhatsApp. The employee edits and explicitly sends; generation never auto-sends.
+- **Email rendering cleanup**: tenant-constrained message query, visible loading/error/empty states, CRLF normalization, invisible newsletter-spacer removal, repeated-blank-line collapse, safe HTML-to-text cleanup, clickable links, and readable 760px body width.
+- Conversation backlinks are supported via `/inbox?conversation={id}` and select the requested thread when permitted.
+
+### Done — Tasks + personal Calendar foundation (2026-07-27, deployed)
+- **Real Tasks page** replaces dummy sprint cards with live Firestore tasks and a four-stage Kanban (`todo`, `in_progress`, `blocked`, `done`).
+- Manual task creation supports title, description, priority, assignee, and due date. Employees see tasks assigned to or created by them; owners/admins receive the organization task view.
+- **Structured Inbox task extraction** (`extractConversationTasks`): Gemini returns validated JSON proposals, not prose. Employees review/edit title, description, priority, and deadline before confirming.
+- Human-confirmed creation (`createTask`) records source conversation/channel, AI confidence context, assignee, timestamps, and a fingerprint that blocks duplicate tasks from the same conversation.
+- Task status/content changes use the authenticated `updateTask` callable; task cards link back to their source conversation.
+- **Real personal Calendar page** replaces dummy events. `createCalendarEvent`/`updateCalendarEvent` create local Ellipse events owned by the signed-in employee.
+- Calendar crowding rule: task deadlines remain Tasks by default. Only explicit meetings/time blocks, or tasks where the employee checks “Add a 30-minute block to my calendar,” create calendar events.
+- Calendar events are private to their owner in Firestore rules. Owners/admins oversee work through Tasks and do **not** automatically inherit employees' calendar events.
+- Calendar records are provider-ready (`provider`, `provider_event_id`, `sync_status`, `task_id`) for later Google Calendar / Microsoft Graph synchronization.
+- Deployed to Firebase project `ellipse-desk`: `extractConversationTasks`, `createTask`, `updateTask`, `createCalendarEvent`, `updateCalendarEvent`, plus updated Firestore rules.
 
 ### Reports — how they work (anti-hallucination)
 - Scheduled per-agent reports at local midnight (daily → weekly/monthly/quarterly/annual roll-ups), timezone-aware, stored in `reports/`.
@@ -76,12 +97,15 @@ Connections first (CRM → communication → marketing much later), Ivy (persona
 - **Join flow** (`acceptInvite`): invited emails auto-link to the right org on signup/login (not a new org); wired into `getLandingRoute` + signup.
 - **Member management** (role-checked + seat-limited callables): `inviteMember`, `updateMemberRole`, `setMemberCanApprove`, `removeMember`, `revokeInvite`. Owner untouchable; only owner manages admins.
 - **Per-connection shared access**: employees request specific connections (`requestSharedAccess`), owner/admin approve/deny (`respondAccessRequest`) or set exact grants (`setConnectionGrants`); grants in `connection_grants/{eid}_{uid}.types`. Agent tools gated per user (`allowedConnectionTypes`).
+- Employee **Connect** now opens an explicit choice between requesting the company's connection and connecting a personal account. The request path is live; the personal credential/OAuth pipeline remains intentionally disabled until separate per-user credential storage is completed (it will not overwrite org credentials).
+- Owners/admins manage approved grants through a member-specific **Manage access** popup and can remove one integration grant without revoking the employee's other integrations.
 - **Real Users page** on live data (members + pending invites + access requests), actions gated by viewer role.
 - **Data scoping** via `useAccess` hook — Inbox, Dashboard (QuickStats/Statistics/RecentThreads/PendingApprovals), Approvals, Website, Data, Analytics all filter to the member's granted connections (owner/admin see all). Integrations shows per-connection "Connected" vs "No access — request it"; non-admins can't connect/disconnect.
 - **Daily owner-only team digest** (`orgUsers.ts` → hooked into `scheduledReports`/`generateReportsNow`): per-member chats/agents/topics + shared-connection snapshot; `owner_only:true`; Data page shows it to the owner only.
 
 ### Done — security pass (started)
 - **Firestore rules** (`firestore.rules`, deployed): tenant isolation, deny-by-default, role/owner write control, approvals limited to managers/approvers, `ivy_chats` author-only, `connection_secrets` fully locked.
+- Task reads are limited to managers or the task's assignee/creator. Personal calendar reads are owner-only; all task/calendar writes go through authenticated callables.
 - **Secret split**: OAuth tokens / API keys / SMTP passwords → locked `connection_secrets` (`connectionSecrets.ts`); `connections` now secret-free; one-time `migrateConnectionSecrets` run on existing data.
 
 ### Next
@@ -89,6 +113,8 @@ Connections first (CRM → communication → marketing much later), Ivy (persona
 - Tokens `connection_secrets` → Secret Manager
 - Remove all debug fns + one-time `migrateConnectionSecrets`
 - Ivy dashboard briefing card; live Excel append via Graph workbook API
+- Google Calendar + Microsoft Graph event synchronization on top of the local provider-ready calendar model
+- Node.js 20 Functions runtime upgrade before decommissioning on **2026-10-30**; upgrade `firebase-functions` in a controlled breaking-change pass
 - See `USERS_AND_ROLES.md` for the full users/roles/access spec + status
 
 ## Users & Roles — plan (next up)
