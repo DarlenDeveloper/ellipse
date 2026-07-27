@@ -60,6 +60,8 @@ export default function InboxPage() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [messagesError, setMessagesError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -89,14 +91,30 @@ export default function InboxPage() {
 
   // Live messages for selected conversation
   useEffect(() => {
-    if (!selectedId) return;
-    const q = query(collection(db, "messages"), where("conversation_id", "==", selectedId));
-    return onSnapshot(q, (snap) => {
-      const msgs = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Message, "id">) }));
-      msgs.sort((a, b) => (a.timestamp?.toDate().getTime() ?? 0) - (b.timestamp?.toDate().getTime() ?? 0));
-      setMessages(msgs);
-    });
-  }, [selectedId]);
+    setMessages([]);
+    setMessagesError(null);
+    if (!selectedId || !enterpriseId) return;
+    setMessagesLoading(true);
+    const q = query(
+      collection(db, "messages"),
+      where("enterprise_id", "==", enterpriseId),
+      where("conversation_id", "==", selectedId)
+    );
+    return onSnapshot(
+      q,
+      (snap) => {
+        const msgs = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Message, "id">) }));
+        msgs.sort((a, b) => (a.timestamp?.toDate().getTime() ?? 0) - (b.timestamp?.toDate().getTime() ?? 0));
+        setMessages(msgs);
+        setMessagesLoading(false);
+      },
+      (error) => {
+        console.error("Message listener failed", error);
+        setMessagesError("This email could not be loaded. Try refreshing the inbox.");
+        setMessagesLoading(false);
+      }
+    );
+  }, [selectedId, enterpriseId]);
 
   const sync = useCallback(async () => {
     if (!enterpriseId || syncing) return;
@@ -197,7 +215,13 @@ export default function InboxPage() {
         </div>
 
         {/* Reading pane */}
-        <ReadingPane conversation={selectedConv} messages={messages} enterpriseId={enterpriseId} />
+        <ReadingPane
+          conversation={selectedConv}
+          messages={messages}
+          enterpriseId={enterpriseId}
+          messagesLoading={messagesLoading}
+          messagesError={messagesError}
+        />
       </div>
     </div>
   );

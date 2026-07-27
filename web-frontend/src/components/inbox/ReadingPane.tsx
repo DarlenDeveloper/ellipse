@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Archive, Trash, Star1, Flag, Clock, More, DocumentText, Send2 } from "iconsax-react";
+import { useEffect, useState } from "react";
+import { DocumentText, Send2, Messages2, Clock, CloseCircle } from "iconsax-react";
 import { httpsCallable } from "firebase/functions";
 import { functions } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
@@ -99,14 +99,75 @@ export function ReadingPane({
   conversation,
   messages,
   enterpriseId,
+  messagesLoading,
+  messagesError,
 }: {
   conversation: Conversation;
   messages: Message[];
   enterpriseId: string | null;
+  messagesLoading?: boolean;
+  messagesError?: string | null;
 }) {
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [aiMode, setAiMode] = useState<"brief" | "draft" | "tasks" | "ask" | null>(null);
+  const [aiResult, setAiResult] = useState("");
+  const [aiQuestion, setAiQuestion] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setAiMode(null);
+    setAiResult("");
+    setAiQuestion("");
+    setAiError(null);
+  }, [conversation?.id]);
+
+  const conversationContext = () => {
+    if (!conversation) return "";
+    const transcript = messages.slice(-12).map((message) => {
+      const sender = message.sender_type === "us" ? "Our team" : message.from || message.from_email || "Customer";
+      return `${sender}: ${(message.body || message.snippet || "").slice(0, 1800)}`;
+    });
+    return [
+      `Conversation title: ${conversation.subject}`,
+      `Customer: ${conversation.customer_ref}`,
+      `Channel: ${conversation.channel ?? "unknown"}`,
+      "Recent transcript:",
+      ...transcript,
+    ].join("\n");
+  };
+
+  const runAi = async (mode: "brief" | "draft" | "tasks" | "ask", question?: string) => {
+    if (!conversation || !enterpriseId || aiLoading) return;
+    setAiMode(mode);
+    setAiResult("");
+    setAiError(null);
+    setAiLoading(true);
+    const instruction =
+      mode === "brief"
+        ? "Create a concise personalized AI brief for me. Use headings: Why this matters to me, What changed, My actions, Risks or deadlines, Suggested next step. Do not invent facts."
+        : mode === "draft"
+        ? "Draft a ready-to-send reply in the appropriate tone for this channel. Return only the reply text, with no commentary or markdown heading."
+        : mode === "tasks"
+        ? "Extract concrete action items. For each, state the task, suggested owner, due date if explicitly known, and priority. Clearly label missing dates instead of inventing them."
+        : `Answer my question about this conversation using only grounded workspace and transcript context. Question: ${question ?? ""}`;
+    try {
+      const result = await httpsCallable(functions, "askAgent")({
+        enterpriseId,
+        agentId: "ivy",
+        message: `${instruction}\n\n${conversationContext()}`,
+        history: [],
+      });
+      const data = result.data as { reply?: string };
+      setAiResult(data.reply?.trim() || "Ivy did not return a response.");
+    } catch (e) {
+      setAiError((e as Error).message || "Ivy could not analyze this conversation.");
+    } finally {
+      setAiLoading(false);
+    }
+  };
 
   const send = async () => {
     if (!reply.trim() || !conversation || !enterpriseId || sending) return;
@@ -143,20 +204,65 @@ export function ReadingPane({
   return (
     <div className="flex-1 flex flex-col bg-white min-w-0">
       {/* Toolbar */}
-      <div className="flex items-center gap-1 px-6 py-4 border-b border-gray-100">
-        {[Archive, Trash, Star1, Flag, Clock].map((Icon, i) => (
-          <button key={i} className="w-9 h-9 rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-100">
-            <Icon size={18} variant="Linear" />
-          </button>
-        ))}
-        <button className="w-9 h-9 rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-100 ml-1">
-          <More size={18} variant="Linear" />
+      <div className="flex items-center gap-2 px-6 py-3 border-b border-gray-100 overflow-x-auto">
+        <button onClick={() => runAi("brief")} className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium rounded-full px-4 py-2 whitespace-nowrap">
+          <DocumentText size={16} variant="Linear" color="#ffffff" /> AI Brief
+        </button>
+        <button onClick={() => runAi("draft")} className="flex items-center gap-2 border border-gray-200 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-full px-4 py-2 whitespace-nowrap">
+          <Send2 size={16} variant="Linear" /> Draft reply
+        </button>
+        <button onClick={() => runAi("tasks")} className="flex items-center gap-2 border border-gray-200 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-full px-4 py-2 whitespace-nowrap">
+          <Clock size={16} variant="Linear" /> Create tasks
+        </button>
+        <button onClick={() => { setAiMode("ask"); setAiResult(""); setAiError(null); }} className="flex items-center gap-2 border border-gray-200 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-full px-4 py-2 whitespace-nowrap">
+          <Messages2 size={16} variant="Linear" /> Ask Ivy
         </button>
       </div>
+
+      {aiMode && (
+        <div className="border-b border-purple-100 bg-purple-50/50 px-6 py-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-bold uppercase tracking-wide text-purple-700">
+                {aiMode === "brief" ? "Personalized AI Brief" : aiMode === "draft" ? "Suggested reply" : aiMode === "tasks" ? "Suggested tasks" : "Ask Ivy"}
+              </p>
+              {aiMode === "ask" && !aiLoading && !aiResult && (
+                <div className="flex gap-2 mt-3">
+                  <input
+                    value={aiQuestion}
+                    onChange={(event) => setAiQuestion(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && aiQuestion.trim()) runAi("ask", aiQuestion.trim());
+                    }}
+                    placeholder="What do you want to know about this conversation?"
+                    className="flex-1 bg-white border border-purple-100 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple-200"
+                  />
+                  <button disabled={!aiQuestion.trim()} onClick={() => runAi("ask", aiQuestion.trim())} className="bg-black text-white text-sm rounded-xl px-4 py-2 disabled:opacity-40">Ask</button>
+                </div>
+              )}
+              {aiLoading && <p className="text-sm text-gray-500 mt-2 animate-pulse">Ivy is analyzing this conversation…</p>}
+              {aiError && <p className="text-sm text-red-600 mt-2">{aiError}</p>}
+              {aiResult && <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap mt-2 max-h-64 overflow-y-auto">{aiResult}</div>}
+              {aiMode === "draft" && aiResult && conversation.channel === "whatsapp" && (
+                <button onClick={() => setReply(aiResult)} className="mt-3 text-xs font-semibold text-purple-700 hover:text-purple-900">Use this reply</button>
+              )}
+            </div>
+            <button onClick={() => setAiMode(null)} className="text-gray-400 hover:text-gray-700" aria-label="Close AI panel">
+              <CloseCircle size={20} variant="Linear" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-8 py-6">
         <h1 className="text-2xl font-bold tracking-tight mb-6">{conversation.subject}</h1>
+
+        {messagesLoading && <p className="text-sm text-gray-400 animate-pulse">Loading conversation…</p>}
+        {messagesError && <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3">{messagesError}</p>}
+        {!messagesLoading && !messagesError && messages.length === 0 && (
+          <p className="text-sm text-gray-400">No message content is available for this conversation yet.</p>
+        )}
 
         <div className="space-y-6">
           {messages.map((msg) => (
@@ -185,13 +291,6 @@ export function ReadingPane({
           ))}
         </div>
 
-        {/* Actions */}
-        <div className="flex items-center gap-3 mt-8">
-          <button className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium rounded-full px-6 py-2.5">
-            <DocumentText size={18} variant="Linear" color="#ffffff" />
-            Summarise
-          </button>
-        </div>
       </div>
 
       {/* Reply composer — WhatsApp only */}
