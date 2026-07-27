@@ -30,6 +30,7 @@ import { useEnterpriseId } from "@/lib/use-enterprise";
 import { IvyOrb } from "@/components/ivy/IvyOrb";
 import { FileCard, stripFileUrls, type ChatFile } from "@/components/ivy/FileCard";
 import { cn } from "@/lib/utils";
+import { MarkdownText } from "@/components/MarkdownText";
 
 type Msg = { role: "ivy" | "user"; text: string; files?: ChatFile[] };
 
@@ -397,7 +398,7 @@ export default function IvyPage() {
                           : "bg-white shadow-sm text-gray-700 rounded-bl-md"
                       )}
                     >
-                      {m.role === "ivy" ? stripFileUrls(m.text) : m.text}
+                      {m.role === "ivy" ? <MarkdownText text={stripFileUrls(m.text)} /> : m.text}
                     </div>
                     {m.files?.map((f) => (
                       <FileCard key={f.url} file={f} />

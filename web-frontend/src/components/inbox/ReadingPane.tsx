@@ -5,6 +5,7 @@ import { DocumentText, Send2, Messages2, Clock, CloseCircle } from "iconsax-reac
 import { httpsCallable } from "firebase/functions";
 import { functions } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
+import { MarkdownText } from "@/components/MarkdownText";
 
 type Conversation = {
   id: string;
@@ -251,7 +252,7 @@ export function ReadingPane({
               )}
               {aiLoading && <p className="text-sm text-gray-500 mt-2 animate-pulse">Ivy is analyzing this conversation…</p>}
               {aiError && <p className="text-sm text-red-600 mt-2">{aiError}</p>}
-              {aiResult && <div className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap mt-2 max-h-64 overflow-y-auto">{aiResult}</div>}
+              {aiResult && <MarkdownText text={aiResult} className="text-sm text-gray-700 mt-2 max-h-64 overflow-y-auto pr-2" />}
               {aiMode === "draft" && aiResult && conversation.channel === "whatsapp" && (
                 <button onClick={() => setReply(aiResult)} className="mt-3 text-xs font-semibold text-purple-700 hover:text-purple-900">Use this reply</button>
               )}
