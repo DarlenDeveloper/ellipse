@@ -1,4 +1,5 @@
 import * as logger from "firebase-functions/logger";
+import { randomUUID } from "crypto";
 import { db } from "./admin";
 import { callGemini } from "./gemini";
 import { executeAgentAction } from "./executeAgentAction";
@@ -130,6 +131,7 @@ const T = {
       properties: {
         conversationId: { type: "string" },
         body: { type: "string", description: "The reply text to send" },
+        attachDocumentId: { type: "string", description: "Optional Ellipse Data document id to attach. For quotations, first use find_zoho_quotation and pass its documentId here." },
       },
       required: ["conversationId", "body"],
     },
@@ -266,6 +268,52 @@ const T = {
       required: ["client", "items"],
     },
   },
+  create_zoho_quotation: {
+    name: "create_zoho_quotation",
+    description:
+      "Create or resolve the customer in Zoho, create an official Zoho Quote using real Zoho Products, merge it to PDF with the configured Zoho Writer template, and save the exact PDF to Ellipse Data. This is the preferred quotation tool whenever Zoho is connected. The compound workflow goes through approval. Never use create_quotation instead when Zoho is the requested source.",
+    parameters: {
+      type: "object",
+      properties: {
+        customer: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            email: { type: "string" },
+            company: { type: "string" },
+            phone: { type: "string" },
+          },
+          required: ["name", "email"],
+        },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              product: { type: "string", description: "Exact Zoho Product name or SKU." },
+              quantity: { type: "number" },
+              rate: { type: "number", description: "Optional approved unit price; omit to use Zoho Unit_Price." },
+            },
+            required: ["product", "quantity"],
+          },
+        },
+        subject: { type: "string" },
+        templateName: { type: "string", description: "Optional override; normally use the configured Zoho mail-merge template." },
+      },
+      required: ["customer", "items"],
+    },
+  },
+  find_zoho_quotation: {
+    name: "find_zoho_quotation",
+    description: "Find a Zoho-generated quotation already saved in Ellipse Data. Use before emailing an earlier quotation so the exact saved file is reused.",
+    parameters: {
+      type: "object",
+      properties: {
+        email: { type: "string", description: "Customer email." },
+        quoteId: { type: "string", description: "Optional Zoho Quote record id." },
+      },
+    },
+  },
   generate_owner_analysis: {
     name: "generate_owner_analysis",
     description:
@@ -353,6 +401,8 @@ const TOOL_CATALOG: Record<string, ToolDecl> = {
   store_create: T.store_create,
   store_update: T.store_update,
   create_quotation: T.create_quotation,
+  create_zoho_quotation: T.create_zoho_quotation,
+  find_zoho_quotation: T.find_zoho_quotation,
   send_email: T.send_email,
   get_zoho_quote: T.get_zoho_quote,
 };
@@ -366,7 +416,7 @@ function toolsFor(agentId: string, connected: Set<string>): ToolDecl[] {
 
   if (agentId === "ivy") {
     tools.push(T.search_conversations, T.get_reports, T.create_document);
-    if (has("zoho")) tools.push(T.get_sales_summary, T.list_leads, T.create_crm_lead, T.get_zoho_quote);
+    if (has("zoho")) tools.push(T.get_sales_summary, T.list_leads, T.create_crm_lead, T.get_zoho_quote, T.create_zoho_quotation, T.find_zoho_quotation);
     if (has("website")) tools.push(T.get_web_analytics);
     // Quotation generation is available whenever there's a data source to quote from.
     if (has("zoho") || has("mercury")) tools.push(T.create_quotation);
@@ -397,7 +447,9 @@ function toolsFor(agentId: string, connected: Set<string>): ToolDecl[] {
       T.create_document,
       T.generate_report,
       T.get_zoho_quote,
-      T.create_quotation
+      T.create_quotation,
+      T.create_zoho_quotation,
+      T.find_zoho_quotation
     );
     return tools;
   }
@@ -476,6 +528,10 @@ async function runTool(
       return toolStoreWrite(enterpriseId, "update_record", args);
     case "create_quotation":
       return toolCreateQuotation(enterpriseId, agentId, args);
+    case "create_zoho_quotation":
+      return toolCreateZohoQuotation(enterpriseId, agentId, args);
+    case "find_zoho_quotation":
+      return toolFindZohoQuotation(enterpriseId, args);
     case "send_email":
       return toolSendEmail(enterpriseId, agentId, args);
     case "get_zoho_quote":
@@ -879,6 +935,49 @@ async function toolCreateQuotation(enterpriseId: string, agentId: string, args: 
   }
 }
 
+async function toolCreateZohoQuotation(enterpriseId: string, agentId: string, args: Record<string, unknown>) {
+  const customer = (args.customer as Record<string, unknown> | undefined) ?? {};
+  const items = Array.isArray(args.items) ? args.items : [];
+  const email = String(customer.email ?? "").trim().toLowerCase();
+  const name = String(customer.name ?? "").trim();
+  if (!name || !/.+@.+\..+/.test(email)) return JSON.stringify({ error: "Customer name and a valid email are required." });
+  if (!items.length) return JSON.stringify({ error: "At least one quotation item is required." });
+  const workflowKey = randomUUID();
+  const params = {
+    workflowKey,
+    agentId,
+    customer: { ...customer, name, email },
+    items,
+    subject: String(args.subject ?? "").trim() || undefined,
+    templateName: String(args.templateName ?? "").trim() || undefined,
+  };
+  const result = await executeAgentAction({
+    enterpriseId,
+    agentId: `${agentId}-agent`,
+    domain: "assistant",
+    actionType: "create_quotation_workflow",
+    params,
+    targetSystem: "zoho",
+    reasoning: `Create an official Zoho quotation for ${name} <${email}>, merge the approved Zoho template to PDF, and save it to Data.`,
+  });
+  return JSON.stringify({ action: "create_zoho_quotation", workflowKey, ...result });
+}
+
+async function toolFindZohoQuotation(enterpriseId: string, args: Record<string, unknown>) {
+  const email = String(args.email ?? "").trim().toLowerCase();
+  const quoteId = String(args.quoteId ?? "").trim();
+  const snap = await db.collection("documents").where("enterprise_id", "==", enterpriseId).get();
+  const rows = snap.docs
+    .map((doc) => ({ id: doc.id, ...doc.data() } as any))
+    .filter((doc) => doc.source?.system === "zoho" && doc.source?.module === "Quotes")
+    .filter((doc) => !email || String(doc.customer?.email ?? "").toLowerCase() === email)
+    .filter((doc) => !quoteId || doc.source?.quote_id === quoteId)
+    .sort((a, b) => (b.created_at?.toMillis?.() ?? 0) - (a.created_at?.toMillis?.() ?? 0))
+    .slice(0, 5)
+    .map((doc) => ({ documentId: doc.id, name: doc.file?.name, quoteId: doc.source?.quote_id, customer: doc.customer, createdAt: doc.created_at?.toDate?.()?.toISOString?.() }));
+  return JSON.stringify({ found: rows.length > 0, quotations: rows });
+}
+
 async function toolGetZohoQuote(enterpriseId: string, args: Record<string, unknown>) {
   try {
     const { getQuoteForQuotation } = await import("./connections/zoho");
@@ -1190,6 +1289,14 @@ async function toolReply(enterpriseId: string, args: Record<string, unknown>) {
   const channel = c.channel as string;
   const target = CHANNEL_TARGET[channel];
   if (!target) return `Cannot reply on channel ${channel}.`;
+  const attachDocumentId = String(args.attachDocumentId ?? "").trim();
+  let attachment: { storagePath: string; fileName: string; contentType: string } | undefined;
+  if (attachDocumentId) {
+    const document = await db.doc(`documents/${attachDocumentId}`).get();
+    const d = document.data();
+    if (!document.exists || d?.enterprise_id !== enterpriseId || !d?.storage_path) return "Attachment document not found.";
+    attachment = { storagePath: d.storage_path, fileName: d.file?.name || "quotation.pdf", contentType: d.content_type || "application/pdf" };
+  }
   const res = await executeAgentAction({
     enterpriseId,
     agentId: `${channel}-agent`,
@@ -1201,6 +1308,7 @@ async function toolReply(enterpriseId: string, args: Record<string, unknown>) {
       to: c.customer_ref,
       subject: c.subject ?? "",
       body,
+      attachment,
     },
     targetSystem: target,
     reasoning: `Reply to ${c.customer_ref} (requested in chat).`,
@@ -1346,7 +1454,7 @@ export async function chatWithAgent(
       logger.info("tool result", { agentId, tool: call.name, enterpriseId, out: out.slice(0, 500) });
       results.push(`${call.name} → ${out}`);
       if (
-        ["create_crm_lead", "reply_to_conversation", "create_document", "generate_report", "generate_owner_analysis", "store_create", "store_update", "create_quotation", "send_email"].includes(
+        ["create_crm_lead", "reply_to_conversation", "create_document", "generate_report", "generate_owner_analysis", "store_create", "store_update", "create_quotation", "create_zoho_quotation", "send_email"].includes(
           call.name
         )
       ) {

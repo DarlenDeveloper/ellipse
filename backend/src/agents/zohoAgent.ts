@@ -4,6 +4,7 @@ import { callGemini } from "../gemini";
 import { executeAgentAction } from "../executeAgentAction";
 import { enrichFromZoho, ZohoEnrichment } from "../connections/zoho";
 import { loadKnowledgeBase } from "./knowledge";
+import { randomUUID } from "crypto";
 
 /**
  * The Zoho CRM agent.
@@ -20,6 +21,26 @@ import { loadKnowledgeBase } from "./knowledge";
 
 // CRM tools the agent may call. Shapes mirror the gate's Zoho executors 1:1.
 const TOOLS = [
+  {
+    name: "create_quotation_workflow",
+    description: "Create the genuine prospect as needed, create an official Zoho Quote using exact Zoho Product records, merge the configured Zoho template to PDF, and save it in Ellipse Data. Use only when the customer explicitly requests a quotation and provides an exact product/model and quantity.",
+    parameters: {
+      type: "object",
+      properties: {
+        customer: {
+          type: "object",
+          properties: { name: { type: "string" }, email: { type: "string" }, company: { type: "string" }, phone: { type: "string" } },
+          required: ["name", "email"],
+        },
+        items: {
+          type: "array",
+          items: { type: "object", properties: { product: { type: "string" }, quantity: { type: "number" } }, required: ["product", "quantity"] },
+        },
+        subject: { type: "string" },
+      },
+      required: ["customer", "items"],
+    },
+  },
   {
     name: "create_record",
     description:
@@ -93,6 +114,7 @@ You read a customer conversation, keep the CRM accurate, and help move deals for
   Never use placeholders like "n/a" or "N/A". Zoho requires Last_Name — if no surname is known,
   use the name before the @ in the email as Last_Name. Only set Company if the customer states one.
 - Propose CRM changes ONLY when the conversation clearly warrants them (new prospect, deal stage change, noteworthy update).
+- When a genuine prospect explicitly asks for a quotation and gives an exact product/model plus quantity, use create_quotation_workflow. It creates/resolves the Lead, Account and Contact, creates the Zoho Quote, generates the official PDF and saves it to Ellipse Data. Do not also call create_record for that prospect. Never guess a model, quantity, product match, or price; ask for the missing detail in the reply instead.
 - Prefer add_note to capture context over guessing field changes.
 - Write a short, professional reply to the customer in your text response.
 - Keep reasoning concise; it is stored as the action summary shown for approval.`;
@@ -174,16 +196,19 @@ export async function runZohoAgent(
   // 4. Route each proposed CRM write through the gate
   const actions: ZohoAgentResult["actions"] = [];
   for (const call of gemini.functionCalls) {
+    const params = call.name === "create_quotation_workflow"
+      ? { ...call.args, workflowKey: randomUUID(), agentId: "zoho", conversationId }
+      : call.args;
     const result = await executeAgentAction({
       enterpriseId,
       agentId: "zoho-agent",
       domain: "inbox",
       actionType: call.name,
-      params: call.args,
+      params,
       targetSystem: "zoho",
       reasoning: gemini.text || `Zoho agent: ${call.name}`,
     });
-    actions.push({ actionType: call.name, params: call.args, result });
+    actions.push({ actionType: call.name, params, result });
   }
 
   // 5. Persist the agent's output on the conversation for the inbox UI

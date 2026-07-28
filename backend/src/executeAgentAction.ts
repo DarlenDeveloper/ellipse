@@ -183,6 +183,11 @@ async function executeZohoAction(
       );
     case "add_note":
       return zoho.addNote(enterpriseId, module, params.recordId as string, params.content as string);
+    case "create_quotation_workflow": {
+      const { createZohoQuotationWorkflow } = await import("./zohoQuotations");
+      const result = await createZohoQuotationWorkflow(enterpriseId, params as any);
+      return JSON.stringify(result);
+    }
     default:
       logger.warn("Unknown Zoho action", { actionType });
       return null;
@@ -205,7 +210,8 @@ async function executeGmailAction(
         params.threadId as string,
         params.to as string,
         (params.subject as string) ?? "",
-        (params.body as string) ?? ""
+        (params.body as string) ?? "",
+        await loadAttachment(params)
       );
     case "send_email":
       return gmail.sendGmailEmail(enterpriseId, {
@@ -249,7 +255,8 @@ async function executeSmtpAction(
         enterpriseId,
         params.to as string,
         (params.subject as string) ?? "",
-        (params.body as string) ?? ""
+        (params.body as string) ?? "",
+        await loadAttachment(params)
       );
     case "send_email":
       return smtp.sendSmtpEmail(enterpriseId, {
@@ -316,6 +323,7 @@ async function executeMicrosoftAction(
         to: params.to as string,
         subject: params.subject as string,
         body: (params.body as string) ?? "",
+        attachment: await loadAttachment(params),
       });
     case "send_email":
       return ms.sendOutlookEmail(enterpriseId, {

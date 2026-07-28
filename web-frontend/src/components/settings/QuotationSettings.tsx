@@ -23,6 +23,7 @@ type Branding = {
   proforma_prefix?: string;
   proforma_seq?: number;
   logo_url?: string;
+  zoho_mail_merge_template?: string;
 };
 
 function fileToBase64(file: File): Promise<string> {
@@ -98,6 +99,7 @@ export function QuotationSettings() {
         review_link: form.review_link ?? "",
         terms: form.terms ?? "",
         proforma_prefix: form.proforma_prefix ?? "MCL",
+        zoho_mail_merge_template: form.zoho_mail_merge_template ?? "",
       };
       if (proformaStart.trim()) payload.proforma_start = Number(proformaStart);
       if (logoFile) {
@@ -188,6 +190,15 @@ export function QuotationSettings() {
             <input value={form.website ?? ""} onChange={(e) => set("website", e.target.value)} disabled={disabled} className={inputClass} placeholder="mercurycomputerslimited.com" />
           </div>
         </div>
+      </div>
+
+      {/* Invoice defaults */}
+      <div className="bg-white rounded-2xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">
+        <h3 className="text-lg font-bold mb-1">Zoho quotation document</h3>
+        <p className="text-sm text-gray-400 mb-5">Ellipse uses this Zoho CRM mail-merge template to generate the official Quote PDF.</p>
+        <label className="text-xs font-medium text-gray-500 block mb-1">Quote mail-merge template name</label>
+        <input value={form.zoho_mail_merge_template ?? ""} onChange={(e) => set("zoho_mail_merge_template", e.target.value)} disabled={disabled} className={inputClass} placeholder="Official Quotation" />
+        <p className="text-[11px] text-gray-400 mt-1.5">Enter the exact template name configured for the Quotes module in Zoho CRM.</p>
       </div>
 
       {/* Invoice defaults */}

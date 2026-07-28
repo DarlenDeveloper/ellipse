@@ -253,7 +253,7 @@ export async function syncAllConnectedOutlook(): Promise<number> {
  */
 export async function sendOutlookReply(
   enterpriseId: string,
-  opts: { conversationId?: string; to?: string; subject?: string; body: string }
+  opts: { conversationId?: string; to?: string; subject?: string; body: string; attachment?: { filename: string; contentType: string; content: Buffer } }
 ): Promise<string> {
   const token = await authedTokenFor(enterpriseId);
 
@@ -264,6 +264,44 @@ export async function sendOutlookReply(
   }
 
   if (messageId) {
+    if (opts.attachment) {
+      if (opts.attachment.content.length > 3 * 1024 * 1024) {
+        throw new Error("Outlook reply attachments over 3 MB require an upload session.");
+      }
+      const draftRes = await fetch(
+        `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(messageId)}/createReply`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ comment: opts.body }),
+        }
+      );
+      const draft = (await draftRes.json()) as any;
+      if (!draftRes.ok || !draft.id) throw new Error(draft?.error?.message || "Outlook could not create the reply draft");
+      const attachRes = await fetch(
+        `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(draft.id)}/attachments`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            name: opts.attachment.filename,
+            contentType: opts.attachment.contentType,
+            contentBytes: opts.attachment.content.toString("base64"),
+          }),
+        }
+      );
+      if (!attachRes.ok) {
+        const error = (await attachRes.json()) as any;
+        throw new Error(error?.error?.message || "Outlook could not attach the quotation");
+      }
+      const sendRes = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(draft.id)}/send`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (sendRes.status !== 202) throw new Error("Outlook could not send the reply draft");
+      return "replied-with-attachment";
+    }
     const res = await fetch(
       `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(messageId)}/reply`,
       {
@@ -279,21 +317,12 @@ export async function sendOutlookReply(
   }
 
   // Fallback: brand-new message.
-  const res = await fetch("https://graph.microsoft.com/v1.0/me/sendMail", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      message: {
-        subject: opts.subject?.toLowerCase().startsWith("re:") ? opts.subject : `Re: ${opts.subject ?? ""}`,
-        body: { contentType: "Text", content: opts.body },
-        toRecipients: opts.to ? [{ emailAddress: { address: opts.to } }] : [],
-      },
-    }),
+  return sendOutlookEmail(enterpriseId, {
+    to: opts.to ?? "",
+    subject: opts.subject?.toLowerCase().startsWith("re:") ? opts.subject : `Re: ${opts.subject ?? ""}`,
+    body: opts.body,
+    attachment: opts.attachment,
   });
-  if (res.status === 202) return "sent";
-  const d = (await res.json()) as any;
-  if (d?.error) throw new Error(d.error.message);
-  return "sent";
 }
 
 /**

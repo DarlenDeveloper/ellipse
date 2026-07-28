@@ -1079,6 +1079,7 @@ export const saveQuotationBranding = onCall(async (request) => {
     "review_link",
     "terms",
     "proforma_prefix",
+    "zoho_mail_merge_template",
   ];
   for (const f of strFields) {
     if (typeof d[f] === "string") update[f] = (d[f] as string).trim();

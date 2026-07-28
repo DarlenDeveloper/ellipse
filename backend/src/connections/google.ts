@@ -77,7 +77,8 @@ export async function sendGmailReply(
   threadId: string,
   to: string,
   subject: string,
-  body: string
+  body: string,
+  attachment?: { filename: string; contentType: string; content: Buffer }
 ): Promise<string> {
   const { client } = await authedClientFor(enterpriseId);
   const gmail = google.gmail({ version: "v1", auth: client });
@@ -102,17 +103,41 @@ export async function sendGmailReply(
   }
 
   const subjectLine = subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`;
-  const lines = [
+  const headers = [
     `To: ${to}`,
     `Subject: ${subjectLine}`,
     inReplyTo ? `In-Reply-To: ${inReplyTo}` : "",
     references ? `References: ${references}` : "",
-    `Content-Type: text/plain; charset="UTF-8"`,
-    "",
-    body,
   ].filter(Boolean);
 
-  const raw = Buffer.from(lines.join("\r\n"))
+  let message: string;
+  if (attachment) {
+    const boundary = `mixed_${Date.now().toString(36)}`;
+    const b64 = attachment.content.toString("base64").replace(/(.{76})/g, "$1\r\n");
+    message = [
+      ...headers,
+      "MIME-Version: 1.0",
+      `Content-Type: multipart/mixed; boundary="${boundary}"`,
+      "",
+      `--${boundary}`,
+      `Content-Type: text/plain; charset="UTF-8"`,
+      "",
+      body,
+      "",
+      `--${boundary}`,
+      `Content-Type: ${attachment.contentType}; name="${attachment.filename}"`,
+      "Content-Transfer-Encoding: base64",
+      `Content-Disposition: attachment; filename="${attachment.filename}"`,
+      "",
+      b64,
+      "",
+      `--${boundary}--`,
+    ].join("\r\n");
+  } else {
+    message = [...headers, `Content-Type: text/plain; charset="UTF-8"`, "", body].join("\r\n");
+  }
+
+  const raw = Buffer.from(message)
     .toString("base64")
     .replace(/\+/g, "-")
     .replace(/\//g, "_")

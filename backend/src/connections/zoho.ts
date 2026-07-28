@@ -21,6 +21,9 @@ const SCOPES = [
   "ZohoCRM.modules.ALL",
   "ZohoCRM.settings.ALL",
   "ZohoCRM.notifications.ALL",
+  "ZohoCRM.settings.mailmerge.CREATE",
+  "ZohoWriter.documentEditor.ALL",
+  "ZohoWriter.merge.ALL",
 ];
 
 function connDoc(enterpriseId: string) {
@@ -839,6 +842,57 @@ export async function searchByEmail(
   return data?.data?.[0] ?? null;
 }
 
+/** General full-text record search, used to resolve Accounts and Products safely. */
+export async function searchRecordsByWord(
+  enterpriseId: string,
+  module: string,
+  word: string
+): Promise<any[]> {
+  const data = await zohoRequest(
+    enterpriseId,
+    `${module}/search?word=${encodeURIComponent(word)}`
+  );
+  return data?.data ?? [];
+}
+
+/** Download a Quote through a Zoho CRM/Writer mail-merge template as PDF bytes. */
+export async function downloadQuoteMailMerge(
+  enterpriseId: string,
+  quoteId: string,
+  templateName: string,
+  fileName: string
+): Promise<Buffer> {
+  const { accessToken, apiDomain } = await authedClientFor(enterpriseId);
+  const res = await fetch(`${apiDomain}/crm/v8/Quotes/${encodeURIComponent(quoteId)}/actions/download_mail_merge`, {
+    method: "POST",
+    headers: {
+      Authorization: `Zoho-oauthtoken ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      download_mail_merge: [{
+        mail_merge_template: { name: templateName },
+        output_format: "pdf",
+        file_name: fileName.replace(/\.pdf$/i, ""),
+      }],
+    }),
+  });
+  const bytes = Buffer.from(await res.arrayBuffer());
+  const contentType = res.headers.get("content-type") ?? "";
+  if (!res.ok || contentType.includes("json")) {
+    let message = `Zoho quotation merge failed (${res.status})`;
+    try {
+      const json = JSON.parse(bytes.toString("utf8"));
+      message = json?.data?.[0]?.message || json?.message || json?.code || message;
+    } catch {
+      /* keep status error */
+    }
+    throw new Error(message);
+  }
+  if (!bytes.length) throw new Error("Zoho returned an empty quotation PDF");
+  return bytes;
+}
+
 /** Create a record in a module (e.g. Leads, Contacts). Returns the new record id. */
 export async function createRecord(
   enterpriseId: string,
@@ -849,7 +903,11 @@ export async function createRecord(
     method: "POST",
     body: { data: [fields] },
   });
-  return data?.data?.[0]?.details?.id ?? null;
+  const result = data?.data?.[0];
+  if (result?.status === "error" || result?.code) {
+    throw new Error(`Zoho ${module} create failed: ${result.message ?? result.code}`);
+  }
+  return result?.details?.id ?? null;
 }
 
 /** Update an existing record by id. */
@@ -863,7 +921,11 @@ export async function updateRecord(
     method: "PUT",
     body: { data: [fields] },
   });
-  return data?.data?.[0]?.details?.id ?? null;
+  const result = data?.data?.[0];
+  if (result?.status === "error" || result?.code) {
+    throw new Error(`Zoho ${module} update failed: ${result.message ?? result.code}`);
+  }
+  return result?.details?.id ?? null;
 }
 
 /** Attach a note to a record. */
