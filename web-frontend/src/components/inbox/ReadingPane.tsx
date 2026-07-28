@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { DocumentText, Send2, Messages2, Clock, CloseCircle } from "iconsax-react";
+import { DocumentText, Send2, Messages2, Clock, CloseCircle, Paperclip2, Trash } from "iconsax-react";
 import { httpsCallable } from "firebase/functions";
 import { functions } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
@@ -24,6 +24,8 @@ type Message = {
   snippet: string;
   sender_type: "us" | "customer";
   timestamp?: { toDate: () => Date };
+  cc?: string;
+  attachment?: { fileName?: string; size?: number; documentId?: string };
 };
 
 type ProposedTask = {
@@ -133,6 +135,8 @@ export function ReadingPane({
 }) {
   const { user } = useAuth();
   const [reply, setReply] = useState("");
+  const [cc, setCc] = useState("");
+  const [attachment, setAttachment] = useState<File | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sendNotice, setSendNotice] = useState<string | null>(null);
@@ -144,7 +148,9 @@ export function ReadingPane({
   const [proposedTasks, setProposedTasks] = useState<ProposedTask[]>([]);
   const [savingTasks, setSavingTasks] = useState(false);
   const replyRef = useRef<HTMLTextAreaElement>(null);
+  const attachmentRef = useRef<HTMLInputElement>(null);
   const canReply = ["google-workspace", "smtp", "microsoft365", "whatsapp"].includes(conversation?.channel ?? "");
+  const isEmail = ["google-workspace", "smtp", "microsoft365"].includes(conversation?.channel ?? "");
 
   useEffect(() => {
     setAiMode(null);
@@ -152,7 +158,19 @@ export function ReadingPane({
     setAiQuestion("");
     setAiError(null);
     setProposedTasks([]);
+    setReply("");
+    setCc("");
+    setAttachment(null);
+    setError(null);
+    setSendNotice(null);
   }, [conversation?.id]);
+
+  const fileAsBase64 = (file: File) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read the attachment."));
+    reader.readAsDataURL(file);
+  });
 
   const conversationContext = () => {
     if (!conversation) return "";
@@ -262,10 +280,22 @@ export function ReadingPane({
     setError(null);
     setSendNotice(null);
     try {
+      let uploadedAttachment: { storagePath: string; fileName: string; contentType: string; documentId?: string; size?: number } | undefined;
+      if (attachment) {
+        const upload = await httpsCallable(functions, "uploadInboxAttachment")({
+          enterpriseId,
+          fileName: attachment.name,
+          contentType: attachment.type || "application/octet-stream",
+          base64: await fileAsBase64(attachment),
+        });
+        uploadedAttachment = upload.data as typeof uploadedAttachment;
+      }
       const response = await httpsCallable(functions, "sendReply")({
         enterpriseId,
         conversationId: conversation.id,
         body: reply.trim(),
+        cc: isEmail ? cc.trim() || null : null,
+        attachment: uploadedAttachment,
       });
       const result = response.data as { status?: string };
       if (result.status === "pending") {
@@ -278,6 +308,8 @@ export function ReadingPane({
         throw new Error("The reply could not be queued or sent under the current workspace settings.");
       }
       setReply("");
+      setCc("");
+      setAttachment(null);
     } catch (e) {
       const msg = (e as { message?: string })?.message || "";
       setError(/access blocked|token|expired|OAuth/i.test(msg)
@@ -417,6 +449,13 @@ export function ReadingPane({
                 <span className="text-xs text-gray-400 shrink-0">{fmtFull(msg.timestamp)}</span>
               </div>
               <MessageBody body={msg.body} snippet={msg.snippet} />
+              {msg.cc && <p className="mt-2 text-xs text-gray-400"><span className="font-semibold text-gray-500">CC:</span> {msg.cc}</p>}
+              {msg.attachment?.fileName && (
+                <div className="mt-3 inline-flex max-w-full items-center gap-2 rounded-xl border border-purple-100 bg-purple-50 px-3 py-2 text-xs font-semibold text-purple-800">
+                  <Paperclip2 size={15} variant="Linear" className="shrink-0" />
+                  <span className="truncate">{msg.attachment.fileName}</span>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -428,7 +467,40 @@ export function ReadingPane({
       <div className="border-t border-gray-100 px-6 py-4 bg-white">
         {error && <p className="text-xs text-red-500 mb-2">{error}</p>}
         {sendNotice && <p className="text-xs text-green-700 bg-green-50 border border-green-100 rounded-xl px-3 py-2 mb-2">{sendNotice}</p>}
+        {isEmail && (
+          <div className="mb-2 flex items-center gap-2 rounded-xl border border-gray-100 bg-white px-3 py-2">
+            <span className="text-xs font-semibold text-gray-500">CC</span>
+            <input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="name@company.com (optional)" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
+          </div>
+        )}
+        {attachment && (
+          <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-purple-100 bg-purple-50 px-3 py-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <Paperclip2 size={16} variant="Linear" className="shrink-0 text-purple-600" />
+              <span className="truncate text-xs font-semibold text-purple-800">{attachment.name}</span>
+              <span className="shrink-0 text-[11px] text-purple-500">{(attachment.size / 1024).toFixed(attachment.size < 1024 * 1024 ? 0 : 1)} {attachment.size < 1024 * 1024 ? "KB" : "MB"}</span>
+            </div>
+            <button type="button" onClick={() => setAttachment(null)} className="rounded-full p-1 text-purple-500 hover:bg-purple-100 hover:text-red-600" aria-label="Remove attachment"><Trash size={15} variant="Linear" /></button>
+          </div>
+        )}
         <div className="flex items-end gap-3 bg-gray-50 rounded-2xl px-4 py-2.5">
+          {isEmail && (
+            <>
+              <input ref={attachmentRef} type="file" className="hidden" onChange={(e) => {
+                const file = e.target.files?.[0] ?? null;
+                e.target.value = "";
+                if (!file) return;
+                const max = conversation.channel === "microsoft365" ? 3 : 10;
+                if (file.size > max * 1024 * 1024) {
+                  setError(`Attachments for this channel must be ${max} MB or smaller.`);
+                  return;
+                }
+                setError(null);
+                setAttachment(file);
+              }} />
+              <button type="button" onClick={() => attachmentRef.current?.click()} className="mb-0.5 rounded-full p-2 text-gray-500 hover:bg-white hover:text-purple-600" aria-label={attachment ? "Replace attachment" : "Add attachment"} title={attachment ? "Replace attachment" : "Add attachment"}><Paperclip2 size={18} variant="Linear" /></button>
+            </>
+          )}
           <textarea
             ref={replyRef}
             value={reply}

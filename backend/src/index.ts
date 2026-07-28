@@ -806,13 +806,27 @@ export const sendReply = onCall(
     const enterpriseId = request.data?.enterpriseId as string | undefined;
     const conversationId = request.data?.conversationId as string | undefined;
     const body = (request.data?.body as string | undefined)?.trim();
+    const cc = (request.data?.cc as string | undefined)?.trim() || undefined;
+    const attachment = request.data?.attachment as { documentId?: string; storagePath?: string; fileName?: string; contentType?: string; size?: number } | undefined;
     if (!enterpriseId || !conversationId || !body) {
       throw new HttpsError("invalid-argument", "Missing enterpriseId, conversationId, or body.");
+    }
+    if (cc && !cc.split(",").every((address) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address.trim()))) {
+      throw new HttpsError("invalid-argument", "Enter valid comma-separated CC email addresses.");
     }
 
     const { db, FieldValue } = await import("./admin");
     const caller = (await db.doc(`users/${request.auth.uid}`).get()).data();
     if (caller?.enterprise_id !== enterpriseId) throw new HttpsError("permission-denied", "Wrong organization.");
+    if (attachment) {
+      if (!attachment.documentId || !attachment.storagePath?.startsWith(`documents/${enterpriseId}/${attachment.documentId}/`)) {
+        throw new HttpsError("permission-denied", "Invalid attachment location.");
+      }
+      const attachmentDoc = (await db.doc(`documents/${attachment.documentId}`).get()).data();
+      if (attachmentDoc?.enterprise_id !== enterpriseId || attachmentDoc?.storage_path !== attachment.storagePath) {
+        throw new HttpsError("permission-denied", "Attachment does not belong to this organization.");
+      }
+    }
     const convSnap = await db.doc(`conversations/${conversationId}`).get();
     if (!convSnap.exists) throw new HttpsError("not-found", "Conversation not found.");
     const conv = convSnap.data() as Record<string, unknown>;
@@ -843,6 +857,8 @@ export const sendReply = onCall(
         to: conv.customer_ref,
         subject: conv.subject ?? "",
         body,
+        cc,
+        attachment,
         connectionOwnerUid: conv.connection_scope === "personal" ? conv.owner_uid : undefined,
         humanInitiated: true,
         senderUid: request.auth.uid,
@@ -864,6 +880,7 @@ export const sendReply = onCall(
         conversation_id: conversationId, enterprise_id: enterpriseId, channel,
         sender_type: "us", from: "You", from_email: "", subject: conv.subject ?? "",
         body, snippet: body.slice(0, 200), timestamp: new Date(), created_at: FieldValue.serverTimestamp(),
+        cc: cc ?? null, attachment: attachment ?? null,
         connection_scope: actionParams.connectionScope, owner_uid: actionParams.ownerUid,
       });
       await db.doc(`conversations/${conversationId}`).set(
@@ -874,6 +891,37 @@ export const sendReply = onCall(
     return { ok: result.status === "executed" || result.status === "pending", ...result };
   }
 );
+
+/** Upload one human-selected Inbox attachment before it enters the approval gate. */
+export const uploadInboxAttachment = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const enterpriseId = request.data?.enterpriseId as string | undefined;
+  const originalName = (request.data?.fileName as string | undefined)?.trim();
+  const contentType = (request.data?.contentType as string | undefined)?.trim() || "application/octet-stream";
+  const encoded = request.data?.base64 as string | undefined;
+  if (!enterpriseId || !originalName || !encoded) throw new HttpsError("invalid-argument", "Missing attachment data.");
+  const { db, bucket, FieldValue } = await import("./admin");
+  const caller = (await db.doc(`users/${request.auth.uid}`).get()).data();
+  if (caller?.enterprise_id !== enterpriseId) throw new HttpsError("permission-denied", "Wrong organization.");
+  const content = Buffer.from(encoded, "base64");
+  if (!content.length || content.length > 10 * 1024 * 1024) throw new HttpsError("invalid-argument", "Attachment must be 10 MB or smaller.");
+  const safeName = originalName.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(-120) || "attachment";
+  const docRef = db.collection("documents").doc();
+  const storagePath = `documents/${enterpriseId}/${docRef.id}/${safeName}`;
+  await bucket().file(storagePath).save(content, { contentType, resumable: false });
+  await docRef.set({
+    enterprise_id: enterpriseId,
+    name: originalName,
+    file: { name: originalName, size: content.length },
+    content_type: contentType,
+    storage_path: storagePath,
+    type: "email_attachment",
+    source: "inbox",
+    created_by_uid: request.auth.uid,
+    created_at: FieldValue.serverTimestamp(),
+  });
+  return { documentId: docRef.id, storagePath, fileName: originalName, contentType, size: content.length };
+});
 
 /** TEMPORARY — write a tiny file to Storage and return its download URL + bucket, to verify the pipeline. Remove before ship. */
 export const pingStorage = onRequest(async (_req, res) => {

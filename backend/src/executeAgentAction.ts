@@ -218,7 +218,8 @@ async function executeGmailAction(
         (params.subject as string) ?? "",
         (params.body as string) ?? "",
         await loadAttachment(params),
-        params.connectionOwnerUid as string | undefined
+        params.connectionOwnerUid as string | undefined,
+        params.cc as string | undefined
       );
     case "send_email":
       return gmail.sendGmailEmail(enterpriseId, {
@@ -263,7 +264,8 @@ async function executeSmtpAction(
         params.to as string,
         (params.subject as string) ?? "",
         (params.body as string) ?? "",
-        await loadAttachment(params)
+        await loadAttachment(params),
+        params.cc as string | undefined
       );
     case "send_email":
       return smtp.sendSmtpEmail(enterpriseId, {
@@ -331,6 +333,7 @@ async function executeMicrosoftAction(
         subject: params.subject as string,
         body: (params.body as string) ?? "",
         attachment: await loadAttachment(params),
+        cc: params.cc as string | undefined,
       });
     case "send_email":
       return ms.sendOutlookEmail(enterpriseId, {

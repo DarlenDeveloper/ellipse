@@ -55,6 +55,8 @@ export const onPendingActionApproved = onDocumentUpdated(
           subject: params.subject ?? conv?.subject ?? "",
           body: params.body ?? "",
           snippet: String(params.body ?? "").slice(0, 200),
+          cc: params.cc ?? null,
+          attachment: params.attachment ?? null,
           timestamp: new Date(),
           created_at: FieldValue.serverTimestamp(),
           connection_scope: params.connectionScope ?? "org",

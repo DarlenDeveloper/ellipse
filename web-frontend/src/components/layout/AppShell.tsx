@@ -12,7 +12,7 @@ import { IvyBubble } from "@/components/ivy/IvyBubble";
 const bareRoutes = ["/login", "/signup", "/onboarding"];
 
 function ShellInner({ children }: { children: ReactNode }) {
-  const { collapsed } = useSidebar();
+  const { collapsed, navigationHref } = useSidebar();
   const { user, loading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
@@ -39,10 +39,27 @@ function ShellInner({ children }: { children: ReactNode }) {
         className="min-h-screen transition-all duration-200"
         style={{ marginLeft: collapsed ? 70 : 230 }}
       >
-        {children}
+        {navigationHref && navigationHref !== pathname ? <InstantPageTransition /> : children}
       </div>
       {pathname !== "/ivy" && <IvyBubble />}
     </>
+  );
+}
+
+function InstantPageTransition() {
+  return (
+    <main className="min-h-screen bg-[#f7f7f8] p-8" role="status" aria-label="Loading page">
+      <div className="animate-pulse">
+        <div className="h-10 w-56 rounded-xl bg-gray-200/80" />
+        <div className="mt-3 h-5 w-[420px] max-w-full rounded-lg bg-gray-200/60" />
+        <div className="mt-10 grid grid-cols-1 gap-6 xl:grid-cols-2">
+          <div className="h-64 rounded-[28px] bg-white shadow-sm" />
+          <div className="h-64 rounded-[28px] bg-white shadow-sm" />
+          <div className="h-64 rounded-[28px] bg-white shadow-sm" />
+          <div className="h-64 rounded-[28px] bg-white shadow-sm" />
+        </div>
+      </div>
+    </main>
   );
 }
 

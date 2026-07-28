@@ -82,7 +82,8 @@ export async function sendGmailReply(
   subject: string,
   body: string,
   attachment?: { filename: string; contentType: string; content: Buffer },
-  ownerUid?: string
+  ownerUid?: string,
+  cc?: string
 ): Promise<string> {
   const { client } = await authedClientFor(enterpriseId, ownerUid);
   const gmail = google.gmail({ version: "v1", auth: client });
@@ -109,6 +110,7 @@ export async function sendGmailReply(
   const subjectLine = subject.toLowerCase().startsWith("re:") ? subject : `Re: ${subject}`;
   const headers = [
     `To: ${to}`,
+    cc ? `Cc: ${cc}` : "",
     `Subject: ${subjectLine}`,
     inReplyTo ? `In-Reply-To: ${inReplyTo}` : "",
     references ? `References: ${references}` : "",

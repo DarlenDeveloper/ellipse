@@ -44,10 +44,9 @@ const navItems = [
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
-  const { collapsed, toggle } = useSidebar();
+  const { collapsed, toggle, navigationHref, startNavigation, finishNavigation } = useSidebar();
   const { logout } = useAuth();
   const { isManager, loading: accessLoading } = useAccess();
-  const [pendingHref, setPendingHref] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
 
   const handleLogout = async () => {
@@ -62,8 +61,8 @@ export function Sidebar() {
   };
 
   useEffect(() => {
-    setPendingHref(null);
-  }, [pathname]);
+    finishNavigation();
+  }, [pathname, finishNavigation]);
 
   useEffect(() => {
     navItems.filter((item) => item.href !== "/users" || isManager).forEach((item) => router.prefetch(item.href));
@@ -91,17 +90,17 @@ export function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 min-h-0 overflow-y-auto space-y-1.5 -mr-2 pr-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {navItems.filter((item) => item.href !== "/users" || (!accessLoading && isManager)).map((item) => {
-          const active = pendingHref
-            ? pendingHref === item.href
+          const active = navigationHref
+            ? navigationHref === item.href
             : pathname.startsWith(item.href);
-          const pending = pendingHref === item.href && !pathname.startsWith(item.href);
+          const pending = navigationHref === item.href && !pathname.startsWith(item.href);
           return (
             <Link
               key={item.label}
               href={item.href}
               prefetch
               onClick={() => {
-                if (!pathname.startsWith(item.href)) setPendingHref(item.href);
+                if (!pathname.startsWith(item.href)) startNavigation(item.href);
               }}
               aria-current={active ? "page" : undefined}
               aria-busy={pending || undefined}
