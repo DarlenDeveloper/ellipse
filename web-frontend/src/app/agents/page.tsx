@@ -31,7 +31,7 @@ const AGENT_META: Record<string, { name: string; agentId: string; channel: strin
   mercury: { name: "Mercury Store Agent", agentId: "mercury-agent", channel: "Products · Orders · Quotations · Repairs", logo: "/logos/mercury.png" },
 };
 
-type Connection = { type: string; status: string };
+type Connection = { type: string; status: string; scope?: string; owner_uid?: string };
 type Action = { agent_id?: string; status?: string; created_at?: { toDate: () => Date } };
 
 type AgentView = {
@@ -111,8 +111,18 @@ export default function AgentsPage() {
   }, [user]);
 
   const agents = useMemo<AgentView[]>(() => {
-    return connections
-      .filter((conn) => allowsType(conn.type))
+    const visible = connections.filter((conn) => {
+      if (conn.scope === "personal") return !isManager && conn.owner_uid === user?.uid;
+      return allowsType(conn.type);
+    });
+    const byType = new Map<string, Connection>();
+    for (const conn of visible) {
+      const existing = byType.get(conn.type);
+      // For an employee with both options, show their personal connection as
+      // the single agent they actively own. Managers see org connections only.
+      if (!existing || conn.scope === "personal") byType.set(conn.type, conn);
+    }
+    return [...byType.values()]
       .map((conn) => {
         const meta = AGENT_META[conn.type];
         if (!meta) return null;
@@ -135,7 +145,7 @@ export default function AgentsPage() {
         };
       })
       .filter(Boolean) as AgentView[];
-  }, [connections, actions, allowsType, isManager]);
+  }, [connections, actions, allowsType, isManager, user?.uid]);
 
   const filtered = agents.filter(
     (a) =>

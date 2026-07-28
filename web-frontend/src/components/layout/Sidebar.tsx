@@ -24,6 +24,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useSidebar } from "./SidebarContext";
 import { useAuth } from "@/lib/auth-context";
+import { useAccess } from "@/lib/use-access";
 
 const navItems = [
   { icon: Home2, label: "Dashboard", href: "/dashboard" },
@@ -45,6 +46,7 @@ export function Sidebar() {
   const router = useRouter();
   const { collapsed, toggle } = useSidebar();
   const { logout } = useAuth();
+  const { isManager, loading: accessLoading } = useAccess();
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
 
@@ -64,8 +66,8 @@ export function Sidebar() {
   }, [pathname]);
 
   useEffect(() => {
-    navItems.forEach((item) => router.prefetch(item.href));
-  }, [router]);
+    navItems.filter((item) => item.href !== "/users" || isManager).forEach((item) => router.prefetch(item.href));
+  }, [router, isManager]);
 
   return (
     <aside
@@ -88,7 +90,7 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 min-h-0 overflow-y-auto space-y-1.5 -mr-2 pr-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {navItems.map((item) => {
+        {navItems.filter((item) => item.href !== "/users" || (!accessLoading && isManager)).map((item) => {
           const active = pendingHref
             ? pendingHref === item.href
             : pathname.startsWith(item.href);
