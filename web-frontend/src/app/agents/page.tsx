@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 import { CustomAgentModal } from "@/components/agents/CustomAgentModal";
+import { useAccess } from "@/lib/use-access";
 
 // Connection type → the agent that runs it. logo null → falls back to an icon.
 const AGENT_META: Record<string, { name: string; agentId: string; channel: string; logo: string | null }> = {
@@ -59,6 +60,7 @@ type CustomAgent = { id: string; name: string; specialty?: string; tools?: strin
 
 export default function AgentsPage() {
   const { user } = useAuth();
+  const { isManager, allowsType, loading: accessLoading } = useAccess();
   const [enterpriseId, setEnterpriseId] = useState<string | null>(null);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [actions, setActions] = useState<Action[]>([]);
@@ -110,10 +112,14 @@ export default function AgentsPage() {
 
   const agents = useMemo<AgentView[]>(() => {
     return connections
+      .filter((conn) => allowsType(conn.type))
       .map((conn) => {
         const meta = AGENT_META[conn.type];
         if (!meta) return null;
-        const mine = actions.filter((a) => a.agent_id === meta.agentId);
+        // Action records are currently organization-level and do not carry a
+        // reliable initiating user id. Never present org totals as an
+        // employee's personal activity.
+        const mine = isManager ? actions.filter((a) => a.agent_id === meta.agentId) : [];
         const executed = mine.filter((a) => a.status === "executed").length;
         const pending = mine.filter((a) => a.status === "pending").length;
         const last = mine
@@ -129,7 +135,7 @@ export default function AgentsPage() {
         };
       })
       .filter(Boolean) as AgentView[];
-  }, [connections, actions]);
+  }, [connections, actions, allowsType, isManager]);
 
   const filtered = agents.filter(
     (a) =>
@@ -176,7 +182,7 @@ export default function AgentsPage() {
         </div>
       </div>
 
-      {loading ? (
+      {loading || accessLoading ? (
         <p className="text-sm text-gray-400">Loading…</p>
       ) : filtered.length === 0 && customAgents.length === 0 ? (
         <div className="flex flex-col items-center justify-center text-center py-24 bg-white rounded-3xl border border-gray-100">

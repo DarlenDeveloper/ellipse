@@ -408,6 +408,15 @@ const TOOL_CATALOG: Record<string, ToolDecl> = {
 };
 
 const BUILTIN_AGENTS = new Set(["ivy", "zoho", "website", "google-workspace", "smtp", "microsoft365", "whatsapp", "mercury"]);
+const AGENT_CONNECTION: Record<string, string> = {
+  zoho: "zoho",
+  website: "website",
+  "google-workspace": "google-workspace",
+  smtp: "smtp",
+  microsoft365: "microsoft365",
+  whatsapp: "whatsapp",
+  mercury: "mercury",
+};
 
 /** Which tools each built-in agent gets, based on what's connected. */
 function toolsFor(agentId: string, connected: Set<string>): ToolDecl[] {
@@ -495,7 +504,8 @@ async function runTool(
   agentId: string,
   name: string,
   args: Record<string, unknown>,
-  isOwner: boolean
+  isOwner: boolean,
+  allowedConnections: Set<string>
 ): Promise<string> {
   switch (name) {
     case "search_conversations":
@@ -515,7 +525,7 @@ async function runTool(
     case "create_document":
       return toolCreateDocument(enterpriseId, agentId, args);
     case "generate_report":
-      return toolGenerateReport(enterpriseId, agentId, args);
+      return toolGenerateReport(enterpriseId, agentId, args, allowedConnections);
     case "generate_owner_analysis":
       return toolOwnerAnalysis(enterpriseId, agentId, args, isOwner);
     case "store_list":
@@ -786,14 +796,19 @@ async function toolOwnerAnalysis(enterpriseId: string, agentId: string, args: Re
 }
 
 /** Multi-source report generator: one Excel per requested (and connected) source. */
-async function toolGenerateReport(enterpriseId: string, agentId: string, args: Record<string, unknown>) {
+async function toolGenerateReport(
+  enterpriseId: string,
+  agentId: string,
+  args: Record<string, unknown>,
+  allowedConnections: Set<string>
+) {
   // Which sources are connected + report-capable?
   const connSnap = await db.collection("connections").where("enterprise_id", "==", enterpriseId).get();
-  const connected = new Set(
+  const orgConnected = new Set(
     connSnap.docs.map((d) => d.data()).filter((c) => c.status === "active").map((c) => c.type as string)
   );
   const capable = ["zoho", "website", "google-workspace", "smtp", "microsoft365", "whatsapp"].filter((t) =>
-    connected.has(t)
+    orgConnected.has(t) && allowedConnections.has(t)
   );
   if (capable.length === 0) {
     return JSON.stringify({ note: "No connected source can produce a report yet. Connect an integration first." });
@@ -1409,6 +1424,17 @@ export async function chatWithAgent(
   const { allowedConnectionTypes } = await import("./access");
   const connected = await allowedConnectionTypes(enterpriseId, callerUid, activeConns);
 
+  // Do not rely on the UI hiding an agent. A caller may invoke askAgent with
+  // any agentId directly, so enforce shared/personal connection access here.
+  const requiredConnection = AGENT_CONNECTION[agentId];
+  if (requiredConnection && !connected.has(requiredConnection)) {
+    return {
+      reply: "You do not have access to this organization connection. Request access from an owner or admin first.",
+      actions: [],
+      files: [],
+    };
+  }
+
   const kb = await loadKnowledgeBase(enterpriseId);
 
   // Custom (user-defined) agent? Load its config; otherwise use the built-in.
@@ -1450,7 +1476,7 @@ export async function chatWithAgent(
   const files: { name: string; url: string; type: string }[] = [];
   for (const call of first.functionCalls) {
     try {
-      const out = await runTool(enterpriseId, agentId, call.name, call.args, isOwner);
+      const out = await runTool(enterpriseId, agentId, call.name, call.args, isOwner, connected);
       logger.info("tool result", { agentId, tool: call.name, enterpriseId, out: out.slice(0, 500) });
       results.push(`${call.name} → ${out}`);
       if (
