@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Image from "next/image";
-import { SearchNormal1, TickCircle, CloseCircle, ClipboardTick, Cpu } from "iconsax-react";
+import { SearchNormal1, TickCircle, CloseCircle, ClipboardTick, Cpu, Edit2, Eye } from "iconsax-react";
 import {
   collection,
   query,
@@ -90,7 +90,11 @@ function paramLines(params?: Record<string, unknown>): { label: string; value: s
   const lines: { label: string; value: string }[] = [];
   const push = (k: string, v: unknown) => {
     const value = v === null || v === undefined ? "" : String(v);
-    if (value.trim()) lines.push({ label: k.replace(/_/g, " "), value });
+    const label = k
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .replace(/_/g, " ")
+      .replace(/\bid\b/gi, "ID");
+    if (value.trim()) lines.push({ label, value });
   };
   for (const [k, v] of Object.entries(params)) {
     if (v && typeof v === "object" && !Array.isArray(v)) {
@@ -115,6 +119,7 @@ export default function ApprovalsPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("All");
+  const [editItem, setEditItem] = useState<PendingAction | null>(null);
 
   useEffect(() => {
     if (!enterpriseId) return;
@@ -264,19 +269,19 @@ export default function ApprovalsPage() {
                     )}
                   </div>
 
-                  {/* Details — truncated, full breakdown on hover */}
+                  {/* Quick hover preview; the complete payload also lives in the review modal. */}
                   <div className="relative min-w-0">
                     <span className="block text-sm text-gray-600 truncate">
                       {summarizeParams(item.params)}
                     </span>
                     {paramLines(item.params).length > 0 && (
-                      <div className="pointer-events-none absolute left-0 top-full mt-2 z-30 w-[360px] max-w-[70vw] opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-150">
-                        <div className="bg-white rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.18)] border border-gray-100 p-4 space-y-2 max-h-72 overflow-y-auto">
-                          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-300">Details</p>
-                          {paramLines(item.params).map((l, i) => (
-                            <div key={i} className="text-sm">
-                              <span className="text-gray-400 capitalize">{l.label}: </span>
-                              <span className="text-gray-800 break-words whitespace-pre-wrap">{l.value}</span>
+                      <div className="pointer-events-none absolute left-0 top-full z-30 mt-2 w-[360px] max-w-[70vw] translate-y-1 opacity-0 transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100">
+                        <div className="max-h-72 space-y-2 overflow-y-auto rounded-2xl border border-gray-100 bg-white p-4 shadow-[0_12px_40px_rgba(0,0,0,0.18)]">
+                          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-300">Quick preview</p>
+                          {paramLines(item.params).map((line, index) => (
+                            <div key={`${line.label}-${index}`} className="text-sm">
+                              <span className="capitalize text-gray-400">{line.label}: </span>
+                              <span className="whitespace-pre-wrap break-words text-gray-800">{line.value}</span>
                             </div>
                           ))}
                         </div>
@@ -302,6 +307,14 @@ export default function ApprovalsPage() {
                     {isPending ? (
                       <>
                         <button
+                          onClick={() => setEditItem(item)}
+                          disabled={busyId === item.id}
+                          className="flex items-center gap-1.5 text-xs font-semibold text-gray-800 border border-gray-200 bg-white hover:border-gray-400 hover:shadow-sm rounded-full px-3 py-1.5 disabled:opacity-50 transition-all"
+                        >
+                          {item.action_type === "send_email" || item.action_type === "send_reply" ? <Edit2 size={13} /> : <Eye size={13} />}
+                          {item.action_type === "send_email" || item.action_type === "send_reply" ? "Review & edit" : "Review"}
+                        </button>
+                        <button
                           onClick={() => decide(item.id, "approved")}
                           disabled={busyId === item.id}
                           className="flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-full px-3 py-1.5 disabled:opacity-50"
@@ -319,7 +332,12 @@ export default function ApprovalsPage() {
                         </button>
                       </>
                     ) : (
-                      <span className="text-xs text-gray-300">—</span>
+                      <button
+                        onClick={() => setEditItem(item)}
+                        className="flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-black rounded-full px-3 py-1.5 transition-colors"
+                      >
+                        <Eye size={13} /> Review
+                      </button>
                     )}
                   </div>
                 </div>
@@ -328,6 +346,96 @@ export default function ApprovalsPage() {
           </div>
         )}
       </div>
+      {editItem && (
+        <EmailApprovalEditor
+          item={editItem}
+          onClose={() => setEditItem(null)}
+          onSaved={() => setEditItem(null)}
+        />
+      )}
     </main>
   );
+}
+
+function EmailApprovalEditor({ item, onClose, onSaved }: { item: PendingAction; onClose: () => void; onSaved: () => void }) {
+  const params = item.params ?? {};
+  const isReply = item.action_type === "send_reply";
+  const isEditable = item.status === "pending" && (isReply || item.action_type === "send_email");
+  const [to, setTo] = useState(String(params.to ?? ""));
+  const [cc, setCc] = useState(String(params.cc ?? ""));
+  const [subject, setSubject] = useState(String(params.subject ?? ""));
+  const [body, setBody] = useState(String(params.body ?? ""));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    if (!to.trim() || !body.trim()) return;
+    setSaving(true); setError(null);
+    try {
+      await updateDoc(doc(db, "pending_actions", item.id), {
+        params: { ...params, to: to.trim(), cc: cc.trim() || null, subject: subject.trim(), body: body.trim() },
+        action_summary: `${isReply ? "Reply" : "Email"} “${subject.trim() || "(no subject)"}” to ${to.trim()} — edited before approval.`,
+        updated_at: serverTimestamp(),
+      });
+      onSaved();
+    } catch (e) {
+      setError((e as Error).message || "The email could not be saved.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm" onMouseDown={onClose}>
+      <div className="w-full max-w-3xl overflow-hidden rounded-[28px] bg-white shadow-[0_30px_100px_rgba(15,23,42,0.35)]" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="bg-black px-7 py-6 text-white">
+          <div className="flex items-start justify-between gap-5">
+            <div>
+              <div className="mb-3 flex items-center gap-2">
+                <span className="rounded-full bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/70">Agent approval</span>
+                <span className="rounded-full bg-amber-400/15 px-3 py-1 text-[11px] font-semibold text-amber-200">{statusLabel(item.status)}</span>
+              </div>
+              <h2 className="text-2xl font-bold tracking-tight">{isEditable ? "Review and refine the response" : "Review agent action"}</h2>
+              <p className="mt-2 max-w-xl text-sm leading-6 text-white/55">{isEditable ? "Make any final changes before approval. Saving the draft will never send it automatically." : "Inspect the complete action and data the agent used before making a decision."}</p>
+            </div>
+            <button onClick={onClose} className="rounded-full bg-white/10 p-2 text-white/60 transition-colors hover:bg-white/20 hover:text-white" aria-label="Close review"><CloseCircle size={22} variant="Linear" /></button>
+          </div>
+        </div>
+        <div className="max-h-[70vh] overflow-y-auto px-7 py-6">
+          <div className="mb-6 grid grid-cols-3 gap-3">
+            <ReviewMeta label="Agent" value={agentLabel(item.agent_id)} />
+            <ReviewMeta label="Action" value={actionLabel(item.action_type)} />
+            <ReviewMeta label="Channel" value={item.target_system || "Internal"} />
+          </div>
+          {item.action_summary && <div className="mb-6 rounded-2xl border border-violet-100 bg-violet-50/60 px-4 py-3"><p className="text-[11px] font-bold uppercase tracking-wider text-violet-400">Agent reasoning</p><p className="mt-1.5 text-sm leading-6 text-slate-700">{item.action_summary}</p></div>}
+          {error && <p className="mb-5 rounded-xl bg-red-50 px-4 py-2 text-sm text-red-600">{error}</p>}
+          {isEditable ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <FieldLabel label="To"><input value={to} readOnly={isReply} onChange={(e) => setTo(e.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm text-slate-800 outline-none transition focus:border-violet-300 focus:ring-4 focus:ring-violet-100 read-only:bg-slate-50 read-only:text-slate-500" /></FieldLabel>
+                <FieldLabel label="CC (optional)"><input value={cc} readOnly={isReply} onChange={(e) => setCc(e.target.value)} placeholder="No CC recipients" className="mt-1.5 w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm text-slate-800 outline-none transition focus:border-violet-300 focus:ring-4 focus:ring-violet-100 read-only:bg-slate-50 read-only:text-slate-500" /></FieldLabel>
+              </div>
+              <FieldLabel label="Subject"><input value={subject} onChange={(e) => setSubject(e.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm text-slate-800 outline-none transition focus:border-violet-300 focus:ring-4 focus:ring-violet-100" /></FieldLabel>
+              <FieldLabel label="Message"><textarea autoFocus value={body} onChange={(e) => setBody(e.target.value)} rows={10} className="mt-1.5 w-full resize-y rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm leading-6 text-slate-800 outline-none transition focus:border-violet-300 focus:ring-4 focus:ring-violet-100" /></FieldLabel>
+              {!!params.attachment && <p className="rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-500">Attachment retained: <span className="font-semibold text-slate-700">{String((params.attachment as Record<string, unknown>).fileName ?? "attached file")}</span></p>}
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-2xl border border-slate-200">
+              {paramLines(params).map((line, index) => <div key={`${line.label}-${index}`} className="grid grid-cols-[160px_1fr] border-b border-slate-100 px-4 py-3 last:border-0"><span className="text-xs font-semibold capitalize text-slate-400">{line.label}</span><span className="whitespace-pre-wrap break-words text-sm text-slate-700">{line.value}</span></div>)}
+              {paramLines(params).length === 0 && <p className="px-4 py-8 text-center text-sm text-slate-400">No additional action data.</p>}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50/70 px-7 py-4"><p className="text-xs text-slate-400">Requested {formatDate(item.created_at)}</p><div className="flex gap-3"><button onClick={onClose} className="rounded-full px-5 py-2.5 text-sm font-semibold text-slate-500 hover:bg-slate-200/60">Close</button>{isEditable && <button onClick={save} disabled={!to.trim() || !body.trim() || saving} className="rounded-full bg-slate-950 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-slate-950/15 transition-transform hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-40">{saving ? "Saving changes…" : "Save edited draft"}</button>}</div></div>
+      </div>
+    </div>
+  );
+}
+
+function ReviewMeta({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-2xl bg-slate-50 px-4 py-3"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</p><p className="mt-1 truncate text-sm font-semibold capitalize text-slate-800">{value}</p></div>;
+}
+
+function FieldLabel({ label, children }: { label: string; children: ReactNode }) {
+  return <label className="block text-xs font-semibold text-slate-500">{label}{children}</label>;
 }

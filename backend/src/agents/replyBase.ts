@@ -4,6 +4,7 @@ import { callGemini } from "../gemini";
 import { executeAgentAction } from "../executeAgentAction";
 import { enrichFromZoho, ZohoEnrichment } from "../connections/zoho";
 import { loadKnowledgeBase } from "./knowledge";
+import { researchForReply } from "./research";
 import { TargetSystem } from "../types";
 
 /**
@@ -62,6 +63,9 @@ function buildSystem(orgName: string, cfg: ReplyAgentConfig): string {
 You read a customer conversation and draft a reply on ${orgName}'s behalf.
 ${toneLine}
 - Use any CRM context and company knowledge base provided to personalize the reply.
+- When connected-system research is provided, treat it as the only authoritative source for product specifications, price, and availability.
+- If research returns multiple plausible products, ask the customer for the exact model or SKU instead of mixing their details.
+- If research finds no matching product or reports an error, be transparent and ask for clarification. Never claim you forwarded the request unless an action actually did so.
 - You also act as a personal assistant: call send_reply for ANY message from a REAL person who expects a response — business inquiries, support, AND personal/individual correspondence. Match the sender's context and intent.
 - NEVER reply to automated, transactional, notification, security-alert, receipt, newsletter, no-reply, or bulk-marketing emails. If it's machine-sent and not a genuine human message, respond with plain text saying so and do NOT call the tool.
 - Keep replies concise and specific. Do not invent facts, prices, or commitments you weren't given.`;
@@ -114,6 +118,19 @@ export async function draftAndRoute(
     .map((m) => `[${m.sender_type ?? "unknown"}] ${(m.body || m.snippet || "").slice(0, 1500)}`)
     .join("\n\n");
 
+  let connectedResearch = "";
+  if (cfg.agentId === "gmail-agent") {
+    try {
+      connectedResearch = await researchForReply(enterpriseId, transcript);
+    } catch (error) {
+      logger.error(`${cfg.agentLabel} research pass failed`, {
+        enterpriseId,
+        conversationId,
+        error: (error as Error).message,
+      });
+    }
+  }
+
   const prompt = [
     `Subject: ${conv.subject ?? "(none)"}`,
     `Customer: ${ref || "(unknown)"}`,
@@ -122,6 +139,9 @@ export async function draftAndRoute(
     `--- CRM context ---`,
     renderContext(context),
     ``,
+    connectedResearch
+      ? `--- Connected-system research (verified, read-only) ---\n${connectedResearch}\n`
+      : "",
     `--- Conversation (oldest first) ---`,
     transcript,
     ``,

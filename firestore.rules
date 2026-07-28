@@ -131,7 +131,15 @@ service cloud.firestore {
       // Approve/reject: managers or members explicitly granted approval rights.
       allow update: if isMember(resource.data.enterprise_id)
         && (myRole() == 'owner' || myRole() == 'admin' || userDoc().can_approve == true)
-        && request.resource.data.enterprise_id == resource.data.enterprise_id;
+        && request.resource.data.enterprise_id == resource.data.enterprise_id
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'params', 'action_summary', 'decided_at', 'updated_at'
+        ])
+        && (request.resource.data.status == 'pending'
+          || request.resource.data.status == 'approved'
+          || request.resource.data.status == 'rejected')
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['params', 'action_summary'])
+          || (resource.data.status == 'pending' && request.resource.data.status == 'pending'));
       allow create, delete: if false;
     }
 

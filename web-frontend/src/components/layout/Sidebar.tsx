@@ -1,8 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   Home2,
   Sms,
@@ -39,7 +40,17 @@ const navItems = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const { collapsed, toggle } = useSidebar();
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPendingHref(null);
+  }, [pathname]);
+
+  useEffect(() => {
+    navItems.forEach((item) => router.prefetch(item.href));
+  }, [router]);
 
   return (
     <aside
@@ -63,11 +74,20 @@ export function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 min-h-0 overflow-y-auto space-y-1.5 -mr-2 pr-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {navItems.map((item) => {
-          const active = pathname.startsWith(item.href);
+          const active = pendingHref
+            ? pendingHref === item.href
+            : pathname.startsWith(item.href);
+          const pending = pendingHref === item.href && !pathname.startsWith(item.href);
           return (
             <Link
               key={item.label}
               href={item.href}
+              prefetch
+              onClick={() => {
+                if (!pathname.startsWith(item.href)) setPendingHref(item.href);
+              }}
+              aria-current={active ? "page" : undefined}
+              aria-busy={pending || undefined}
               title={collapsed ? item.label : undefined}
               className={cn(
                 "flex items-center rounded-full text-[15px] font-medium transition-colors",
