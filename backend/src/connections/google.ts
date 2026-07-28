@@ -20,17 +20,17 @@ export function oauthClient() {
 }
 
 /** Build the Google consent URL. `state` carries the enterpriseId back to us. */
-export function buildConsentUrl(enterpriseId: string): string {
+export function buildConsentUrl(state: string): string {
   return oauthClient().generateAuthUrl({
     access_type: "offline", // needed to receive a refresh token
     prompt: "consent",
     scope: SCOPES,
-    state: enterpriseId,
+    state,
   });
 }
 
 /** Exchange the auth code for tokens and persist the connection. */
-export async function handleCallback(code: string, enterpriseId: string): Promise<string> {
+export async function handleCallback(code: string, enterpriseId: string, ownerUid?: string): Promise<string> {
   const client = oauthClient();
   const { tokens } = await client.getToken(code);
   client.setCredentials(tokens);
@@ -43,8 +43,9 @@ export async function handleCallback(code: string, enterpriseId: string): Promis
   // Secret (refresh token) goes to the locked connection_secrets collection;
   // the public connections doc holds only non-secret metadata.
   const { saveConnectionSecret } = await import("../connectionSecrets");
-  await saveConnectionSecret(enterpriseId, "google-workspace", { refresh_token: tokens.refresh_token ?? null });
-  await db.doc(`connections/${enterpriseId}_google-workspace`).set(
+  await saveConnectionSecret(enterpriseId, "google-workspace", { refresh_token: tokens.refresh_token ?? null }, ownerUid);
+  const connectionId = `${enterpriseId}_google-workspace${ownerUid ? `_personal_${ownerUid}` : ""}`;
+  await db.doc(`connections/${connectionId}`).set(
     {
       enterprise_id: enterpriseId,
       type: "google-workspace",
@@ -53,13 +54,15 @@ export async function handleCallback(code: string, enterpriseId: string): Promis
       account_email: email,
       scopes: SCOPES,
       connected_at: FieldValue.serverTimestamp(),
+      scope: ownerUid ? "personal" : "org",
+      owner_uid: ownerUid ?? null,
     },
     { merge: true }
   );
 
   // Pull recent mail immediately so the inbox isn't empty after connecting
   try {
-    await ingestRecentGmail(enterpriseId);
+    await ingestRecentGmail(enterpriseId, 15, ownerUid);
   } catch {
     // non-fatal — connection still succeeds; a manual sync can retry
   }
@@ -78,9 +81,10 @@ export async function sendGmailReply(
   to: string,
   subject: string,
   body: string,
-  attachment?: { filename: string; contentType: string; content: Buffer }
+  attachment?: { filename: string; contentType: string; content: Buffer },
+  ownerUid?: string
 ): Promise<string> {
-  const { client } = await authedClientFor(enterpriseId);
+  const { client } = await authedClientFor(enterpriseId, ownerUid);
   const gmail = google.gmail({ version: "v1", auth: client });
 
   // Pull the latest message's Message-ID/References for threading.
@@ -156,9 +160,10 @@ export async function sendGmailReply(
  */
 export async function sendGmailEmail(
   enterpriseId: string,
-  opts: { to: string; subject: string; body: string; cc?: string; attachment?: { filename: string; contentType: string; content: Buffer } }
+  opts: { to: string; subject: string; body: string; cc?: string; attachment?: { filename: string; contentType: string; content: Buffer } },
+  ownerUid?: string
 ): Promise<string> {
-  const { client } = await authedClientFor(enterpriseId);
+  const { client } = await authedClientFor(enterpriseId, ownerUid);
   const gmail = google.gmail({ version: "v1", auth: client });
   const { to, subject, body, cc, attachment } = opts;
 
@@ -196,10 +201,11 @@ export async function sendGmailEmail(
 }
 
 /** Return an authed OAuth client for a connected enterprise (for API calls). */
-export async function authedClientFor(enterpriseId: string) {
-  const snap = await db.doc(`connections/${enterpriseId}_google-workspace`).get();
+export async function authedClientFor(enterpriseId: string, ownerUid?: string) {
+  const id = `${enterpriseId}_google-workspace${ownerUid ? `_personal_${ownerUid}` : ""}`;
+  const snap = await db.doc(`connections/${id}`).get();
   const { getConnectionSecret } = await import("../connectionSecrets");
-  const secret = await getConnectionSecret(enterpriseId, "google-workspace", snap.data());
+  const secret = await getConnectionSecret(enterpriseId, "google-workspace", snap.data(), ownerUid);
   const refresh = secret.refresh_token as string | undefined;
   const accountEmail = snap.data()?.account_email as string | undefined;
   if (!refresh) throw new Error("google-workspace not connected");
@@ -244,7 +250,7 @@ export async function syncAllConnectedGmail(): Promise<number> {
     const d = doc.data();
     if (d.status !== "active" || !d.enterprise_id) continue;
     try {
-      total += await ingestRecentGmail(d.enterprise_id);
+      total += await ingestRecentGmail(d.enterprise_id, 15, d.scope === "personal" ? d.owner_uid : undefined);
     } catch (e) {
       // Non-fatal — keep syncing the rest; a bad/expired token shouldn't block others.
       console.error("scheduled Gmail sync failed", d.enterprise_id, (e as Error).message);
@@ -257,8 +263,8 @@ export async function syncAllConnectedGmail(): Promise<number> {
  * Pull recent inbox messages and normalize them into Firestore
  * (conversations + messages), plus log analytics_events. This is the "read" step.
  */
-export async function ingestRecentGmail(enterpriseId: string, max = 15): Promise<number> {
-  const { client, accountEmail } = await authedClientFor(enterpriseId);
+export async function ingestRecentGmail(enterpriseId: string, max = 15, ownerUid?: string): Promise<number> {
+  const { client, accountEmail } = await authedClientFor(enterpriseId, ownerUid);
   const gmail = google.gmail({ version: "v1", auth: client });
 
   const list = await gmail.users.messages.list({ userId: "me", maxResults: max, q: "in:inbox" });
@@ -267,7 +273,8 @@ export async function ingestRecentGmail(enterpriseId: string, max = 15): Promise
 
   for (const { id } of ids) {
     if (!id) continue;
-    const msgDocRef = db.doc(`messages/${id}`);
+    const scopedId = ownerUid ? `${ownerUid}_${id}` : id;
+    const msgDocRef = db.doc(`messages/${scopedId}`);
     if ((await msgDocRef.get()).exists) continue; // already ingested
 
     const full = await gmail.users.messages.get({ userId: "me", id, format: "full" });
@@ -284,7 +291,8 @@ export async function ingestRecentGmail(enterpriseId: string, max = 15): Promise
     const timestamp = dateStr ? new Date(dateStr) : new Date();
 
     // Conversation (keyed by Gmail thread)
-    await db.doc(`conversations/${enterpriseId}_${threadId}`).set(
+    const conversationId = `${enterpriseId}_${ownerUid ? `${ownerUid}_` : ""}${threadId}`;
+    await db.doc(`conversations/${conversationId}`).set(
       {
         enterprise_id: enterpriseId,
         channel: "google-workspace",
@@ -294,13 +302,15 @@ export async function ingestRecentGmail(enterpriseId: string, max = 15): Promise
         status: "open",
         last_message_at: timestamp,
         updated_at: FieldValue.serverTimestamp(),
+        connection_scope: ownerUid ? "personal" : "org",
+        owner_uid: ownerUid ?? null,
       },
       { merge: true }
     );
 
     // Message
     await msgDocRef.set({
-      conversation_id: `${enterpriseId}_${threadId}`,
+      conversation_id: conversationId,
       enterprise_id: enterpriseId,
       channel: "google-workspace",
       gmail_id: id,
@@ -314,12 +324,14 @@ export async function ingestRecentGmail(enterpriseId: string, max = 15): Promise
       body: extractBody(payload).slice(0, 20000),
       timestamp,
       created_at: FieldValue.serverTimestamp(),
+      connection_scope: ownerUid ? "personal" : "org",
+      owner_uid: ownerUid ?? null,
     });
 
     await db.collection("analytics_events").add({
       source: "message",
       workspace_id: enterpriseId,
-      payload: { channel: "google-workspace", from: fromEmail, subject },
+      payload: { channel: "google-workspace", from: fromEmail, subject, owner_uid: ownerUid ?? null, connection_scope: ownerUid ? "personal" : "org" },
       timestamp: FieldValue.serverTimestamp(),
     });
 

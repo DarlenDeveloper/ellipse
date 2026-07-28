@@ -83,6 +83,8 @@ export async function draftAndRoute(
     subject?: string;
     thread_id?: string;
     channel?: string;
+    connection_scope?: string;
+    owner_uid?: string;
   };
 
   const entSnap = await db.doc(`enterprises/${enterpriseId}`).get();
@@ -106,10 +108,18 @@ export async function draftAndRoute(
   const ref = (conv.customer_ref ?? "").toLowerCase();
 
   let context: ZohoEnrichment = { found: false, type: null, record: null, deals: [] };
-  try {
-    context = await enrichFromZoho(enterpriseId, ref);
-  } catch {
-    // Zoho may not be connected — proceed without CRM context.
+  const personalOwner = conv.connection_scope === "personal" ? conv.owner_uid : undefined;
+  let mayUseZoho = !personalOwner;
+  if (personalOwner) {
+    const grant = (await db.doc(`connection_grants/${enterpriseId}_${personalOwner}`).get()).data();
+    mayUseZoho = ((grant?.types as string[] | undefined) ?? []).includes("zoho");
+  }
+  if (mayUseZoho) {
+    try {
+      context = await enrichFromZoho(enterpriseId, ref);
+    } catch {
+      // Zoho may not be connected — proceed without CRM context.
+    }
   }
 
   const knowledge = await loadKnowledgeBase(enterpriseId);
@@ -167,6 +177,7 @@ export async function draftAndRoute(
         to: ref,
         subject: conv.subject ?? "",
         body,
+        connectionOwnerUid: personalOwner,
       },
       targetSystem: cfg.targetSystem,
       reasoning: gemini.text || "Suggested reply to the customer.",

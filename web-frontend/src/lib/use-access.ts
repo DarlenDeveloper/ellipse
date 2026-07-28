@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { doc, getDoc, onSnapshot } from "firebase/firestore";
+import { collection, doc, getDoc, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "./firebase";
 import { useAuth } from "./auth-context";
 
@@ -27,8 +27,11 @@ export type AccessState = {
   role: Role;
   isManager: boolean;
   grantedTypes: Set<string>;
+  sharedTypes: Set<string>;
+  personalTypes: Set<string>;
   allowsType: (type: string) => boolean;
   allowsChannel: (channel: string) => boolean;
+  allowsRecord: (type: string, scope?: string | null, ownerUid?: string | null) => boolean;
 };
 
 export function useAccess(): AccessState {
@@ -37,10 +40,16 @@ export function useAccess(): AccessState {
   const [enterpriseId, setEnterpriseId] = useState<string | null>(null);
   const [role, setRole] = useState<Role>("employee");
   const [grantedTypes, setGrantedTypes] = useState<Set<string>>(new Set());
+  const [sharedGrantedTypes, setSharedGrantedTypes] = useState<Set<string>>(new Set());
+  const [ownedPersonalTypes, setOwnedPersonalTypes] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!user) return;
     let unsubGrant: (() => void) | undefined;
+    let unsubPersonal: (() => void) | undefined;
+    let sharedTypes = new Set<string>();
+    let personalTypes = new Set<string>();
+    const publishTypes = () => setGrantedTypes(new Set([...sharedTypes, ...personalTypes]));
     let active = true;
     (async () => {
       const uSnap = await getDoc(doc(db, "users", user.uid));
@@ -53,9 +62,19 @@ export function useAccess(): AccessState {
       if (eid && r === "employee") {
         // Watch the grant so approvals reflect live.
         unsubGrant = onSnapshot(doc(db, "connection_grants", `${eid}_${user.uid}`), (g) => {
-          setGrantedTypes(new Set(((g.data()?.types as string[] | undefined) ?? [])));
+          sharedTypes = new Set(((g.data()?.types as string[] | undefined) ?? []));
+          setSharedGrantedTypes(new Set(sharedTypes));
+          publishTypes();
           setLoading(false);
         });
+        unsubPersonal = onSnapshot(
+          query(collection(db, "connections"), where("enterprise_id", "==", eid), where("owner_uid", "==", user.uid)),
+          (snap) => {
+            personalTypes = new Set(snap.docs.map((d) => d.data()).filter((d) => d.scope === "personal" && d.status === "active").map((d) => d.type as string));
+            setOwnedPersonalTypes(new Set(personalTypes));
+            publishTypes();
+          }
+        );
       } else {
         setLoading(false);
       }
@@ -63,12 +82,15 @@ export function useAccess(): AccessState {
     return () => {
       active = false;
       if (unsubGrant) unsubGrant();
+      if (unsubPersonal) unsubPersonal();
     };
   }, [user]);
 
   const isManager = role === "owner" || role === "admin";
   const allowsType = (type: string) => isManager || grantedTypes.has(type);
   const allowsChannel = (channel: string) => isManager || grantedTypes.has(channel);
+  const allowsRecord = (type: string, scope?: string | null, ownerUid?: string | null) =>
+    isManager || (scope === "personal" ? ownerUid === user?.uid : sharedGrantedTypes.has(type));
 
-  return { loading, enterpriseId, role, isManager, grantedTypes, allowsType, allowsChannel };
+  return { loading, enterpriseId, role, isManager, grantedTypes, sharedTypes: sharedGrantedTypes, personalTypes: ownedPersonalTypes, allowsType, allowsChannel, allowsRecord };
 }

@@ -20,17 +20,18 @@ export const SECRET_FIELDS = [
   "password",
 ] as const;
 
-function secretRef(enterpriseId: string, type: string) {
-  return db.doc(`connection_secrets/${enterpriseId}_${type}`);
+function secretRef(enterpriseId: string, type: string, ownerUid?: string) {
+  return db.doc(`connection_secrets/${enterpriseId}_${type}${ownerUid ? `_personal_${ownerUid}` : ""}`);
 }
 
 export async function saveConnectionSecret(
   enterpriseId: string,
   type: string,
-  secret: Record<string, unknown>
+  secret: Record<string, unknown>,
+  ownerUid?: string
 ): Promise<void> {
-  await secretRef(enterpriseId, type).set(
-    { enterprise_id: enterpriseId, type, ...secret, updated_at: FieldValue.serverTimestamp() },
+  await secretRef(enterpriseId, type, ownerUid).set(
+    { enterprise_id: enterpriseId, type, scope: ownerUid ? "personal" : "org", owner_uid: ownerUid ?? null, ...secret, updated_at: FieldValue.serverTimestamp() },
     { merge: true }
   );
 }
@@ -42,9 +43,10 @@ export async function saveConnectionSecret(
 export async function getConnectionSecret(
   enterpriseId: string,
   type: string,
-  legacy?: Record<string, unknown>
+  legacy?: Record<string, unknown>,
+  ownerUid?: string
 ): Promise<Record<string, any>> {
-  const snap = await secretRef(enterpriseId, type).get();
+  const snap = await secretRef(enterpriseId, type, ownerUid).get();
   const secret = (snap.data() as Record<string, any>) ?? {};
   if (!legacy) return secret;
   // Fill any missing secret from the legacy connection doc.
@@ -55,6 +57,6 @@ export async function getConnectionSecret(
   return merged;
 }
 
-export async function deleteConnectionSecret(enterpriseId: string, type: string): Promise<void> {
-  await secretRef(enterpriseId, type).delete().catch(() => undefined);
+export async function deleteConnectionSecret(enterpriseId: string, type: string, ownerUid?: string): Promise<void> {
+  await secretRef(enterpriseId, type, ownerUid).delete().catch(() => undefined);
 }

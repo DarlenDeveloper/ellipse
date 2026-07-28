@@ -27,7 +27,8 @@ Use this checklist for the first controlled Mercury Computers staff rollout. Thi
 - Approval means immediate use of the existing company connection; there is no second “add” step.
 - A shared grant does not make the connection personal and does not let the employee disconnect it.
 - Remove unwanted grants from Users → Manage access.
-- Personal employee OAuth integrations are **not implemented yet**. Do not promise this during onboarding.
+- Employees can connect a personal Google Workspace account. It is stored separately from the company credential and only that employee may use/disconnect it.
+- Personal Microsoft 365, Zoho and password/API connectors are still rolling out; do not promise those yet.
 
 ## Five-minute permission test per employee
 
@@ -51,7 +52,7 @@ Use this checklist for the first controlled Mercury Computers staff rollout. Thi
 
 - Organization audit logs are not built yet; this is the next launch-priority feature.
 - Some within-organization per-connection reads are still enforced in the application layer and need server-side hardening before public launch.
-- Personal employee integrations are deferred.
+- Personal Google Workspace is live in the backend; other personal providers remain deferred.
 - Outlook reply attachments above 3 MB are not supported yet.
 - Firebase Functions Node.js 20 must be upgraded before October 30, 2026.
 - Existing debug functions must be removed before public launch.

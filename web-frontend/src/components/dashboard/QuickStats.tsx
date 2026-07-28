@@ -12,7 +12,7 @@ const TARGET_TO_TYPE: Record<string, string> = { gmail: "google-workspace" };
 const asType = (t?: string) => (t ? TARGET_TO_TYPE[t] ?? t : "");
 
 export function QuickStats() {
-  const { enterpriseId, isManager, allowsType, allowsChannel } = useAccess();
+  const { enterpriseId, isManager, allowsType, allowsChannel, allowsRecord } = useAccess();
   const accessKey = `${isManager}|${["google-workspace", "smtp", "microsoft365", "whatsapp", "zoho", "website", "mercury"]
     .filter((t) => allowsType(t))
     .join(",")}`;
@@ -67,7 +67,7 @@ export function QuickStats() {
         query(collection(db, "conversations"), where("enterprise_id", "==", enterpriseId)),
         (snap) => {
           const open = snap.docs.filter(
-            (d) => d.data().status === "open" && allowsChannel(d.data().channel as string)
+            (d) => d.data().status === "open" && allowsRecord(d.data().channel as string, d.data().connection_scope, d.data().owner_uid)
           ).length;
           setCounts((c) => ({ ...c, threads: open }));
         }

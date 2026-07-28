@@ -30,6 +30,8 @@ type Conversation = {
   customer_ref: string;
   channel: string;
   last_message_at?: { toDate: () => Date };
+  connection_scope?: string;
+  owner_uid?: string;
 };
 
 type Message = {
@@ -55,7 +57,7 @@ function fmtTime(ts?: { toDate: () => Date }): string {
 
 export default function InboxPage() {
   const { user } = useAuth();
-  const { allowsChannel } = useAccess();
+  const { allowsRecord } = useAccess();
   const [enterpriseId, setEnterpriseId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -87,7 +89,7 @@ export default function InboxPage() {
       const convs = snap.docs
         .map((d) => ({ id: d.id, ...(d.data() as Omit<Conversation, "id">) }))
         // Employees only see conversations from channels they've been granted.
-        .filter((c) => allowsChannel(c.channel));
+        .filter((c) => allowsRecord(c.channel, c.connection_scope, c.owner_uid));
       convs.sort((a, b) => (b.last_message_at?.toDate().getTime() ?? 0) - (a.last_message_at?.toDate().getTime() ?? 0));
       setConversations(convs);
       setSelectedId((cur) => {
@@ -95,7 +97,7 @@ export default function InboxPage() {
         return cur && convs.some((c) => c.id === cur) ? cur : convs[0]?.id ?? null;
       });
     });
-  }, [enterpriseId, allowsChannel, requestedConversation]);
+  }, [enterpriseId, allowsRecord, requestedConversation]);
 
   // Live messages for selected conversation
   useEffect(() => {

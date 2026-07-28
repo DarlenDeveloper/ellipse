@@ -211,7 +211,8 @@ async function executeGmailAction(
         params.to as string,
         (params.subject as string) ?? "",
         (params.body as string) ?? "",
-        await loadAttachment(params)
+        await loadAttachment(params),
+        params.connectionOwnerUid as string | undefined
       );
     case "send_email":
       return gmail.sendGmailEmail(enterpriseId, {
@@ -220,7 +221,7 @@ async function executeGmailAction(
         body: (params.body as string) ?? "",
         cc: params.cc as string | undefined,
         attachment: await loadAttachment(params),
-      });
+      }, params.connectionOwnerUid as string | undefined);
     default:
       logger.warn("Unknown Gmail action", { actionType });
       return null;

@@ -16,6 +16,8 @@ type Conversation = {
   channel?: string;
   status?: string;
   last_message_at?: { toDate: () => Date };
+  connection_scope?: string;
+  owner_uid?: string;
 };
 
 const channelLogo: Record<string, string> = {
@@ -49,7 +51,7 @@ function fmtDate(ts?: { toDate: () => Date }): string {
 }
 
 export function RecentThreads() {
-  const { enterpriseId, isManager, allowsChannel } = useAccess();
+  const { enterpriseId, isManager, allowsRecord } = useAccess();
   const accessKey = `${isManager}`;
   const [threads, setThreads] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -61,7 +63,7 @@ export function RecentThreads() {
       (snap) => {
         const rows = snap.docs
           .map((d) => ({ id: d.id, ...(d.data() as Omit<Conversation, "id">) }))
-          .filter((c) => allowsChannel(c.channel ?? ""))
+          .filter((c) => allowsRecord(c.channel ?? "", c.connection_scope, c.owner_uid))
           .sort(
             (a, b) =>
               (b.last_message_at?.toDate?.().getTime() ?? 0) -

@@ -505,13 +505,14 @@ async function runTool(
   name: string,
   args: Record<string, unknown>,
   isOwner: boolean,
-  allowedConnections: Set<string>
+  allowedConnections: Set<string>,
+  callerUid?: string
 ): Promise<string> {
   switch (name) {
     case "search_conversations":
-      return toolSearchConversations(enterpriseId, agentId, args);
+      return toolSearchConversations(enterpriseId, agentId, args, allowedConnections, callerUid);
     case "get_reports":
-      return toolGetReports(enterpriseId, args);
+      return toolGetReports(enterpriseId, args, callerUid);
     case "get_sales_summary":
       return toolSalesSummary(enterpriseId, args);
     case "list_leads":
@@ -521,11 +522,11 @@ async function runTool(
     case "create_crm_lead":
       return toolCreateLead(enterpriseId, args);
     case "reply_to_conversation":
-      return toolReply(enterpriseId, args);
+      return toolReply(enterpriseId, args, callerUid);
     case "create_document":
       return toolCreateDocument(enterpriseId, agentId, args);
     case "generate_report":
-      return toolGenerateReport(enterpriseId, agentId, args, allowedConnections);
+      return toolGenerateReport(enterpriseId, agentId, args, allowedConnections, callerUid);
     case "generate_owner_analysis":
       return toolOwnerAnalysis(enterpriseId, agentId, args, isOwner);
     case "store_list":
@@ -543,7 +544,7 @@ async function runTool(
     case "find_zoho_quotation":
       return toolFindZohoQuotation(enterpriseId, args);
     case "send_email":
-      return toolSendEmail(enterpriseId, agentId, args);
+      return toolSendEmail(enterpriseId, agentId, args, callerUid);
     case "get_zoho_quote":
       return toolGetZohoQuote(enterpriseId, args);
     default:
@@ -800,15 +801,24 @@ async function toolGenerateReport(
   enterpriseId: string,
   agentId: string,
   args: Record<string, unknown>,
-  allowedConnections: Set<string>
+  allowedConnections: Set<string>,
+  callerUid?: string
 ) {
   // Which sources are connected + report-capable?
   const connSnap = await db.collection("connections").where("enterprise_id", "==", enterpriseId).get();
   const orgConnected = new Set(
     connSnap.docs.map((d) => d.data()).filter((c) => c.status === "active").map((c) => c.type as string)
   );
+  let reportAllowed = allowedConnections;
+  if (callerUid) {
+    const user = (await db.doc(`users/${callerUid}`).get()).data();
+    if (user?.role !== "owner" && user?.role !== "admin") {
+      const grant = (await db.doc(`connection_grants/${enterpriseId}_${callerUid}`).get()).data();
+      reportAllowed = new Set((grant?.types as string[] | undefined) ?? []);
+    }
+  }
   const capable = ["zoho", "website", "google-workspace", "smtp", "microsoft365", "whatsapp"].filter((t) =>
-    orgConnected.has(t) && allowedConnections.has(t)
+    orgConnected.has(t) && reportAllowed.has(t)
   );
   if (capable.length === 0) {
     return JSON.stringify({ note: "No connected source can produce a report yet. Connect an integration first." });
@@ -1008,7 +1018,7 @@ async function toolGetZohoQuote(enterpriseId: string, args: Record<string, unkno
   }
 }
 
-async function toolSendEmail(enterpriseId: string, agentId: string, args: Record<string, unknown>) {
+async function toolSendEmail(enterpriseId: string, agentId: string, args: Record<string, unknown>, callerUid?: string) {
   const to = String(args.to ?? "").trim();
   const subject = String(args.subject ?? "").trim();
   const body = String(args.body ?? "").trim();
@@ -1019,7 +1029,9 @@ async function toolSendEmail(enterpriseId: string, agentId: string, args: Record
 
   // Pick a connected email channel: Gmail → Microsoft 365 → SMTP.
   const connSnap = await db.collection("connections").where("enterprise_id", "==", enterpriseId).get();
-  const active = new Set(connSnap.docs.filter((d) => d.data().status === "active").map((d) => d.data().type as string));
+  const available = connSnap.docs.map((d) => d.data()).filter((d) => d.status === "active" && (d.scope !== "personal" || d.owner_uid === callerUid));
+  const active = new Set(available.map((d) => d.type as string));
+  const personalGoogle = available.find((d) => d.type === "google-workspace" && d.scope === "personal" && d.owner_uid === callerUid);
   let targetSystem: "gmail" | "microsoft365" | "smtp" | null = null;
   if (active.has("google-workspace")) targetSystem = "gmail";
   else if (active.has("microsoft365")) targetSystem = "microsoft365";
@@ -1051,7 +1063,7 @@ async function toolSendEmail(enterpriseId: string, agentId: string, args: Record
     agentId: `${agentId}-agent`,
     domain: "assistant",
     actionType: "send_email",
-    params: { to, subject, body, cc, attachment },
+    params: { to, subject, body, cc, attachment, connectionOwnerUid: targetSystem === "gmail" && personalGoogle ? callerUid : undefined },
     targetSystem,
     reasoning: `Email "${subject}" to ${to}${attachedName ? ` with attachment ${attachedName}` : ""} (requested in chat).`,
   });
@@ -1133,13 +1145,15 @@ async function toolCreateDocument(enterpriseId: string, agentId: string, args: R
   }
 }
 
-async function toolSearchConversations(enterpriseId: string, agentId: string, args: Record<string, unknown>) {
+async function toolSearchConversations(enterpriseId: string, agentId: string, args: Record<string, unknown>, allowedConnections: Set<string>, callerUid?: string) {
   const channel = (args.channel as string) || (agentId !== "ivy" && agentId !== "zoho" ? agentId : undefined);
   const limit = Math.min(Number(args.limit) || 8, 20);
   const snap = await db.collection("conversations").where("enterprise_id", "==", enterpriseId).get();
   const rows = snap.docs
     .map((d) => ({ id: d.id, ...d.data() } as Record<string, unknown> & { id: string }))
     .filter((c) => (channel ? c.channel === channel : true))
+    .filter((c) => allowedConnections.has(c.channel as string))
+    .filter((c) => c.connection_scope === "personal" ? c.owner_uid === callerUid : true)
     .sort(
       (a, b) =>
         ((b.last_message_at as FirebaseFirestore.Timestamp)?.toMillis?.() ?? 0) -
@@ -1157,12 +1171,15 @@ async function toolSearchConversations(enterpriseId: string, agentId: string, ar
   return JSON.stringify(rows);
 }
 
-async function toolGetReports(enterpriseId: string, args: Record<string, unknown>) {
+async function toolGetReports(enterpriseId: string, args: Record<string, unknown>, callerUid?: string) {
   const period = args.period as string | undefined;
   const limit = Math.min(Number(args.limit) || 6, 12);
   const snap = await db.collection("reports").where("enterprise_id", "==", enterpriseId).get();
+  const caller = callerUid ? (await db.doc(`users/${callerUid}`).get()).data() : undefined;
+  const manager = caller?.role === "owner" || caller?.role === "admin";
   const rows = snap.docs
     .map((d) => d.data() as Record<string, unknown>)
+    .filter((r) => !callerUid || manager || r.created_by_uid === callerUid || r.owner_uid === callerUid)
     .filter((r) => (period ? r.period === period : true))
     .sort(
       (a, b) =>
@@ -1294,13 +1311,14 @@ async function toolCreateLead(enterpriseId: string, args: Record<string, unknown
   return JSON.stringify({ action: "create_crm_lead", ...res });
 }
 
-async function toolReply(enterpriseId: string, args: Record<string, unknown>) {
+async function toolReply(enterpriseId: string, args: Record<string, unknown>, callerUid?: string) {
   const conversationId = String(args.conversationId ?? "");
   const body = String(args.body ?? "");
   if (!conversationId || !body) return "Missing conversationId or body.";
   const conv = await db.doc(`conversations/${conversationId}`).get();
   if (!conv.exists) return "Conversation not found.";
   const c = conv.data() as Record<string, unknown>;
+  if (c.connection_scope === "personal" && c.owner_uid !== callerUid) return "You do not have access to this personal conversation.";
   const channel = c.channel as string;
   const target = CHANNEL_TARGET[channel];
   if (!target) return `Cannot reply on channel ${channel}.`;
@@ -1324,6 +1342,7 @@ async function toolReply(enterpriseId: string, args: Record<string, unknown>) {
       subject: c.subject ?? "",
       body,
       attachment,
+      connectionOwnerUid: c.connection_scope === "personal" ? c.owner_uid : undefined,
     },
     targetSystem: target,
     reasoning: `Reply to ${c.customer_ref} (requested in chat).`,
@@ -1476,7 +1495,7 @@ export async function chatWithAgent(
   const files: { name: string; url: string; type: string }[] = [];
   for (const call of first.functionCalls) {
     try {
-      const out = await runTool(enterpriseId, agentId, call.name, call.args, isOwner, connected);
+      const out = await runTool(enterpriseId, agentId, call.name, call.args, isOwner, connected, callerUid);
       logger.info("tool result", { agentId, tool: call.name, enterpriseId, out: out.slice(0, 500) });
       results.push(`${call.name} → ${out}`);
       if (

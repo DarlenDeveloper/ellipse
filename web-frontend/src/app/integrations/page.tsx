@@ -39,6 +39,7 @@ export default function IntegrationsPage() {
   const [connectingZoho, setConnectingZoho] = useState(false);
   const [banner, setBanner] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [employeeChoice, setEmployeeChoice] = useState<{ id: string; name: string } | null>(null);
+  const [personalActive, setPersonalActive] = useState<Set<string>>(new Set());
 
   // Apply a set of active connection types to the UI state.
   const applyActive = useCallback((active: Set<string>, googleEmailValue: string | null) => {
@@ -72,14 +73,20 @@ export default function IntegrationsPage() {
 
     const snap = await getDocs(fsQuery(collection(db, "connections"), where("enterprise_id", "==", entId)));
     const active = new Set<string>();
+    const personal = new Set<string>();
     let gEmail: string | null = null;
     snap.forEach((d) => {
       const data = d.data();
       if (data.status === "active" && data.type) {
-        active.add(data.type);
-        if (data.type === "google-workspace") gEmail = data.account_email ?? "connected";
+        if (data.scope === "personal" && data.owner_uid === user.uid) {
+          personal.add(data.type);
+        } else if (data.scope !== "personal") {
+          active.add(data.type);
+          if (data.type === "google-workspace") gEmail = data.account_email ?? "connected";
+        }
       }
     });
+    setPersonalActive(personal);
     applyActive(active, gEmail);
 
     // Cache for instant paint next load.
@@ -188,13 +195,22 @@ export default function IntegrationsPage() {
   };
 
   const doDisconnect = async () => {
-    if (!canManage) return;
     if (!enterpriseId || !disconnectTarget) return;
     setDisconnecting(true);
     const id = disconnectTarget.id;
     try {
       // Server-side: removes the connection AND purges its data (analytics, messages, sites).
-      await httpsCallable(functions, "disconnectIntegration")({ enterpriseId, type: id });
+      if (!canManage && personalActive.has(id)) {
+        await httpsCallable(functions, "disconnectPersonalIntegration")({ type: id });
+        setPersonalActive((current) => {
+          const next = new Set(current);
+          next.delete(id);
+          return next;
+        });
+      } else {
+        if (!canManage) throw new Error("Cannot disconnect a company integration.");
+        await httpsCallable(functions, "disconnectIntegration")({ enterpriseId, type: id });
+      }
       setItems((prev) => prev.map((it) => (it.id === id ? { ...it, connected: false } : it)));
       if (id === "google-workspace") setGoogleEmail(null);
       if (id === "zoho") setZohoConnected(false);
@@ -239,10 +255,29 @@ export default function IntegrationsPage() {
     setEmployeeChoice({ id, name });
   };
 
+  const connectPersonal = async (type: string) => {
+    if (!enterpriseId) return;
+    if (type !== "google-workspace") {
+      setBanner({ type: "error", text: "Personal connection support for this provider is still being rolled out. Google Workspace is available now." });
+      setEmployeeChoice(null);
+      return;
+    }
+    setConnecting(true);
+    try {
+      const start = httpsCallable(functions, "startGoogleConnect");
+      const res = (await start({ enterpriseId, scope: "personal" })) as { data: { url: string } };
+      window.location.href = res.data.url;
+    } catch (e) {
+      setBanner({ type: "error", text: (e as Error).message || "Could not start personal Google connection." });
+      setConnecting(false);
+      setEmployeeChoice(null);
+    }
+  };
+
   // Employees only see a shared connection as connected if they've been granted it.
   const accessItems = canManage
     ? items
-    : items.map((it) => ({ ...it, connected: it.connected && grantedTypes.has(it.id) }));
+    : items.map((it) => ({ ...it, connected: personalActive.has(it.id) || (it.connected && grantedTypes.has(it.id)) }));
 
   const filtered = accessItems.filter((it) => it.name.toLowerCase().includes(query.toLowerCase()));
 
@@ -335,7 +370,9 @@ export default function IntegrationsPage() {
                   : undefined
               }
               onDisconnect={
-                canManage ? () => setDisconnectTarget({ id: integration.id, name: integration.name }) : undefined
+                canManage || personalActive.has(integration.id)
+                  ? () => setDisconnectTarget({ id: integration.id, name: integration.name })
+                  : undefined
               }
               onUpdate={
                 !canManage
@@ -349,7 +386,9 @@ export default function IntegrationsPage() {
                   : undefined
               }
               subtitle={
-                !canManage && orgActive.has(integration.id) && grantedTypes.has(integration.id)
+                !canManage && personalActive.has(integration.id)
+                  ? "Your private account"
+                  : !canManage && orgActive.has(integration.id) && grantedTypes.has(integration.id)
                   ? "Company access approved"
                   : !canManage && orgActive.has(integration.id) && !grantedTypes.has(integration.id)
                   ? "No access — request it"
@@ -368,7 +407,7 @@ export default function IntegrationsPage() {
                   : undefined
               }
               busy={(isGoogle && connecting) || (isZoho && connectingZoho) || (isMicrosoft && connectingMs)}
-              connectedLabel={!canManage ? "Access approved" : "Connected"}
+              connectedLabel={!canManage ? (personalActive.has(integration.id) ? "Personal" : "Access approved") : "Connected"}
             />
           );
         })}
@@ -398,17 +437,16 @@ export default function IntegrationsPage() {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setBanner({
-                    type: "error",
-                    text: "Personal connections need separate credential storage and are not enabled yet.",
-                  });
-                  setEmployeeChoice(null);
-                }}
+                onClick={() => connectPersonal(employeeChoice.id)}
+                disabled={connecting}
                 className="text-left border border-gray-200 rounded-2xl p-4 hover:bg-gray-50"
               >
                 <span className="block text-sm font-semibold">Connect my own account</span>
-                <span className="block text-xs text-gray-500 mt-1">Use a personal connection that only you can access.</span>
+                <span className="block text-xs text-gray-500 mt-1">
+                  {employeeChoice.id === "google-workspace"
+                    ? "Sign in with a private Google Workspace account that only you can use."
+                    : "Personal support for this provider is rolling out next."}
+                </span>
               </button>
             </div>
             <div className="flex justify-end mt-5">

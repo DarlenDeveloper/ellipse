@@ -96,8 +96,28 @@ export const startGoogleConnect = onCall(
     const enterpriseId = request.data?.enterpriseId as string | undefined;
     if (!enterpriseId) throw new HttpsError("invalid-argument", "Missing enterpriseId.");
 
+    const userSnap = await (await import("./admin")).db.doc(`users/${request.auth.uid}`).get();
+    if (userSnap.data()?.enterprise_id !== enterpriseId) throw new HttpsError("permission-denied", "Wrong organization.");
+    const personal = request.data?.scope === "personal";
+    const role = userSnap.data()?.role as string | undefined;
+    if (!personal && role !== "owner" && role !== "admin") {
+      throw new HttpsError("permission-denied", "Only an owner or admin can connect a company account.");
+    }
+
+    const { randomUUID } = await import("crypto");
+    const { db, FieldValue } = await import("./admin");
+    const state = randomUUID();
+    await db.doc(`oauth_states/${state}`).set({
+      provider: "google-workspace",
+      enterprise_id: enterpriseId,
+      owner_uid: personal ? request.auth.uid : null,
+      scope: personal ? "personal" : "org",
+      created_at: FieldValue.serverTimestamp(),
+      expires_at: new Date(Date.now() + 10 * 60_000),
+    });
+
     const { buildConsentUrl } = await import("./connections/google");
-    return { url: buildConsentUrl(enterpriseId) };
+    return { url: buildConsentUrl(state) };
   }
 );
 
@@ -109,17 +129,26 @@ export const gmailOAuthCallback = onRequest(
   { secrets: [googleClientId, googleClientSecret] },
   async (req, res) => {
     const code = req.query.code as string | undefined;
-    const enterpriseId = req.query.state as string | undefined;
+    const state = req.query.state as string | undefined;
 
-    if (!code || !enterpriseId) {
+    if (!code || !state) {
       res.redirect(`${FRONTEND_URL}/integrations?google=error`);
       return;
     }
 
     try {
+      const { db } = await import("./admin");
+      const stateRef = db.doc(`oauth_states/${state}`);
+      const stateSnap = await stateRef.get();
+      const oauthState = stateSnap.data();
+      await stateRef.delete().catch(() => undefined);
+      const expiresAt = oauthState?.expires_at?.toDate?.()?.getTime?.() ?? 0;
+      if (!oauthState || oauthState.provider !== "google-workspace" || expiresAt < Date.now()) {
+        throw new Error("Invalid or expired OAuth state");
+      }
       const { handleCallback } = await import("./connections/google");
-      await handleCallback(code, enterpriseId);
-      res.redirect(`${FRONTEND_URL}/integrations?google=connected`);
+      await handleCallback(code, oauthState.enterprise_id, oauthState.scope === "personal" ? oauthState.owner_uid : undefined);
+      res.redirect(`${FRONTEND_URL}/integrations?google=connected${oauthState.scope === "personal" ? "&scope=personal" : ""}`);
     } catch (e) {
       logger.error("Gmail OAuth callback failed", e);
       res.redirect(`${FRONTEND_URL}/integrations?google=error`);
@@ -137,8 +166,12 @@ export const syncGmail = onCall(
     const enterpriseId = request.data?.enterpriseId as string | undefined;
     if (!enterpriseId) throw new HttpsError("invalid-argument", "Missing enterpriseId.");
 
+    const user = (await (await import("./admin")).db.doc(`users/${request.auth.uid}`).get()).data();
+    if (user?.enterprise_id !== enterpriseId) throw new HttpsError("permission-denied", "Wrong organization.");
+    const ownerUid = user?.role === "employee" ? request.auth.uid : undefined;
+
     const { ingestRecentGmail } = await import("./connections/google");
-    const count = await ingestRecentGmail(enterpriseId);
+    const count = await ingestRecentGmail(enterpriseId, 15, ownerUid);
     return { ingested: count };
   }
 );
@@ -1247,6 +1280,16 @@ export const disconnectIntegration = onCall(async (request) => {
   if (!enterpriseId || !type) throw new HttpsError("invalid-argument", "Missing enterpriseId or type.");
   const { disconnectIntegration: run } = await import("./disconnect");
   return run(enterpriseId, type);
+});
+
+export const disconnectPersonalIntegration = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const type = request.data?.type as string | undefined;
+  const userSnap = await (await import("./admin")).db.doc(`users/${request.auth.uid}`).get();
+  const enterpriseId = userSnap.data()?.enterprise_id as string | undefined;
+  if (!enterpriseId || !type) throw new HttpsError("invalid-argument", "Missing organization or integration type.");
+  const { disconnectPersonalIntegration: run } = await import("./disconnect");
+  return run(enterpriseId, type, request.auth.uid);
 });
 
 /** TEMPORARY — generate a detailed CRM report file and return its URL, to inspect contents. Remove before ship. */

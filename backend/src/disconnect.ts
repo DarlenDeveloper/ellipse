@@ -71,3 +71,25 @@ export async function disconnectIntegration(
   logger.info("disconnectIntegration purged data", { enterpriseId, type, deleted });
   return { ok: true, deleted };
 }
+
+/** Disconnect only the caller's personal connection and data; never touches org credentials. */
+export async function disconnectPersonalIntegration(
+  enterpriseId: string,
+  type: string,
+  ownerUid: string
+): Promise<{ ok: true; deleted: Record<string, number> }> {
+  const suffix = `${enterpriseId}_${type}_personal_${ownerUid}`;
+  await db.doc(`connections/${suffix}`).delete().catch(() => undefined);
+  await db.doc(`connection_secrets/${suffix}`).delete().catch(() => undefined);
+  const deleted: Record<string, number> = {};
+  for (const collectionName of ["conversations", "messages"] as const) {
+    const snap = await db.collection(collectionName).where("enterprise_id", "==", enterpriseId).get();
+    const owned = snap.docs.filter((d) => d.data().connection_scope === "personal" && d.data().owner_uid === ownerUid && d.data().channel === CHANNEL[type]);
+    deleted[collectionName] = await deleteDocs(owned.map((d) => d.ref));
+  }
+  const events = await db.collection("analytics_events").where("workspace_id", "==", enterpriseId).get();
+  const ownedEvents = events.docs.filter((d) => d.data().payload?.connection_scope === "personal" && d.data().payload?.owner_uid === ownerUid && d.data().payload?.channel === CHANNEL[type]);
+  deleted.analytics_events = await deleteDocs(ownedEvents.map((d) => d.ref));
+  logger.info("Personal integration disconnected", { enterpriseId, type, ownerUid, deleted });
+  return { ok: true, deleted };
+}
