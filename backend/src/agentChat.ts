@@ -408,6 +408,7 @@ const TOOL_CATALOG: Record<string, ToolDecl> = {
 };
 
 const BUILTIN_AGENTS = new Set(["ivy", "zoho", "website", "google-workspace", "smtp", "microsoft365", "whatsapp", "mercury"]);
+const ZOHO_TOOL_NAMES = new Set(["get_sales_summary", "list_leads", "create_crm_lead", "get_zoho_quote", "create_zoho_quotation", "find_zoho_quotation"]);
 const AGENT_CONNECTION: Record<string, string> = {
   zoho: "zoho",
   website: "website",
@@ -506,8 +507,15 @@ async function runTool(
   args: Record<string, unknown>,
   isOwner: boolean,
   allowedConnections: Set<string>,
-  callerUid?: string
+  callerUid?: string,
+  personalZohoOwnerUid?: string
 ): Promise<string> {
+  if (personalZohoOwnerUid && ZOHO_TOOL_NAMES.has(name)) {
+    const { withZohoConnectionOwner } = await import("./connections/zoho");
+    return withZohoConnectionOwner(personalZohoOwnerUid, () =>
+      runTool(enterpriseId, agentId, name, { ...args, connectionOwnerUid: personalZohoOwnerUid }, isOwner, allowedConnections, callerUid)
+    );
+  }
   switch (name) {
     case "search_conversations":
       return toolSearchConversations(enterpriseId, agentId, args, allowedConnections, callerUid);
@@ -975,6 +983,7 @@ async function toolCreateZohoQuotation(enterpriseId: string, agentId: string, ar
     items,
     subject: String(args.subject ?? "").trim() || undefined,
     templateName: String(args.templateName ?? "").trim() || undefined,
+    connectionOwnerUid: String(args.connectionOwnerUid ?? "").trim() || undefined,
   };
   const result = await executeAgentAction({
     enterpriseId,
@@ -1304,7 +1313,7 @@ async function toolCreateLead(enterpriseId: string, args: Record<string, unknown
     agentId: "zoho-agent",
     domain: "assistant",
     actionType: "create_record",
-    params: { module: "Leads", fields },
+    params: { module: "Leads", fields, connectionOwnerUid: args.connectionOwnerUid },
     targetSystem: "zoho",
     reasoning: `Create Zoho lead ${name} <${email}> (requested in chat).`,
   });
@@ -1442,6 +1451,9 @@ export async function chatWithAgent(
   // ungranted employees only get their own personal connections.
   const { allowedConnectionTypes } = await import("./access");
   const connected = await allowedConnectionTypes(enterpriseId, callerUid, activeConns);
+  const personalZohoOwnerUid = callerUid && activeConns.some((c) => c.type === "zoho" && c.scope === "personal" && c.owner_uid === callerUid)
+    ? callerUid
+    : undefined;
 
   // Do not rely on the UI hiding an agent. A caller may invoke askAgent with
   // any agentId directly, so enforce shared/personal connection access here.
@@ -1495,7 +1507,7 @@ export async function chatWithAgent(
   const files: { name: string; url: string; type: string }[] = [];
   for (const call of first.functionCalls) {
     try {
-      const out = await runTool(enterpriseId, agentId, call.name, call.args, isOwner, connected, callerUid);
+      const out = await runTool(enterpriseId, agentId, call.name, call.args, isOwner, connected, callerUid, personalZohoOwnerUid);
       logger.info("tool result", { agentId, tool: call.name, enterpriseId, out: out.slice(0, 500) });
       results.push(`${call.name} → ${out}`);
       if (

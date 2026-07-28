@@ -257,14 +257,14 @@ export default function IntegrationsPage() {
 
   const connectPersonal = async (type: string) => {
     if (!enterpriseId) return;
-    if (type !== "google-workspace") {
-      setBanner({ type: "error", text: "Personal connection support for this provider is still being rolled out. Google Workspace is available now." });
+    if (type !== "google-workspace" && type !== "zoho") {
+      setBanner({ type: "error", text: "Personal connection support for this provider is still being rolled out. Google Workspace and Zoho are available now." });
       setEmployeeChoice(null);
       return;
     }
     setConnecting(true);
     try {
-      const start = httpsCallable(functions, "startGoogleConnect");
+      const start = httpsCallable(functions, type === "zoho" ? "startZohoConnect" : "startGoogleConnect");
       const res = (await start({ enterpriseId, scope: "personal" })) as { data: { url: string } };
       window.location.href = res.data.url;
     } catch (e) {
@@ -443,8 +443,8 @@ export default function IntegrationsPage() {
               >
                 <span className="block text-sm font-semibold">Connect my own account</span>
                 <span className="block text-xs text-gray-500 mt-1">
-                  {employeeChoice.id === "google-workspace"
-                    ? "Sign in with a private Google Workspace account that only you can use."
+                  {employeeChoice.id === "google-workspace" || employeeChoice.id === "zoho"
+                    ? `Sign in with a private ${employeeChoice.name} account that only you can use.`
                     : "Personal support for this provider is rolling out next."}
                 </span>
               </button>

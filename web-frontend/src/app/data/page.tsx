@@ -49,6 +49,8 @@ type Report = {
   owner_only?: boolean;
   period_start?: { toDate: () => Date };
   created_at?: { toDate: () => Date };
+  connection_scope?: string;
+  owner_uid?: string;
 };
 
 const PERIOD_TABS: { id: Period | "all"; label: string }[] = [
@@ -72,7 +74,7 @@ function fmtSize(bytes: number) {
 }
 
 export default function DataPage() {
-  const { enterpriseId, role, isManager, allowsType } = useAccess();
+  const { enterpriseId, role, isManager, allowsRecord } = useAccess();
   const isOwner = role === "owner";
   const [reports, setReports] = useState<Report[]>([]);
   const [documents, setDocuments] = useState<Report[]>([]);
@@ -93,7 +95,7 @@ export default function DataPage() {
           // Owner-only digests (e.g. the daily team activity report) hidden from non-owners.
           .filter((r) => !r.owner_only || isOwner)
           // Employees only see reports for connections they've been granted.
-          .filter((r) => isManager || r.agent === "org-users" || allowsType(agentToType(r.agent)))
+          .filter((r) => isManager || r.agent === "org-users" || allowsRecord(agentToType(r.agent), r.connection_scope, r.owner_uid))
           .sort(
             (a, b) =>
               (b.period_start?.toDate?.().getTime() ?? 0) - (a.period_start?.toDate?.().getTime() ?? 0)
@@ -107,7 +109,7 @@ export default function DataPage() {
       query(collection(db, "documents"), where("enterprise_id", "==", enterpriseId)),
       (snap) => {
         const rows: Report[] = snap.docs
-          .filter((d) => isManager || allowsType(agentToType(d.data().agent as string)))
+          .filter((d) => isManager || allowsRecord(agentToType(d.data().agent as string), d.data().connection_scope, d.data().owner_uid))
           .map((d) => {
           const data = d.data() as Record<string, unknown>;
           const file = data.file as ReportFile | undefined;

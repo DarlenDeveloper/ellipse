@@ -112,7 +112,7 @@ function summarizeParams(params?: Record<string, unknown>): string {
 }
 
 export default function ApprovalsPage() {
-  const { enterpriseId, isManager, allowsType } = useAccess();
+  const { enterpriseId, isManager, allowsRecord } = useAccess();
   const accessKey = `${isManager}`;
   const [items, setItems] = useState<PendingAction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -128,7 +128,7 @@ export default function ApprovalsPage() {
       const rows = snap.docs
         .map((d) => ({ id: d.id, ...(d.data() as Omit<PendingAction, "id">) }))
         // Employees only see approvals for connections they've been granted.
-        .filter((r) => isManager || allowsType(toType(r.agent_id, r.target_system)))
+        .filter((r) => isManager || allowsRecord(toType(r.agent_id, r.target_system), r.params?.connectionOwnerUid ? "personal" : "org", r.params?.connectionOwnerUid as string | undefined))
         .sort(
           (a, b) => (b.created_at?.toDate?.().getTime() ?? 0) - (a.created_at?.toDate?.().getTime() ?? 0)
         );

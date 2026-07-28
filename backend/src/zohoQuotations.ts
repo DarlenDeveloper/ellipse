@@ -5,6 +5,7 @@ import {
   downloadQuoteMailMerge,
   searchByEmail,
   searchRecordsByWord,
+  getZohoConnectionOwner,
 } from "./connections/zoho";
 
 export type ZohoQuotationRequest = {
@@ -58,6 +59,7 @@ export async function createZohoQuotationWorkflow(
   if (!request.items?.length) throw new Error("At least one quotation item is required");
 
   const settings = (await db.doc(`quotation_settings/${enterpriseId}`).get()).data();
+  const connectionOwnerUid = getZohoConnectionOwner();
   const templateName = clean(request.templateName || settings?.zoho_mail_merge_template);
   if (!templateName) throw new Error("Configure the Zoho Quote mail-merge template in Settings → Quotation first.");
 
@@ -164,6 +166,8 @@ export async function createZohoQuotationWorkflow(
     content_type: "application/pdf",
     source: { system: "zoho", module: "Quotes", quote_id: quoteId, lead_id: leadId, account_id: accountId, contact_id: contactId, template_name: templateName, workflow_key: request.workflowKey },
     customer: { name: request.customer.name, email, company },
+    connection_scope: connectionOwnerUid ? "personal" : "org",
+    owner_uid: connectionOwnerUid ?? null,
     sha256: createHash("sha256").update(pdf).digest("hex"),
     created_at: FieldValue.serverTimestamp(),
   }, { merge: true });

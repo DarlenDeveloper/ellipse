@@ -8,7 +8,7 @@ Core principle: **one agent per connection**, plus **Ivy** (boss agent) built LA
 
 All connections live (incl. Mercury Store custom API). The product is suitable for a controlled staff pilot, **not yet an unrestricted public launch**. Remaining launch work:
 
-1. 🟡 **Users & roles** — shared access and personal Google Workspace are implemented; personal Microsoft 365/Zoho/credential connectors and tokened invite emails remain. See `USERS_AND_ROLES.md`.
+1. 🟡 **Users & roles** — shared access plus personal Google Workspace and Zoho are implemented; personal Microsoft 365/credential connectors and tokened invite emails remain. See `USERS_AND_ROLES.md`.
 2. **Organization audit logs (before production)** — NOT STARTED:
    - [ ] Immutable `org_audit_logs` written only by trusted backend code.
    - [ ] Capture actor UID/role, enterprise, event type, target, safe before/after summary, outcome, timestamp, request/correlation id and IP/user-agent where legally appropriate.

@@ -618,8 +618,26 @@ export const startZohoConnect = onCall(
     const enterpriseId = request.data?.enterpriseId as string | undefined;
     if (!enterpriseId) throw new HttpsError("invalid-argument", "Missing enterpriseId.");
 
+    const { db, FieldValue } = await import("./admin");
+    const user = (await db.doc(`users/${request.auth.uid}`).get()).data();
+    if (user?.enterprise_id !== enterpriseId) throw new HttpsError("permission-denied", "Wrong organization.");
+    const personal = request.data?.scope === "personal";
+    if (!personal && user?.role !== "owner" && user?.role !== "admin") {
+      throw new HttpsError("permission-denied", "Only an owner or admin can connect company Zoho.");
+    }
+    const { randomUUID } = await import("crypto");
+    const state = randomUUID();
+    await db.doc(`oauth_states/${state}`).set({
+      provider: "zoho",
+      enterprise_id: enterpriseId,
+      owner_uid: personal ? request.auth.uid : null,
+      scope: personal ? "personal" : "org",
+      created_at: FieldValue.serverTimestamp(),
+      expires_at: new Date(Date.now() + 10 * 60_000),
+    });
+
     const { buildConsentUrl } = await import("./connections/zoho");
-    return { url: buildConsentUrl(enterpriseId) };
+    return { url: buildConsentUrl(state) };
   }
 );
 
@@ -632,18 +650,25 @@ export const zohoOAuthCallback = onRequest(
   { secrets: [zohoClientId, zohoClientSecret] },
   async (req, res) => {
     const code = req.query.code as string | undefined;
-    const enterpriseId = req.query.state as string | undefined;
+    const state = req.query.state as string | undefined;
     const accountsServer = req.query["accounts-server"] as string | undefined;
 
-    if (!code || !enterpriseId) {
+    if (!code || !state) {
       res.redirect(`${FRONTEND_URL}/integrations?zoho=error`);
       return;
     }
 
     try {
+      const { db } = await import("./admin");
+      const stateRef = db.doc(`oauth_states/${state}`);
+      const stateSnap = await stateRef.get();
+      const oauthState = stateSnap.data();
+      await stateRef.delete().catch(() => undefined);
+      const expiresAt = oauthState?.expires_at?.toDate?.()?.getTime?.() ?? 0;
+      if (!oauthState || oauthState.provider !== "zoho" || expiresAt < Date.now()) throw new Error("Invalid or expired OAuth state");
       const { handleCallback } = await import("./connections/zoho");
-      await handleCallback(code, enterpriseId, accountsServer);
-      res.redirect(`${FRONTEND_URL}/integrations?zoho=connected`);
+      await handleCallback(code, oauthState.enterprise_id, accountsServer, oauthState.scope === "personal" ? oauthState.owner_uid : undefined);
+      res.redirect(`${FRONTEND_URL}/integrations?zoho=connected${oauthState.scope === "personal" ? "&scope=personal" : ""}`);
     } catch (e) {
       logger.error("Zoho OAuth callback failed", e);
       res.redirect(`${FRONTEND_URL}/integrations?zoho=error`);

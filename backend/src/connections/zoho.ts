@@ -1,4 +1,5 @@
 import { db, FieldValue } from "../admin";
+import { AsyncLocalStorage } from "async_hooks";
 
 /**
  * Zoho CRM connection.
@@ -26,12 +27,26 @@ const SCOPES = [
   "ZohoWriter.merge.ALL",
 ];
 
-function connDoc(enterpriseId: string) {
-  return db.doc(`connections/${enterpriseId}_zoho`);
+const connectionOwner = new AsyncLocalStorage<string | undefined>();
+
+export function withZohoConnectionOwner<T>(ownerUid: string | undefined, fn: () => Promise<T>): Promise<T> {
+  return connectionOwner.run(ownerUid, fn);
+}
+
+function currentOwner() {
+  return connectionOwner.getStore();
+}
+
+export function getZohoConnectionOwner() {
+  return currentOwner();
+}
+
+function connDoc(enterpriseId: string, ownerUid = currentOwner()) {
+  return db.doc(`connections/${enterpriseId}_zoho${ownerUid ? `_personal_${ownerUid}` : ""}`);
 }
 
 /** Build the Zoho consent URL. `state` carries enterpriseId back to the callback. */
-export function buildConsentUrl(enterpriseId: string): string {
+export function buildConsentUrl(state: string): string {
   const params = new URLSearchParams({
     scope: SCOPES.join(","),
     client_id: process.env.ZOHO_CLIENT_ID ?? "",
@@ -39,7 +54,7 @@ export function buildConsentUrl(enterpriseId: string): string {
     access_type: "offline", // needed for a refresh token
     prompt: "consent",
     redirect_uri: REDIRECT_URI,
-    state: enterpriseId,
+    state,
   });
   return `${DEFAULT_ACCOUNTS}/oauth/v2/auth?${params.toString()}`;
 }
@@ -60,7 +75,8 @@ type TokenResponse = {
 export async function handleCallback(
   code: string,
   enterpriseId: string,
-  accountsServer?: string
+  accountsServer?: string,
+  ownerUid?: string
 ): Promise<string> {
   const accounts = accountsServer || DEFAULT_ACCOUNTS;
 
@@ -90,8 +106,8 @@ export async function handleCallback(
     refresh_token: tokens.refresh_token ?? null,
     access_token: tokens.access_token,
     access_token_expires_at: expiresAt,
-  });
-  await connDoc(enterpriseId).set(
+  }, ownerUid);
+  await connDoc(enterpriseId, ownerUid).set(
     {
       enterprise_id: enterpriseId,
       type: "zoho",
@@ -101,15 +117,19 @@ export async function handleCallback(
       accounts_domain: accounts,
       scopes: SCOPES,
       connected_at: FieldValue.serverTimestamp(),
+      scope: ownerUid ? "personal" : "org",
+      owner_uid: ownerUid ?? null,
     },
     { merge: true }
   );
 
   // Backfill the last 30 days of records so analytics aren't empty after connect.
-  try {
-    await backfillZoho(enterpriseId, 30);
-  } catch {
-    // non-fatal — a manual backfill can retry
+  if (!ownerUid) {
+    try {
+      await backfillZoho(enterpriseId, 30);
+    } catch {
+      // non-fatal — a manual backfill can retry
+    }
   }
 
   return apiDomain;
@@ -122,9 +142,10 @@ export async function handleCallback(
 export async function authedClientFor(
   enterpriseId: string
 ): Promise<{ accessToken: string; apiDomain: string }> {
-  const snap = await connDoc(enterpriseId).get();
+  const ownerUid = currentOwner();
+  const snap = await connDoc(enterpriseId, ownerUid).get();
   const { getConnectionSecret, saveConnectionSecret } = await import("../connectionSecrets");
-  const secret = await getConnectionSecret(enterpriseId, "zoho", snap.data());
+  const secret = await getConnectionSecret(enterpriseId, "zoho", snap.data(), ownerUid);
   const data = {
     ...(snap.data() as Record<string, unknown>),
     refresh_token: secret.refresh_token,
@@ -170,7 +191,7 @@ export async function authedClientFor(
   await saveConnectionSecret(enterpriseId, "zoho", {
     access_token: tokens.access_token,
     access_token_expires_at: expiresAt,
-  });
+  }, ownerUid);
 
   return { accessToken: tokens.access_token, apiDomain };
 }
