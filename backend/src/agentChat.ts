@@ -18,7 +18,8 @@ import { TargetSystem } from "./types";
  * agents (Supervised → queued for approval, Autopilot → executed, Off → nothing).
  */
 
-export type ChatTurn = { role: "user" | "ivy"; text: string };
+export type ChatAction = { name: string; args?: Record<string, unknown>; result?: string };
+export type ChatTurn = { role: "user" | "ivy"; text: string; actions?: ChatAction[] };
 
 type ConnType = "google-workspace" | "smtp" | "microsoft365" | "whatsapp" | "zoho" | "website" | "mercury";
 
@@ -51,6 +52,17 @@ const AGENT_LOGO: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 const T = {
+  get_action_status: {
+    name: "get_action_status",
+    description:
+      "Check the authoritative status and output of a previously queued action using its pendingActionId. " +
+      "Always use this before claiming a queued action completed or before using/sharing its output.",
+    parameters: {
+      type: "object",
+      properties: { actionId: { type: "string", description: "The pendingActionId returned by an earlier action." } },
+      required: ["actionId"],
+    },
+  },
   search_conversations: {
     name: "search_conversations",
     description:
@@ -227,7 +239,7 @@ const T = {
   create_quotation: {
     name: "create_quotation",
     description:
-      "Generate a branded proforma-invoice / quotation PDF and save it to the workspace Data page. " +
+      "Fallback only when Zoho is not connected: generate a branded proforma-invoice / quotation PDF and save it to the workspace Data page. " +
       "The company letterhead (logo, name, TIN, address, VAT rate, terms, prepared-by) comes from the org's saved quotation branding — do NOT invent those. " +
       "You provide the client details and the line items. Amounts, subtotal, VAT and total are computed automatically — never state or pre-compute them yourself. " +
       "For each item pass its unit price as `rate` and quantity as `qty`. When items refer to store products, look up their real price first with store_list (q search). " +
@@ -298,7 +310,6 @@ const T = {
           },
         },
         subject: { type: "string" },
-        templateName: { type: "string", description: "Optional override; normally use the configured Zoho mail-merge template." },
       },
       required: ["customer", "items"],
     },
@@ -328,10 +339,9 @@ const T = {
   get_zoho_quote: {
     name: "get_zoho_quote",
     description:
-      "Fetch a single existing Zoho CRM quote INCLUDING its line items (description, unit price, quantity), " +
-      "so you can turn it into a branded proforma with create_quotation. Look it up by proforma number, subject, or account name. " +
-      "Use when the user says things like 'make a quotation from the Zoho quote for <account>' or references a proforma number. " +
-      "Pass the returned items straight into create_quotation — do not alter the prices.",
+      "Fetch a single existing Zoho CRM quote INCLUDING its line items (description, unit price, quantity). " +
+      "Use for verified quote details and lookup by proforma number, subject, or account name. " +
+      "Do not turn it into a manually generated quotation when Zoho is connected.",
     parameters: {
       type: "object",
       properties: {
@@ -386,6 +396,7 @@ const T = {
 type ToolDecl = { name: string; description: string; parameters: Record<string, unknown> };
 
 const TOOL_CATALOG: Record<string, ToolDecl> = {
+  get_action_status: T.get_action_status,
   search_conversations: T.search_conversations,
   get_reports: T.get_reports,
   get_sales_summary: T.get_sales_summary,
@@ -421,15 +432,16 @@ const AGENT_CONNECTION: Record<string, string> = {
 
 /** Which tools each built-in agent gets, based on what's connected. */
 function toolsFor(agentId: string, connected: Set<string>): ToolDecl[] {
-  const tools: ToolDecl[] = [];
+  const tools: ToolDecl[] = [T.get_action_status];
   const has = (t: ConnType) => connected.has(t);
 
   if (agentId === "ivy") {
     tools.push(T.search_conversations, T.get_reports, T.create_document);
     if (has("zoho")) tools.push(T.get_sales_summary, T.list_leads, T.create_crm_lead, T.get_zoho_quote, T.create_zoho_quotation, T.find_zoho_quotation);
     if (has("website")) tools.push(T.get_web_analytics);
-    // Quotation generation is available whenever there's a data source to quote from.
-    if (has("zoho") || has("mercury")) tools.push(T.create_quotation);
+    // Manual quotation generation is fallback-only. With Zoho connected, all
+    // official quotations must use Zoho's Quote + Writer PDF workflow.
+    if (has("mercury") && !has("zoho")) tools.push(T.create_quotation);
     if (has("google-workspace") || has("smtp") || has("microsoft365") || has("whatsapp")) {
       tools.push(T.reply_to_conversation);
     }
@@ -457,7 +469,6 @@ function toolsFor(agentId: string, connected: Set<string>): ToolDecl[] {
       T.create_document,
       T.generate_report,
       T.get_zoho_quote,
-      T.create_quotation,
       T.create_zoho_quotation,
       T.find_zoho_quotation
     );
@@ -468,7 +479,8 @@ function toolsFor(agentId: string, connected: Set<string>): ToolDecl[] {
     return tools;
   }
   if (agentId === "mercury") {
-    tools.push(T.store_list, T.store_get, T.store_create, T.store_update, T.create_document, T.create_quotation);
+    tools.push(T.store_list, T.store_get, T.store_create, T.store_update, T.create_document);
+    if (!has("zoho")) tools.push(T.create_quotation);
     return tools;
   }
   // messaging agents
@@ -484,16 +496,17 @@ type CustomAgent = { name: string; specialty?: string; tools?: string[]; channel
 
 /** Tools for a user-defined custom agent (its configured subset, gated by connections). */
 function toolsForCustom(cfg: CustomAgent, connected: Set<string>): ToolDecl[] {
-  const wanted = cfg.tools ?? [];
-  return wanted
+  const wanted = (cfg.tools ?? []).filter((name) => name !== "get_action_status");
+  return [T.get_action_status, ...wanted
     .map((t) => TOOL_CATALOG[t])
     .filter((t): t is ToolDecl => {
       if (!t) return false;
       // Gate connection-dependent tools.
       if ((t === T.get_sales_summary || t === T.create_crm_lead) && !connected.has("zoho")) return false;
       if (t === T.get_web_analytics && !connected.has("website")) return false;
+      if (t === T.create_quotation && connected.has("zoho")) return false;
       return true;
-    });
+    })];
 }
 
 // ---------------------------------------------------------------------------
@@ -508,15 +521,18 @@ async function runTool(
   isOwner: boolean,
   allowedConnections: Set<string>,
   callerUid?: string,
-  personalZohoOwnerUid?: string
+  personalZohoOwnerUid?: string,
+  requiresEmailAttachment = false
 ): Promise<string> {
   if (personalZohoOwnerUid && ZOHO_TOOL_NAMES.has(name)) {
     const { withZohoConnectionOwner } = await import("./connections/zoho");
     return withZohoConnectionOwner(personalZohoOwnerUid, () =>
-      runTool(enterpriseId, agentId, name, { ...args, connectionOwnerUid: personalZohoOwnerUid }, isOwner, allowedConnections, callerUid)
+      runTool(enterpriseId, agentId, name, { ...args, connectionOwnerUid: personalZohoOwnerUid }, isOwner, allowedConnections, callerUid, undefined, requiresEmailAttachment)
     );
   }
   switch (name) {
+    case "get_action_status":
+      return toolGetActionStatus(enterpriseId, args);
     case "search_conversations":
       return toolSearchConversations(enterpriseId, agentId, args, allowedConnections, callerUid);
     case "get_reports":
@@ -552,7 +568,7 @@ async function runTool(
     case "find_zoho_quotation":
       return toolFindZohoQuotation(enterpriseId, args);
     case "send_email":
-      return toolSendEmail(enterpriseId, agentId, args, callerUid);
+      return toolSendEmail(enterpriseId, agentId, args, callerUid, requiresEmailAttachment);
     case "get_zoho_quote":
       return toolGetZohoQuote(enterpriseId, args);
     default:
@@ -973,18 +989,30 @@ async function toolCreateZohoQuotation(enterpriseId: string, agentId: string, ar
   const items = Array.isArray(args.items) ? args.items : [];
   const email = String(customer.email ?? "").trim().toLowerCase();
   const name = String(customer.name ?? "").trim();
-  if (!name || !/.+@.+\..+/.test(email)) return JSON.stringify({ error: "Customer name and a valid email are required." });
+  const placeholderName = /^(customer|client|unknown|n\/?a|test|user)$/i.test(name);
+  const placeholderEmail = /@(example\.(com|org|net)|test\.com)$/i.test(email) || /^(customer|client|test)@/i.test(email);
+  if (!name || placeholderName || !/.+@.+\..+/.test(email) || placeholderEmail) {
+    return JSON.stringify({ error: "A real customer name and email are required before an official quotation can be queued. No action was created." });
+  }
   if (!items.length) return JSON.stringify({ error: "At least one quotation item is required." });
+  const quotationSettings = (await db.doc(`quotation_settings/${enterpriseId}`).get()).data();
+  const configuredTemplate = String(quotationSettings?.zoho_mail_merge_template ?? "").trim();
+  if (!configuredTemplate) {
+    return JSON.stringify({
+      error: "The Zoho Quote mail-merge template is not configured. Set it in Settings → Quotation before creating an official PDF. No action was queued.",
+    });
+  }
   const workflowKey = randomUUID();
-  const params = {
+  const params: Record<string, unknown> = {
     workflowKey,
     agentId,
     customer: { ...customer, name, email },
     items,
-    subject: String(args.subject ?? "").trim() || undefined,
-    templateName: String(args.templateName ?? "").trim() || undefined,
-    connectionOwnerUid: String(args.connectionOwnerUid ?? "").trim() || undefined,
   };
+  const subject = String(args.subject ?? "").trim();
+  const connectionOwnerUid = String(args.connectionOwnerUid ?? "").trim();
+  if (subject) params.subject = subject;
+  if (connectionOwnerUid) params.connectionOwnerUid = connectionOwnerUid;
   const result = await executeAgentAction({
     enterpriseId,
     agentId: `${agentId}-agent`,
@@ -1027,7 +1055,43 @@ async function toolGetZohoQuote(enterpriseId: string, args: Record<string, unkno
   }
 }
 
-async function toolSendEmail(enterpriseId: string, agentId: string, args: Record<string, unknown>, callerUid?: string) {
+async function toolGetActionStatus(enterpriseId: string, args: Record<string, unknown>) {
+  const actionId = String(args.actionId ?? "").trim();
+  if (!actionId) return JSON.stringify({ error: "An actionId is required." });
+  const snap = await db.doc(`pending_actions/${actionId}`).get();
+  const action = snap.data();
+  if (!snap.exists || action?.enterprise_id !== enterpriseId) return JSON.stringify({ error: "Action not found." });
+
+  let output: Record<string, unknown> | null = null;
+  if (typeof action.external_ref === "string" && action.external_ref.trim().startsWith("{")) {
+    try { output = JSON.parse(action.external_ref) as Record<string, unknown>; } catch { /* external id, not JSON */ }
+  }
+  const documentId = typeof output?.documentId === "string" ? output.documentId : undefined;
+  let file: { documentId: string; name: string; url: string; type: string } | null = null;
+  if (documentId) {
+    const document = (await db.doc(`documents/${documentId}`).get()).data();
+    if (document?.enterprise_id === enterpriseId && document?.file?.url) {
+      file = { documentId, name: document.file.name, url: document.file.url, type: document.file.type || "pdf" };
+    }
+  }
+  return JSON.stringify({
+    actionId,
+    action: action.action_type,
+    status: action.status,
+    error: action.error ?? null,
+    output,
+    file,
+    attachment: action.params?.attachment ?? null,
+  });
+}
+
+async function toolSendEmail(
+  enterpriseId: string,
+  agentId: string,
+  args: Record<string, unknown>,
+  callerUid?: string,
+  requiresAttachment = false
+) {
   const to = String(args.to ?? "").trim();
   const subject = String(args.subject ?? "").trim();
   const body = String(args.body ?? "").trim();
@@ -1035,6 +1099,11 @@ async function toolSendEmail(enterpriseId: string, agentId: string, args: Record
   const attachDocumentId = (args.attachDocumentId as string | undefined)?.trim();
   if (!to || !/.+@.+\..+/.test(to)) return JSON.stringify({ error: "A valid recipient email address is required." });
   if (!subject && !body) return JSON.stringify({ error: "Provide a subject and body for the email." });
+  if (requiresAttachment && !attachDocumentId) {
+    return JSON.stringify({
+      error: "This request is to share a quotation/document, but no stored documentId was supplied. The email was not queued. Check the earlier action status first and attach its real documentId.",
+    });
+  }
 
   // Pick a connected email channel: Gmail → Microsoft 365 → SMTP.
   const connSnap = await db.collection("connections").where("enterprise_id", "==", enterpriseId).get();
@@ -1407,20 +1476,72 @@ function buildSystem(
     ? `\n\nMERCURY STORE DATA: For any question about store products, orders, quotations or repairs (does it exist, is it available, how many, details, status), you MUST call store_list (or store_get) FIRST and answer only from what it returns. Never say there are none / it doesn't exist / it's unavailable unless a tool result confirms zero. For product lookups always use the \`q\` search parameter.`
     : "";
 
+  const quotationRule = connected.has("zoho")
+    ? `\n\nOFFICIAL QUOTATION RULE: Zoho is connected, so never use or claim a manually generated quotation. New quotations must use create_zoho_quotation and require the real customer name, valid email, exact product/model and quantity. If any are missing, ask for them. A pending Zoho workflow means the PDF does NOT exist yet. Before sharing it, use get_action_status with the real pendingActionId; only call send_email after that returns an executed action with a real documentId.`
+    : "";
+
   const connectedNames = [...connected].map((t) => CONNECTION_LABEL[t]).filter(Boolean);
   const connLine = connectedNames.length
     ? `\n\nConnected integrations for this workspace: ${connectedNames.join(", ")}. When asking the user to choose a source/channel for a report or action, ONLY offer options from THIS list. NEVER offer or mention an integration that isn't in this list (e.g. don't suggest WhatsApp if it's not connected). Reports/exports as downloadable files are currently available for Zoho CRM only — if the user wants another source, answer from its data but say a file export isn't available for it yet.`
     : `\n\nNo integrations are connected yet — tell the user to connect one before you can pull data.`;
 
   const knowledge = kb ? `\n\n--- Company knowledge base (authoritative facts) ---\n${kb}` : "";
-  return base + scope + connLine + storeRule + knowledge;
+  return base + scope + connLine + storeRule + quotationRule + knowledge;
 }
 
 function renderHistory(history: ChatTurn[]): string {
   return history
     .slice(-10)
-    .map((t) => `${t.role === "user" ? "User" : "Assistant"}: ${t.text}`)
+    .map((t) => {
+      const actionState = t.actions?.length
+        ? `\nVerified action state: ${t.actions.map((action) => `${action.name}=${String(action.result ?? "").slice(0, 1200)}`).join("; ")}`
+        : "";
+      return `${t.role === "user" ? "User" : "Assistant"}: ${t.text}${actionState}`;
+    })
     .join("\n");
+}
+
+const MUTATING_TOOLS = new Set([
+  "create_crm_lead", "reply_to_conversation", "create_document", "generate_report",
+  "generate_owner_analysis", "store_create", "store_update", "create_quotation",
+  "create_zoho_quotation", "send_email",
+]);
+
+function parseToolResult(result: string): Record<string, any> | null {
+  try { return JSON.parse(result) as Record<string, any>; } catch { return null; }
+}
+
+function deterministicActionReply(actions: ChatAction[], files: { name: string; url: string; type: string }[], fallback: string): string {
+  if (!actions.length) {
+    if (/\b(queued|created|generated|sent|saved|submitted (?:it )?for approval)\b/i.test(fallback)) {
+      return "I verified the available data, but no creation, approval, or send action was actually recorded. Nothing was queued or sent.";
+    }
+    return fallback;
+  }
+  const lines: string[] = [];
+  for (const action of actions) {
+    const data = parseToolResult(action.result ?? "");
+    if (!data) { lines.push(`${action.name} returned an unreadable result and was not confirmed.`); continue; }
+    if (data.error) { lines.push(String(data.error)); continue; }
+    if (action.name === "create_quotation" && data.created) {
+      lines.push(`Created ${data.name || "the quotation PDF"} and saved it to Data.`);
+    } else if (action.name === "create_zoho_quotation") {
+      if (data.status === "pending") lines.push(`Zoho quotation creation is pending approval (action ${data.pendingActionId}). The PDF does not exist yet.`);
+      else if (data.status === "executed") lines.push("The Zoho quotation workflow completed and its PDF was saved to Data.");
+      else lines.push(`Zoho quotation creation was not completed${data.reason ? `: ${data.reason}` : "."}`);
+    } else if (action.name === "send_email") {
+      const attachment = data.attached ? ` with ${data.attached} attached` : " without an attachment";
+      if (data.status === "pending") lines.push(`Email to ${data.to} is pending approval${attachment} (action ${data.pendingActionId}).`);
+      else if (data.status === "executed") lines.push(`Email sent to ${data.to}${attachment}.`);
+      else lines.push(`Email to ${data.to} was not queued or sent${data.reason ? `: ${data.reason}` : "."}`);
+    } else if (data.status === "pending") {
+      lines.push(`${action.name.replace(/_/g, " ")} is pending approval (action ${data.pendingActionId}).`);
+    } else if (data.status === "executed" || data.created || data.saved) {
+      lines.push(`${action.name.replace(/_/g, " ")} completed successfully.`);
+    }
+  }
+  if (files.length && !lines.some((line) => /Created .*saved it to Data/.test(line))) lines.push(`${files.length} verified file${files.length === 1 ? " is" : "s are"} available below.`);
+  return [...new Set(lines.filter(Boolean))].join(" ") || fallback;
 }
 
 export async function chatWithAgent(
@@ -1494,55 +1615,75 @@ export async function chatWithAgent(
   const convo = renderHistory(history);
   const prompt = [convo ? `Conversation so far:\n${convo}\n` : "", `User: ${message}`].filter(Boolean).join("\n");
 
-  // Pass 1 — let the agent reason + optionally call tools. Low temperature to curb speculation.
-  const first = await callGemini({ system, prompt, tools, temperature: 0.1 });
+  const attachmentIntentText = [...history.slice(-4).map((turn) => turn.text), message].join(" ").toLowerCase();
+  const requiresEmailAttachment = /\b(pdf|document|quotation|quote|attachment)\b/.test(attachmentIntentText)
+    && /\b(share|email|send|attach)\b/.test(attachmentIntentText);
 
-  if (!first.functionCalls.length) {
-    return { reply: first.text || "…", actions: [], files: [] };
-  }
-
-  // Execute tool calls.
+  // A bounded agent loop supports lookup → create → share chains while preventing
+  // unbounded retries. Every round receives authoritative results from earlier rounds.
+  let response = await callGemini({ system, prompt, tools, temperature: 0.1 });
+  let finalText = response.text || "";
   const results: string[] = [];
-  const actions: unknown[] = [];
+  const actions: ChatAction[] = [];
   const files: { name: string; url: string; type: string }[] = [];
-  for (const call of first.functionCalls) {
-    try {
-      const out = await runTool(enterpriseId, agentId, call.name, call.args, isOwner, connected, callerUid, personalZohoOwnerUid);
+  const seenCalls = new Set<string>();
+  const attemptedMutations = new Set<string>();
+  for (let round = 0; round < 5 && response.functionCalls.length; round++) {
+    for (const call of response.functionCalls) {
+      const signature = `${call.name}:${JSON.stringify(call.args)}`;
+      let out: string;
+      const repeatedMutation = MUTATING_TOOLS.has(call.name) && attemptedMutations.has(call.name);
+      if (seenCalls.has(signature) || repeatedMutation) {
+        out = JSON.stringify({ error: "That action was already attempted in this request. It was not attempted again." });
+      } else {
+        seenCalls.add(signature);
+        if (MUTATING_TOOLS.has(call.name)) attemptedMutations.add(call.name);
+        try {
+          out = await runTool(enterpriseId, agentId, call.name, call.args, isOwner, connected, callerUid, personalZohoOwnerUid, requiresEmailAttachment);
+        } catch (e) {
+          logger.error("chat tool failed", { enterpriseId, agentId, tool: call.name, error: (e as Error).message });
+          out = JSON.stringify({ error: `The ${call.name.replace(/_/g, " ")} action could not be completed. Nothing was queued or sent.` });
+        }
+      }
       logger.info("tool result", { agentId, tool: call.name, enterpriseId, out: out.slice(0, 500) });
       results.push(`${call.name} → ${out}`);
-      if (
-        ["create_crm_lead", "reply_to_conversation", "create_document", "generate_report", "generate_owner_analysis", "store_create", "store_update", "create_quotation", "create_zoho_quotation", "send_email"].includes(
-          call.name
-        )
-      ) {
-        actions.push({ name: call.name, args: call.args, result: out });
-      }
-      // Surface created documents/reports as downloadable file cards (not raw URLs in text).
-      if (
-        call.name === "create_document" ||
-        call.name === "generate_report" ||
-        call.name === "generate_owner_analysis" ||
-        call.name === "create_quotation"
-      ) {
+      if (MUTATING_TOOLS.has(call.name) && !repeatedMutation) actions.push({ name: call.name, args: call.args, result: out });
+      if (["create_document", "generate_report", "generate_owner_analysis", "create_quotation", "get_action_status", "create_zoho_quotation"].includes(call.name)) {
         try {
-          const parsed = JSON.parse(out) as { name?: string; url?: string; files?: { name: string; url: string; type?: string }[] };
+          const parsed = JSON.parse(out) as { name?: string; url?: string; file?: { name?: string; url?: string; type?: string }; files?: { name: string; url: string; type?: string }[]; externalRef?: string };
           if (Array.isArray(parsed.files)) {
             for (const f of parsed.files) {
               if (f.url && f.name) files.push({ name: f.name, url: f.url, type: f.type || f.name.split(".").pop() || "file" });
             }
+          } else if (parsed.file?.url && parsed.file?.name) {
+            files.push({ name: parsed.file.name, url: parsed.file.url, type: parsed.file.type || "file" });
           } else if (parsed.url && parsed.name) {
             files.push({ name: parsed.name, url: parsed.url, type: parsed.name.split(".").pop() || "file" });
+          } else if (parsed.externalRef?.startsWith("{")) {
+            const external = JSON.parse(parsed.externalRef) as { fileName?: string; url?: string };
+            if (external.fileName && external.url) files.push({ name: external.fileName, url: external.url, type: "pdf" });
           }
         } catch {
           /* ignore */
         }
       }
-    } catch (e) {
-      results.push(`${call.name} → error: ${(e as Error).message}`);
     }
+    const continuationPrompt = [
+      prompt,
+      "", "Verified tool progress (authoritative):", ...results,
+      "", "Continue the original request. If another tool is required, call it now using the verified IDs/data above.",
+      "Never repeat an identical tool call. Never claim queued, created, generated, saved, attached, approved, or sent unless a tool result explicitly confirms it.",
+      requiresEmailAttachment ? "This request involves sharing a file: do not call send_email until a real documentId is available, and pass it as attachDocumentId." : "",
+      "If the task is complete or cannot proceed, return the final concise answer.",
+    ].filter(Boolean).join("\n");
+    response = await callGemini({ system, prompt: continuationPrompt, tools, temperature: 0.05 });
+    finalText = response.text || finalText;
   }
 
-  // Pass 2 — turn tool results into a natural reply.
+  if (!results.length) return { reply: finalText || "…", actions, files };
+
+  // Final wording for read-only results. Mutation claims are rendered from
+  // structured results below, not trusted to the language model.
   const prompt2 = [
     convo ? `Conversation so far:\n${convo}\n` : "",
     `User: ${message}`,
@@ -1564,6 +1705,8 @@ export async function chatWithAgent(
     .join("\n");
 
   const second = await callGemini({ system, prompt: prompt2, temperature: 0 });
-  logger.info("agent chat", { enterpriseId, agentId, toolCalls: first.functionCalls.length });
-  return { reply: second.text || first.text || "Done.", actions, files };
+  const modelReply = second.text || finalText || "Done.";
+  const reply = deterministicActionReply(actions, files, modelReply);
+  logger.info("agent chat", { enterpriseId, agentId, toolCalls: results.length, actionCount: actions.length });
+  return { reply, actions, files };
 }

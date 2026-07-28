@@ -89,7 +89,22 @@ function paramLines(params?: Record<string, unknown>): { label: string; value: s
   if (!params) return [];
   const lines: { label: string; value: string }[] = [];
   const push = (k: string, v: unknown) => {
-    const value = v === null || v === undefined ? "" : String(v);
+    const value = v === null || v === undefined
+      ? ""
+      : Array.isArray(v)
+        ? v.map((item, index) => {
+            if (!item || typeof item !== "object") return String(item);
+            const fields = Object.entries(item as Record<string, unknown>)
+              .filter(([, fieldValue]) => fieldValue !== null && fieldValue !== undefined && String(fieldValue).trim())
+              .map(([field, fieldValue]) => `${field.replace(/_/g, " ")}: ${String(fieldValue)}`)
+              .join(", ");
+            return `${index + 1}. ${fields}`;
+          }).join("\n")
+        : typeof v === "object"
+          ? Object.entries(v as Record<string, unknown>)
+              .map(([field, fieldValue]) => `${field.replace(/_/g, " ")}: ${String(fieldValue ?? "")}`)
+              .join(", ")
+          : String(v);
     const label = k
       .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
       .replace(/_/g, " ")

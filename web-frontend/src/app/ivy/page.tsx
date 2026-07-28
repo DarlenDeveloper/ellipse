@@ -32,7 +32,8 @@ import { FileCard, stripFileUrls, type ChatFile } from "@/components/ivy/FileCar
 import { cn } from "@/lib/utils";
 import { MarkdownText } from "@/components/MarkdownText";
 
-type Msg = { role: "ivy" | "user"; text: string; files?: ChatFile[] };
+type ChatAction = { name: string; args?: Record<string, unknown>; result?: string };
+type Msg = { role: "ivy" | "user"; text: string; files?: ChatFile[]; actions?: ChatAction[] };
 
 type ChatSummary = {
   id: string;
@@ -156,7 +157,7 @@ export default function IvyPage() {
   const send = async (text?: string) => {
     const q = (text ?? input).trim();
     if (!q || thinking) return;
-    const history = messages.map((m) => ({ role: m.role, text: m.text }));
+    const history = messages.map((m) => ({ role: m.role, text: m.text, actions: m.actions }));
     const withUser: Msg[] = [...messages, { role: "user", text: q }];
     setMessages(withUser);
     setInput("");
@@ -181,9 +182,10 @@ export default function IvyPage() {
 
       const fn = httpsCallable(functions, "askAgent");
       const res = await fn({ enterpriseId, agentId, message: q, history });
-      const data = res.data as { reply?: string; files?: ChatFile[] };
+      const data = res.data as { reply?: string; files?: ChatFile[]; actions?: ChatAction[] };
       const ivyMsg: Msg = { role: "ivy", text: data.reply ?? "…" };
       if (data.files && data.files.length) ivyMsg.files = data.files;
+      if (data.actions && data.actions.length) ivyMsg.actions = data.actions;
       const full: Msg[] = [...withUser, ivyMsg];
       setMessages(full);
       if (cid) {
@@ -403,6 +405,9 @@ export default function IvyPage() {
                     {m.files?.map((f) => (
                       <FileCard key={f.url} file={f} />
                     ))}
+                    {m.role === "ivy" && m.actions?.map((action, actionIndex) => (
+                      <ActionReceipt key={`${action.name}-${actionIndex}`} action={action} />
+                    ))}
                   </div>
                 </div>
               ))}
@@ -469,6 +474,31 @@ function Composer({
           <ArrowUp size={18} variant="Linear" color="#ffffff" />
         </button>
       </div>
+    </div>
+  );
+}
+
+function ActionReceipt({ action }: { action: ChatAction }) {
+  let status = "recorded";
+  let actionId = "";
+  let failed = false;
+  try {
+    const result = JSON.parse(action.result ?? "{}") as { status?: string; pendingActionId?: string; error?: string; created?: boolean };
+    status = result.error ? "not completed" : result.created ? "created" : result.status ?? "recorded";
+    actionId = result.pendingActionId ?? "";
+    failed = !!result.error || ["error", "blocked", "off", "frozen"].includes(status);
+  } catch {
+    failed = true;
+    status = "unverified";
+  }
+  return (
+    <div className={cn(
+      "flex items-center gap-2 rounded-xl border px-3 py-2 text-[11px] font-semibold",
+      failed ? "border-red-100 bg-red-50 text-red-700" : status === "pending" ? "border-amber-100 bg-amber-50 text-amber-700" : "border-emerald-100 bg-emerald-50 text-emerald-700"
+    )}>
+      <TickCircle size={14} variant={failed ? "Linear" : "Bold"} color="currentColor" />
+      <span className="capitalize">{action.name.replace(/_/g, " ")} · {status}</span>
+      {actionId && <span className="ml-auto max-w-28 truncate font-normal opacity-70" title={actionId}>{actionId}</span>}
     </div>
   );
 }

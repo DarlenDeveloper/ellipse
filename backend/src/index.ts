@@ -746,7 +746,7 @@ export const askAgent = onCall(
     const enterpriseId = request.data?.enterpriseId as string | undefined;
     const agentId = (request.data?.agentId as string | undefined) ?? "ivy";
     const message = (request.data?.message as string | undefined)?.trim();
-    const history = (request.data?.history as { role: "user" | "ivy"; text: string }[] | undefined) ?? [];
+    const history = (request.data?.history as { role: "user" | "ivy"; text: string; actions?: { name: string; args?: Record<string, unknown>; result?: string }[] }[] | undefined) ?? [];
     if (!enterpriseId || !message) {
       throw new HttpsError("invalid-argument", "Missing enterpriseId or message.");
     }
