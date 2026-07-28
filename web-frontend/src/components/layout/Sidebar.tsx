@@ -19,9 +19,11 @@ import {
   Calendar1,
   ArrowLeft2,
   ArrowRight2,
+  LogoutCurve,
 } from "iconsax-react";
 import { cn } from "@/lib/utils";
 import { useSidebar } from "./SidebarContext";
+import { useAuth } from "@/lib/auth-context";
 
 const navItems = [
   { icon: Home2, label: "Dashboard", href: "/dashboard" },
@@ -42,7 +44,20 @@ export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { collapsed, toggle } = useSidebar();
+  const { logout } = useAuth();
   const [pendingHref, setPendingHref] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
+
+  const handleLogout = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await logout();
+      router.replace("/login");
+    } finally {
+      setSigningOut(false);
+    }
+  };
 
   useEffect(() => {
     setPendingHref(null);
@@ -108,9 +123,23 @@ export function Sidebar() {
         })}
       </nav>
 
-      {/* Pinned footer — collapse toggle (never scrolls) */}
-      <div className="shrink-0 pt-3 mt-2 border-t border-gray-100">
+      {/* Pinned footer — account action + collapse toggle (never scrolls) */}
+      <div className="shrink-0 pt-3 mt-2 border-t border-gray-100 space-y-2">
         <button
+          type="button"
+          onClick={handleLogout}
+          disabled={signingOut}
+          title={collapsed ? "Log out" : undefined}
+          className={cn(
+            "flex items-center rounded-full text-sm font-medium text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors disabled:opacity-50",
+            collapsed ? "justify-center w-11 h-11 mx-auto" : "w-full gap-3.5 px-4 py-2.5"
+          )}
+        >
+          <LogoutCurve size={20} variant="Linear" color="currentColor" />
+          {!collapsed && (signingOut ? "Logging out…" : "Log out")}
+        </button>
+        <button
+          type="button"
           onClick={toggle}
           className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center mx-auto hover:bg-gray-200 transition-colors"
         >

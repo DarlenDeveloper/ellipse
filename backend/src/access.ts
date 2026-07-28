@@ -78,22 +78,21 @@ export async function requestSharedAccess(callerUid: string, args: { types?: str
   if (u.role === "owner" || u.role === "admin") return { ok: true, alreadyHasAccess: true };
 
   const types = Array.isArray(args.types) ? args.types.filter(Boolean) : [];
-  // Merge into any existing pending request so requesting a second connection doesn't drop the first.
-  const existing = await requestRef(u.enterpriseId, callerUid).get();
-  const prior = (existing.data()?.types as string[] | undefined) ?? [];
-  const merged = Array.from(new Set([...prior, ...types]));
+  // A request is the employee's current exact selection. Replacing the list is
+  // important when they edit a pending/denied request and remove an integration.
+  const selected = Array.from(new Set(types));
 
   await requestRef(u.enterpriseId, callerUid).set({
     enterprise_id: u.enterpriseId,
     uid: callerUid,
     email: u.email,
     name: u.name,
-    types: merged,
+    types: selected,
     note: (args.note ?? "").slice(0, 300),
     status: "pending",
     requested_at: FieldValue.serverTimestamp(),
   });
-  return { ok: true, requested: merged };
+  return { ok: true, requested: selected };
 }
 
 async function assertSameOrg(enterpriseId: string, targetUid: string) {

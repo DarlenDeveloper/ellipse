@@ -226,9 +226,6 @@ export default function IntegrationsPage() {
   const toggle = (id: string) =>
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, connected: !it.connected } : it)));
 
-  const blockedManage = () =>
-    setBanner({ type: "error", text: "Only the owner or an admin can manage company integrations." });
-
   const requestAccess = async (type: string) => {
     try {
       await httpsCallable(functions, "requestSharedAccess")({ types: [type] });
@@ -338,7 +335,7 @@ export default function IntegrationsPage() {
                   : undefined
               }
               onDisconnect={
-                canManage ? () => setDisconnectTarget({ id: integration.id, name: integration.name }) : blockedManage
+                canManage ? () => setDisconnectTarget({ id: integration.id, name: integration.name }) : undefined
               }
               onUpdate={
                 !canManage
@@ -352,7 +349,9 @@ export default function IntegrationsPage() {
                   : undefined
               }
               subtitle={
-                !canManage && orgActive.has(integration.id) && !grantedTypes.has(integration.id)
+                !canManage && orgActive.has(integration.id) && grantedTypes.has(integration.id)
+                  ? "Company access approved"
+                  : !canManage && orgActive.has(integration.id) && !grantedTypes.has(integration.id)
                   ? "No access — request it"
                   : isZoho && zohoConnected
                   ? "Connected"
@@ -369,6 +368,7 @@ export default function IntegrationsPage() {
                   : undefined
               }
               busy={(isGoogle && connecting) || (isZoho && connectingZoho) || (isMicrosoft && connectingMs)}
+              connectedLabel={!canManage ? "Access approved" : "Connected"}
             />
           );
         })}

@@ -11,6 +11,7 @@ export function IntegrationCard({
   onUpdate,
   subtitle,
   busy,
+  connectedLabel = "Connected",
 }: {
   integration: Integration;
   onToggle?: (id: string) => void;
@@ -19,6 +20,7 @@ export function IntegrationCard({
   onUpdate?: () => void;
   subtitle?: string;
   busy?: boolean;
+  connectedLabel?: string;
 }) {
   const { name, description, logo, connected } = integration;
 
@@ -50,7 +52,7 @@ export function IntegrationCard({
           <>
             <span className="flex items-center gap-1.5 text-sm font-medium text-green-700 bg-green-50 rounded-full px-4 py-2">
               <TickCircle size={16} variant="Bold" />
-              Connected
+              {connectedLabel}
             </span>
             <div className="flex items-center gap-2">
               {onUpdate && (

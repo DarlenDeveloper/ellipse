@@ -11,6 +11,7 @@ import {
   CloseCircle,
   Trash,
   Lock1,
+  Clock,
 } from "iconsax-react";
 import { collection, query, where, onSnapshot, doc, getDoc } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
@@ -60,6 +61,9 @@ export default function UsersPage() {
   const [accessMember, setAccessMember] = useState<Member | null>(null);
   const [myHasAccess, setMyHasAccess] = useState(false);
   const [myRequestStatus, setMyRequestStatus] = useState<string | null>(null);
+  const [activeIntegrationTypes, setActiveIntegrationTypes] = useState<string[]>([]);
+  const [requestedTypes, setRequestedTypes] = useState<string[]>([]);
+  const [showAccessRequest, setShowAccessRequest] = useState(false);
 
   const canManage = myRole === "owner" || myRole === "admin";
   const isOwner = myRole === "owner";
@@ -142,7 +146,19 @@ export default function UsersPage() {
       setMyHasAccess(snap.exists() && ((snap.data()?.types as string[] | undefined)?.length ?? 0) > 0)
     );
     const unsubMyReq = onSnapshot(doc(db, "access_requests", `${enterpriseId}_${user.uid}`), (snap) =>
-      setMyRequestStatus(snap.exists() ? (snap.data()?.status as string) : null)
+      {
+        setMyRequestStatus(snap.exists() ? (snap.data()?.status as string) : null);
+        setRequestedTypes(snap.exists() ? ((snap.data()?.types as string[] | undefined) ?? []) : []);
+      }
+    );
+    const unsubConnections = onSnapshot(
+      query(collection(db, "connections"), where("enterprise_id", "==", enterpriseId)),
+      (snap) => setActiveIntegrationTypes(
+        Array.from(new Set(snap.docs
+          .map((d) => d.data())
+          .filter((d) => d.status === "active" && typeof d.type === "string")
+          .map((d) => d.type as string)))
+      )
     );
     return () => {
       unsubMembers();
@@ -151,6 +167,7 @@ export default function UsersPage() {
       unsubGrants?.();
       unsubGrant();
       unsubMyReq();
+      unsubConnections();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enterpriseId, user, canManage]);
@@ -177,6 +194,19 @@ export default function UsersPage() {
   };
   const revoke = (email: string) => call("revokeInvite", { email });
   const respondAccess = (uid: string, approve: boolean) => call("respondAccessRequest", { uid, approve });
+  const submitAccessRequest = async () => {
+    if (!requestedTypes.length) {
+      setError("Choose at least one company integration.");
+      return;
+    }
+    const ok = await call("requestSharedAccess", { types: requestedTypes });
+    if (ok) {
+      // Reflect the submitted state immediately; the Firestore listener then
+      // confirms it from the server without leaving a stale action button.
+      setMyRequestStatus("pending");
+      setShowAccessRequest(false);
+    }
+  };
   const removeIntegrationAccess = async (m: Member, type: string) => {
     const current = connectionGrants[m.id] ?? [];
     await call("setConnectionGrants", { uid: m.id, types: current.filter((value) => value !== type) });
@@ -235,12 +265,66 @@ export default function UsersPage() {
               </p>
             </div>
           </div>
-          <a
-            href="/integrations"
-            className="bg-black text-white text-sm font-medium rounded-full px-5 py-2.5 hover:bg-gray-800 shrink-0"
+          <button
+            type="button"
+            onClick={() => setShowAccessRequest(true)}
+            className={cn(
+              "flex items-center gap-2 text-sm font-medium rounded-full px-5 py-2.5 shrink-0 transition-colors",
+              myRequestStatus === "pending"
+                ? "bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100"
+                : "bg-black text-white hover:bg-gray-800"
+            )}
           >
-            Choose integrations
-          </a>
+            {myRequestStatus === "pending" && <Clock size={16} variant="Bold" />}
+            {myRequestStatus === "pending" ? "Pending · Edit request" : "Request access"}
+          </button>
+        </div>
+      )}
+
+      {showAccessRequest && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4" onMouseDown={() => setShowAccessRequest(false)}>
+          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Company access</p>
+                <h2 className="mt-1 text-xl font-bold">Request integrations</h2>
+                <p className="mt-2 text-sm leading-6 text-gray-500">Choose the organization connections you need. An owner or admin will approve the request.</p>
+              </div>
+              <button type="button" onClick={() => setShowAccessRequest(false)} className="rounded-full bg-gray-100 p-2 text-gray-500 hover:bg-gray-200" aria-label="Close">
+                <CloseCircle size={20} variant="Linear" />
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-2">
+              {activeIntegrationTypes.length ? activeIntegrationTypes.map((type) => {
+                const item = integrations.find((integration) => integration.id === type);
+                const checked = requestedTypes.includes(type);
+                return (
+                  <label key={type} className={`flex cursor-pointer items-center justify-between rounded-2xl border p-4 transition ${checked ? "border-black bg-gray-50" : "border-gray-200 hover:bg-gray-50"}`}>
+                    <div>
+                      <p className="text-sm font-semibold">{item?.name ?? type}</p>
+                      <p className="mt-0.5 text-xs text-gray-400">Use the company&apos;s shared connection</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => setRequestedTypes((current) => checked ? current.filter((value) => value !== type) : [...current, type])}
+                      className="h-5 w-5 accent-black"
+                    />
+                  </label>
+                );
+              }) : (
+                <p className="rounded-2xl bg-gray-50 px-4 py-6 text-center text-sm text-gray-400">Your organization has no active shared integrations yet.</p>
+              )}
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button type="button" onClick={() => setShowAccessRequest(false)} className="rounded-full px-5 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-100">Cancel</button>
+              <button type="button" onClick={submitAccessRequest} disabled={busy || !requestedTypes.length} className="rounded-full bg-black px-5 py-2.5 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-40">
+                {busy ? "Sending…" : myRequestStatus === "pending" ? "Update request" : "Send request"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
