@@ -17,7 +17,7 @@ import { db } from "@/lib/firebase";
 import { useAccess } from "@/lib/use-access";
 
 function toType(agentId?: string, targetSystem?: string): string {
-  const base = (agentId?.replace(/-agent$/, "") || targetSystem || "").toLowerCase();
+  const base = ((agentId?.startsWith("human-") ? targetSystem : agentId?.replace(/-agent$/, "")) || targetSystem || "").toLowerCase();
   return base === "gmail" ? "google-workspace" : base;
 }
 

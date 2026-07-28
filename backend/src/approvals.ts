@@ -1,7 +1,7 @@
 import { onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { defineSecret } from "firebase-functions/params";
 import * as logger from "firebase-functions/logger";
-import { FieldValue } from "./admin";
+import { db, FieldValue } from "./admin";
 import { executeAction } from "./executeAgentAction";
 
 const zohoClientId = defineSecret("ZOHO_CLIENT_ID");
@@ -40,6 +40,28 @@ export const onPendingActionApproved = onDocumentUpdated(
         after.action_type,
         (after.params as Record<string, unknown>) ?? {}
       );
+      const params = (after.params as Record<string, unknown>) ?? {};
+      if (after.action_type === "send_reply" && params.humanInitiated && params.conversationId) {
+        const conversationId = String(params.conversationId);
+        const convRef = db.doc(`conversations/${conversationId}`);
+        const conv = (await convRef.get()).data();
+        await db.collection("messages").add({
+          conversation_id: conversationId,
+          enterprise_id: after.enterprise_id,
+          channel: conv?.channel ?? after.target_system,
+          sender_type: "us",
+          from: "You",
+          from_email: "",
+          subject: params.subject ?? conv?.subject ?? "",
+          body: params.body ?? "",
+          snippet: String(params.body ?? "").slice(0, 200),
+          timestamp: new Date(),
+          created_at: FieldValue.serverTimestamp(),
+          connection_scope: params.connectionScope ?? "org",
+          owner_uid: params.ownerUid ?? null,
+        });
+        await convRef.set({ last_message_at: new Date(), updated_at: FieldValue.serverTimestamp() }, { merge: true });
+      }
       await ref.update({
         status: "executed",
         external_ref: externalRef,

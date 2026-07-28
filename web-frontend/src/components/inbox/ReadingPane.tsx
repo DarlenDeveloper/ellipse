@@ -135,6 +135,7 @@ export function ReadingPane({
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sendNotice, setSendNotice] = useState<string | null>(null);
   const [aiMode, setAiMode] = useState<"brief" | "draft" | "tasks" | "ask" | null>(null);
   const [aiResult, setAiResult] = useState("");
   const [aiQuestion, setAiQuestion] = useState("");
@@ -259,12 +260,23 @@ export function ReadingPane({
     if (!reply.trim() || !conversation || !enterpriseId || sending) return;
     setSending(true);
     setError(null);
+    setSendNotice(null);
     try {
-      await httpsCallable(functions, "sendReply")({
+      const response = await httpsCallable(functions, "sendReply")({
         enterpriseId,
         conversationId: conversation.id,
         body: reply.trim(),
       });
+      const result = response.data as { status?: string };
+      if (result.status === "pending") {
+        setSendNotice("Reply queued for approval. It has not been sent yet.");
+      } else if (result.status === "executed") {
+        setSendNotice("Reply sent.");
+      } else if (result.status === "off") {
+        throw new Error("Workspace agents are Off, so the reply was not queued or sent.");
+      } else if (result.status === "frozen" || result.status === "blocked" || result.status === "error") {
+        throw new Error("The reply could not be queued or sent under the current workspace settings.");
+      }
       setReply("");
     } catch (e) {
       const msg = (e as { message?: string })?.message || "";
@@ -415,6 +427,7 @@ export function ReadingPane({
       {canReply && (
       <div className="border-t border-gray-100 px-6 py-4 bg-white">
         {error && <p className="text-xs text-red-500 mb-2">{error}</p>}
+        {sendNotice && <p className="text-xs text-green-700 bg-green-50 border border-green-100 rounded-xl px-3 py-2 mb-2">{sendNotice}</p>}
         <div className="flex items-end gap-3 bg-gray-50 rounded-2xl px-4 py-2.5">
           <textarea
             ref={replyRef}

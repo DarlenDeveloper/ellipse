@@ -20,6 +20,16 @@ const msClientSecret = defineSecret("MS_CLIENT_SECRET");
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 
+async function requireOrgManager(uid: string, enterpriseId: string) {
+  const { db } = await import("./admin");
+  const user = (await db.doc(`users/${uid}`).get()).data();
+  if (user?.enterprise_id !== enterpriseId) throw new HttpsError("permission-denied", "Wrong organization.");
+  if (user.role !== "owner" && user.role !== "admin") {
+    throw new HttpsError("permission-denied", "Only an owner or admin can manage company integrations.");
+  }
+  return user;
+}
+
 /**
  * TEMPORARY — verifies the Gemini key + wrapper work end-to-end.
  * Remove once agents are live.
@@ -71,6 +81,8 @@ export const runAgentAction = onCall(async (request) => {
   if (!data.enterpriseId || !data.actionType || !data.domain || !data.targetSystem) {
     throw new HttpsError("invalid-argument", "Missing required fields.");
   }
+  const caller = (await (await import("./admin")).db.doc(`users/${request.auth.uid}`).get()).data();
+  if (caller?.enterprise_id !== data.enterpriseId) throw new HttpsError("permission-denied", "Wrong organization.");
 
   const result = await executeAgentAction({
     enterpriseId: data.enterpriseId,
@@ -226,6 +238,7 @@ export const connectSmtp = onCall(async (request) => {
   if (!enterpriseId || !d.imap_host || !d.smtp_host || !d.username || !d.password) {
     throw new HttpsError("invalid-argument", "Missing connection fields.");
   }
+  await requireOrgManager(request.auth.uid, enterpriseId);
   const cfg = {
     imap_host: d.imap_host,
     imap_port: Number(d.imap_port) || 993,
@@ -291,6 +304,7 @@ export const connectWhatsapp = onCall(async (request) => {
   if (!enterpriseId || !d.phone_number_id || !d.access_token) {
     throw new HttpsError("invalid-argument", "Missing enterpriseId, phone_number_id, or access_token.");
   }
+  await requireOrgManager(request.auth.uid, enterpriseId);
   const cfg = {
     phone_number_id: String(d.phone_number_id),
     access_token: String(d.access_token),
@@ -314,6 +328,7 @@ export const registerWebsite = onCall(async (request) => {
   const enterpriseId = request.data?.enterpriseId as string | undefined;
   const domain = request.data?.domain as string | undefined;
   if (!enterpriseId) throw new HttpsError("invalid-argument", "Missing enterpriseId.");
+  await requireOrgManager(request.auth.uid, enterpriseId);
   const { registerWebsite: reg } = await import("./connections/web");
   return reg(enterpriseId, domain);
 });
@@ -322,6 +337,8 @@ export const registerWebsite = onCall(async (request) => {
 export const verifyWebsiteInstall = onCall(async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
   const enterpriseId = request.data?.enterpriseId as string | undefined;
+  if (!enterpriseId) throw new HttpsError("invalid-argument", "Missing enterpriseId.");
+  await requireOrgManager(request.auth.uid, enterpriseId);
   const url = request.data?.url as string | undefined;
   if (!enterpriseId || !url) throw new HttpsError("invalid-argument", "Missing enterpriseId or url.");
   const { verifyWebsiteInstall: verify } = await import("./connections/web");
@@ -378,6 +395,7 @@ export const startMicrosoftConnect = onCall(
     if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
     const enterpriseId = request.data?.enterpriseId as string | undefined;
     if (!enterpriseId) throw new HttpsError("invalid-argument", "Missing enterpriseId.");
+    await requireOrgManager(request.auth.uid, enterpriseId);
     const { buildConsentUrl } = await import("./connections/microsoft365");
     return { url: buildConsentUrl(enterpriseId) };
   }
@@ -771,11 +789,7 @@ export const updateCalendarEvent = onCall(async (request) => {
   return updateCalendarEvent(request.auth.uid, request.data ?? {});
 });
 
-/**
- * Human-sent reply from the inbox reading pane. Sends immediately via the
- * conversation's channel (this is a person clicking send, not an agent, so it
- * bypasses the approval gate) and writes the outbound message so it shows at once.
- */
+/** Human-composed Inbox reply. It uses the universal gate just like agent replies. */
 export const sendReply = onCall(
   {
     secrets: [
@@ -797,10 +811,22 @@ export const sendReply = onCall(
     }
 
     const { db, FieldValue } = await import("./admin");
+    const caller = (await db.doc(`users/${request.auth.uid}`).get()).data();
+    if (caller?.enterprise_id !== enterpriseId) throw new HttpsError("permission-denied", "Wrong organization.");
     const convSnap = await db.doc(`conversations/${conversationId}`).get();
     if (!convSnap.exists) throw new HttpsError("not-found", "Conversation not found.");
     const conv = convSnap.data() as Record<string, unknown>;
+    if (conv.enterprise_id !== enterpriseId) throw new HttpsError("permission-denied", "Conversation belongs to another organization.");
     const channel = conv.channel as string;
+    const isManager = caller.role === "owner" || caller.role === "admin";
+    if (conv.connection_scope === "personal") {
+      if (conv.owner_uid !== request.auth.uid) throw new HttpsError("permission-denied", "This is another employee's personal conversation.");
+    } else if (!isManager) {
+      const grant = (await db.doc(`connection_grants/${enterpriseId}_${request.auth.uid}`).get()).data();
+      if (!((grant?.types as string[] | undefined) ?? []).includes(channel)) {
+        throw new HttpsError("permission-denied", "You do not have access to this company connection.");
+      }
+    }
 
     const targetByChannel: Record<string, string> = {
       "google-workspace": "gmail",
@@ -811,41 +837,41 @@ export const sendReply = onCall(
     const target = targetByChannel[channel];
     if (!target) throw new HttpsError("failed-precondition", `Cannot reply on channel ${channel}.`);
 
-    const { executeAction } = await import("./executeAgentAction");
-    let externalRef: string | null;
-    try {
-      externalRef = await executeAction(enterpriseId, target, "send_reply", {
+    const actionParams = {
         conversationId,
         threadId: conv.thread_id,
         to: conv.customer_ref,
         subject: conv.subject ?? "",
         body,
+        connectionOwnerUid: conv.connection_scope === "personal" ? conv.owner_uid : undefined,
+        humanInitiated: true,
+        senderUid: request.auth.uid,
+        connectionScope: conv.connection_scope ?? "org",
+        ownerUid: conv.connection_scope === "personal" ? conv.owner_uid : null,
+      };
+    const result = await executeAgentAction({
+      enterpriseId,
+      agentId: `human-${request.auth.uid}`,
+      domain: "inbox",
+      actionType: "send_reply",
+      params: actionParams,
+      targetSystem: target as ExecuteAgentActionInput["targetSystem"],
+      reasoning: `Human-reviewed reply to ${String(conv.customer_ref ?? "customer")} from the Inbox.`,
+    });
+
+    if (result.status === "executed") {
+      await db.collection("messages").add({
+        conversation_id: conversationId, enterprise_id: enterpriseId, channel,
+        sender_type: "us", from: "You", from_email: "", subject: conv.subject ?? "",
+        body, snippet: body.slice(0, 200), timestamp: new Date(), created_at: FieldValue.serverTimestamp(),
+        connection_scope: actionParams.connectionScope, owner_uid: actionParams.ownerUid,
       });
-    } catch (e) {
-      // Surface the real provider error (e.g. Meta "API access blocked" = expired token).
-      throw new HttpsError("failed-precondition", (e as Error).message || "Send failed.");
+      await db.doc(`conversations/${conversationId}`).set(
+        { last_message_at: new Date(), updated_at: FieldValue.serverTimestamp() }, { merge: true }
+      );
     }
 
-    // Reflect the sent message immediately in the unified inbox.
-    await db.collection("messages").add({
-      conversation_id: conversationId,
-      enterprise_id: enterpriseId,
-      channel,
-      sender_type: "us",
-      from: "You",
-      from_email: "",
-      subject: conv.subject ?? "",
-      body,
-      snippet: body.slice(0, 200),
-      timestamp: new Date(),
-      created_at: FieldValue.serverTimestamp(),
-    });
-    await db.doc(`conversations/${conversationId}`).set(
-      { last_message_at: new Date(), updated_at: FieldValue.serverTimestamp() },
-      { merge: true }
-    );
-
-    return { ok: true, externalRef };
+    return { ok: result.status === "executed" || result.status === "pending", ...result };
   }
 );
 
@@ -1021,6 +1047,7 @@ export const connectMercury = onCall(async (request) => {
   if (!enterpriseId || !apiKey) {
     throw new HttpsError("invalid-argument", "Missing enterpriseId or apiKey.");
   }
+  await requireOrgManager(request.auth.uid, enterpriseId);
   const { saveMercuryConnection } = await import("./connections/mercury");
   try {
     await saveMercuryConnection(enterpriseId, apiKey, baseUrl);
@@ -1303,6 +1330,7 @@ export const disconnectIntegration = onCall(async (request) => {
   const enterpriseId = request.data?.enterpriseId as string | undefined;
   const type = request.data?.type as string | undefined;
   if (!enterpriseId || !type) throw new HttpsError("invalid-argument", "Missing enterpriseId or type.");
+  await requireOrgManager(request.auth.uid, enterpriseId);
   const { disconnectIntegration: run } = await import("./disconnect");
   return run(enterpriseId, type);
 });
