@@ -82,6 +82,15 @@ Full read/create/update/delete on every module:
 
 ## Reporting features built on Zoho (live)
 
+## Official quotation documents (live code; activation required)
+
+- Ellipse no longer needs to manually recreate the official Zoho quotation file. The compound workflow creates a real `Quotes` record and calls Zoho CRM `download_mail_merge` to receive the official PDF bytes.
+- Customer chain: Lead (prospect capture) plus Account and Contact (required Quote lookups). Product lines must resolve to exact Zoho `Products` records; ambiguity or missing price stops the workflow instead of guessing.
+- The PDF is saved to Ellipse Data with Quote/customer/template/workflow provenance and SHA-256, then the same saved document can be attached to Gmail, SMTP or Outlook replies.
+- Required OAuth scopes now include `ZohoCRM.settings.mailmerge.CREATE`, `ZohoWriter.documentEditor.ALL`, and `ZohoWriter.merge.ALL`. Existing Zoho installations must reconnect to grant them.
+- Owner setup: create/confirm a Quotes mail-merge template, then enter its exact name under Settings → Quotation → Zoho quotation document.
+- Outlook reply attachments above 3 MB still require a Microsoft Graph upload-session enhancement.
+
 ### Field mapping — client's detailed report columns → Quotes module API names
 Verified from the org's live metadata (`settings/fields?module=Quotes`):
 

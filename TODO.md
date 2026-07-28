@@ -6,18 +6,25 @@ Core principle: **one agent per connection**, plus **Ivy** (boss agent) built LA
 
 ## 🎯 Next major milestones (in order)
 
-All connections live (incl. Mercury Store custom API). Triage, reports, documents, Data, Ivy/direct agent chat, custom agents, quotations, send-email, KB upload, Inbox AI actions, and the Tasks/personal Calendar foundation are done. Remaining big rocks:
+All connections live (incl. Mercury Store custom API). The product is suitable for a controlled staff pilot, **not yet an unrestricted public launch**. Remaining launch work:
 
 1. ✅ **Users & roles** — DONE. Roles `owner`/`admin`/`employee` + `can_approve`; invited users join via `acceptInvite` (not a new org); member-management callables (invite/role/approve/remove/revoke); shared-integration request→approve + per-user agent gating; daily owner-only team digest (Data page); Integrations view-only for non-admins. Deferred: personal per-user OAuth connect pipeline + tokened invite emails (→ security pass). See `USERS_AND_ROLES.md`.
-2. **Security pass (before production)** — IN PROGRESS:
+2. **Organization audit logs (before production)** — NOT STARTED:
+   - [ ] Immutable `org_audit_logs` written only by trusted backend code.
+   - [ ] Capture actor UID/role, enterprise, event type, target, safe before/after summary, outcome, timestamp, request/correlation id and IP/user-agent where legally appropriate.
+   - [ ] Cover login/security events, invites, roles, approval rights, connection grants, approvals, agent actions, integrations, documents/reports and outbound messages.
+   - [ ] Owner/admin Logs UI with search, filters, pagination/export, retention and redaction rules. Never log OAuth tokens, passwords, API keys or full sensitive message bodies.
+3. **Security pass (before production)** — IN PROGRESS:
    - [x] **Firestore rules** (`firestore.rules`, deployed) — tenant isolation on every collection, deny-by-default, role/owner-gated writes, approvals limited to managers/approvers, `ivy_chats` private to author.
    - [x] **Secret split** — OAuth tokens / API keys / SMTP passwords moved to a locked `connection_secrets` collection (clients denied); `connections` keeps only non-secret status. One-time `migrateConnectionSecrets` run on existing data.
    - [ ] ⚠️ **Per-connection within-org reads are still app-layer** (`useAccess`) — Firestore rules can't filter query results, so making it a hard boundary needs query rewrites (employees query with `where(channel in grantedTypes)`), or move those reads behind callables. Follow-up.
    - [ ] Tokens → Secret Manager (currently `connection_secrets` in Firestore, function-only — a solid interim).
    - [ ] Remove all debug fns + `migrateConnectionSecrets` (one-time) before ship.
-3. **Live Excel workbook edit** (`append_row`) via Graph workbook API.
-4. **External calendar sync** — push explicitly confirmed local events to Google Calendar / Microsoft Graph; never sync every task deadline or flood owner/admin calendars.
-5. **Agent memory** (WAY later) — persistent per-agent memory across chats/conversations.
+   - [ ] Production auth: add `crm.mercurycomputerslimited.com` to Firebase Authorized Domains; verify Google provider and display the real auth error.
+   - [ ] Upgrade Node.js 20 Functions runtime before **2026-10-30** and upgrade `firebase-functions` carefully.
+4. **Live Excel workbook edit** (`append_row`) via Graph workbook API.
+5. **External calendar sync** — push explicitly confirmed local events to Google Calendar / Microsoft Graph; never sync every task deadline or flood owner/admin calendars.
+6. **Document notes + organization memory** — notes retain source/provenance; only explicitly promoted, editable/removable knowledge becomes org memory.
 
 Supporting: real-time push (Gmail/Zoho webhooks), Search Console, website chat agent, Ivy dashboard briefing card.
 

@@ -102,6 +102,16 @@ Connections first (CRM → communication → marketing much later), Ivy (persona
 - **Real Users page** on live data (members + pending invites + access requests), actions gated by viewer role.
 - **Data scoping** via `useAccess` hook — Inbox, Dashboard (QuickStats/Statistics/RecentThreads/PendingApprovals), Approvals, Website, Data, Analytics all filter to the member's granted connections (owner/admin see all). Integrations shows per-connection "Connected" vs "No access — request it"; non-admins can't connect/disconnect.
 - **Daily owner-only team digest** (`orgUsers.ts` → hooked into `scheduledReports`/`generateReportsNow`): per-member chats/agents/topics + shared-connection snapshot; `owner_only:true`; Data page shows it to the owner only.
+- Access-request edits now replace the requested type list exactly (old selections are not silently accumulated). Approved shared connections are shown as **company access**, not as employee-owned connections.
+- **Agent/Ivy enforcement:** direct connection-agent calls require a caller grant; report generation intersects sources with the caller's allowed connections; employees only see granted agents and do not see organization-wide action totals presented as their own.
+
+### Done — Zoho-native quotation + file delivery (2026-07-28)
+- Compound gated workflow: resolve/create Lead, Account and Contact → match exact Zoho Products → create Zoho Quote → download the official Quotes mail-merge PDF → save the exact bytes and provenance in Ellipse Data.
+- Idempotent `quotation_workflows/{workflowKey}` prevents duplicate Quotes on retry/approval replay.
+- Settings accepts the exact Zoho Quotes mail-merge template name.
+- Gmail, SMTP/IMAP and Microsoft 365 replies can attach a saved Data document. Outlook inline reply attachments currently cap at 3 MB.
+- Ivy can create a Zoho quotation, find a previously saved quotation, and attach it to a reply. Explicit inbound quotation requests can propose the compound workflow through Approvals.
+- Activation requirement: reconnect Zoho for Writer/mail-merge scopes and configure the exact template name before the first live test.
 
 ### Done — security pass (started)
 - **Firestore rules** (`firestore.rules`, deployed): tenant isolation, deny-by-default, role/owner write control, approvals limited to managers/approvers, `ivy_chats` author-only, `connection_secrets` fully locked.
@@ -109,12 +119,14 @@ Connections first (CRM → communication → marketing much later), Ivy (persona
 - **Secret split**: OAuth tokens / API keys / SMTP passwords → locked `connection_secrets` (`connectionSecrets.ts`); `connections` now secret-free; one-time `migrateConnectionSecrets` run on existing data.
 
 ### Next
+- **Organization audit logs (launch priority):** immutable actor/action/target/result records for authentication, invitations, role/grant changes, approvals, agent/tool execution, connection lifecycle, document/report creation/download/sharing, and security failures. Owner/admin viewer with filters and retention policy.
 - Per-connection within-org read enforcement in rules (needs query rewrites; currently app-layer)
 - Tokens `connection_secrets` → Secret Manager
 - Remove all debug fns + one-time `migrateConnectionSecrets`
 - Ivy dashboard briefing card; live Excel append via Graph workbook API
 - Google Calendar + Microsoft Graph event synchronization on top of the local provider-ready calendar model
 - Node.js 20 Functions runtime upgrade before decommissioning on **2026-10-30**; upgrade `firebase-functions` in a controlled breaking-change pass
+- Production Google login: authorize `crm.mercurycomputerslimited.com` in Firebase Auth, verify Google provider, and expose actionable Firebase auth errors instead of a generic failure.
 - See `USERS_AND_ROLES.md` for the full users/roles/access spec + status
 
 ## Users & Roles — plan (next up)
