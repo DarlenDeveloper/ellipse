@@ -1,4 +1,7 @@
 import { db, FieldValue } from "./admin";
+import { getMessaging } from "firebase-admin/messaging";
+import { createHash } from "crypto";
+import * as logger from "firebase-functions/logger";
 
 export type NotificationKind =
   | "new_message"
@@ -34,9 +37,11 @@ export async function notifyUsers(args: {
   if (!unique.length) return;
   const snaps = await Promise.all(unique.map((uid) => db.doc(`users/${uid}`).get()));
   const batch = db.batch();
+  const deliveredUids: string[] = [];
   for (const snap of snaps) {
     const data = snap.data() as Recipient | undefined;
     if (!snap.exists || data?.notification_preferences?.[preferenceKey[args.kind] ?? ""] === false) continue;
+    deliveredUids.push(snap.id);
     const ref = db.collection("notifications").doc();
     batch.set(ref, {
       enterprise_id: args.enterpriseId,
@@ -51,6 +56,53 @@ export async function notifyUsers(args: {
     });
   }
   await batch.commit();
+
+  if (!deliveredUids.length) return;
+  try {
+    const tokenSnap = await db.collection("push_tokens").where("user_uid", "in", deliveredUids.slice(0, 30)).get();
+    const tokenDocs = tokenSnap.docs.filter((doc) => Boolean(doc.data().token)).slice(0, 500);
+    const tokens = tokenDocs.map((doc) => String(doc.data().token));
+    if (tokens.length) {
+      const response = await getMessaging().sendEachForMulticast({
+        tokens,
+        notification: { title: args.title, body: args.body },
+        data: { href: args.href ?? "/dashboard", kind: args.kind, entityId: args.entityId ?? "" },
+        webpush: { fcmOptions: { link: `https://crm.mercurycomputerslimited.com${args.href ?? "/dashboard"}` } },
+      });
+      const invalid = response.responses.flatMap((result, index) => {
+        const code = result.error?.code;
+        return !result.success && (code === "messaging/registration-token-not-registered" || code === "messaging/invalid-registration-token")
+          ? [tokenDocs[index]?.ref]
+          : [];
+      }).filter(Boolean) as FirebaseFirestore.DocumentReference[];
+      if (invalid.length) {
+        const cleanup = db.batch();
+        invalid.forEach((ref) => cleanup.delete(ref));
+        await cleanup.commit();
+      }
+    }
+  } catch (error) {
+    // Push is a secondary channel; it must never break the underlying action.
+    logger.error("Push notification delivery failed", { error: (error as Error).message, kind: args.kind });
+  }
+}
+
+export async function registerPushToken(uid: string, token: string, enterpriseId: string, userAgent?: string) {
+  const id = createHash("sha256").update(token).digest("hex");
+  await db.doc(`push_tokens/${id}`).set({
+    token,
+    user_uid: uid,
+    enterprise_id: enterpriseId,
+    user_agent: (userAgent ?? "").slice(0, 300),
+    updated_at: FieldValue.serverTimestamp(),
+  }, { merge: true });
+}
+
+export async function unregisterPushToken(uid: string, token: string) {
+  const id = createHash("sha256").update(token).digest("hex");
+  const ref = db.doc(`push_tokens/${id}`);
+  const snap = await ref.get();
+  if (snap.data()?.user_uid === uid) await ref.delete();
 }
 
 export async function notificationRecipients(enterpriseId: string, mode: "members" | "managers" | "approvers") {

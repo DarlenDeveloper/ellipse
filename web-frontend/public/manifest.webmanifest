@@ -1,0 +1,11 @@
+{
+  "name": "Mercury CRM",
+  "short_name": "Mercury CRM",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#f7f7f8",
+  "theme_color": "#000000",
+  "icons": [
+    { "src": "/ellipse-logo.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

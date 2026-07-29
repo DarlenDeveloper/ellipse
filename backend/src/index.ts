@@ -1372,6 +1372,26 @@ export const setConnectionGrants = onCall(async (request) => {
   return setConnectionGrants(request.auth.uid, request.data ?? {});
 });
 
+export const registerPushToken = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const token = String(request.data?.token ?? "").trim();
+  if (!token) throw new HttpsError("invalid-argument", "Missing push token.");
+  const user = (await (await import("./admin")).db.doc(`users/${request.auth.uid}`).get()).data();
+  if (!user?.enterprise_id) throw new HttpsError("failed-precondition", "You are not part of an organization.");
+  const { registerPushToken } = await import("./notifications");
+  await registerPushToken(request.auth.uid, token, user.enterprise_id, request.rawRequest.headers["user-agent"]);
+  return { ok: true };
+});
+
+export const unregisterPushToken = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const token = String(request.data?.token ?? "").trim();
+  if (!token) return { ok: true };
+  const { unregisterPushToken } = await import("./notifications");
+  await unregisterPushToken(request.auth.uid, token);
+  return { ok: true };
+});
+
 /** Disconnect an integration and purge all data it produced (analytics, messages, sites). */
 export const disconnectIntegration = onCall(async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");

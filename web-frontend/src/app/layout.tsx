@@ -13,6 +13,7 @@ const poppins = Poppins({
 export const metadata: Metadata = {
   title: "Mercury Computers — Unified Agentic Communication Hub",
   description: "Connect all your channels. Let AI handle the rest.",
+  manifest: "/manifest.webmanifest",
 };
 
 export default function RootLayout({
