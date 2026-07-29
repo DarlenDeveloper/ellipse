@@ -2,6 +2,7 @@ import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { defineSecret } from "firebase-functions/params";
 import * as logger from "firebase-functions/logger";
 import { db } from "./admin";
+import { notificationRecipients, notifyUsers } from "./notifications";
 
 const geminiKey = defineSecret("GEMINI_API_KEY");
 const googleClientId = defineSecret("GOOGLE_OAUTH_CLIENT_ID");
@@ -36,6 +37,19 @@ export const onMessageCreated = onDocumentCreated(
     const enterpriseId = msg.enterprise_id as string | undefined;
     const conversationId = msg.conversation_id as string | undefined;
     if (!enterpriseId || !conversationId) return;
+
+    const recipients = msg.connection_scope === "personal" && msg.owner_uid
+      ? [String(msg.owner_uid)]
+      : await notificationRecipients(enterpriseId, "members");
+    await notifyUsers({
+      enterpriseId,
+      recipientUids: recipients,
+      kind: "new_message",
+      title: `New message from ${String(msg.from || msg.from_email || "a customer")}`,
+      body: String(msg.subject || msg.snippet || msg.body || "Open Inbox to read the message.").slice(0, 180),
+      href: "/inbox",
+      entityId: conversationId,
+    });
 
     // Respect workspace mode — Off means no agents run at all.
     const entSnap = await db.doc(`enterprises/${enterpriseId}`).get();

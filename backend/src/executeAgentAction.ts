@@ -7,6 +7,7 @@ import {
   Tier,
   tierFeatures,
 } from "./types";
+import { notificationRecipients, notifyUsers } from "./notifications";
 
 /**
  * The single choke point for every agent action.
@@ -100,7 +101,16 @@ export async function executeAgentAction(
       external_ref: null,
       created_at: FieldValue.serverTimestamp(),
     });
-    // TODO: send push notification to mobile app
+    const recipients = await notificationRecipients(enterpriseId, "approvers");
+    await notifyUsers({
+      enterpriseId,
+      recipientUids: recipients,
+      kind: "approval_required",
+      title: "Agent action needs approval",
+      body: reasoning || `${agentId} wants to ${actionType.replace(/_/g, " ")}.`,
+      href: "/approvals",
+      entityId: ref.id,
+    });
     logger.info("Queued pending action", { enterpriseId, pendingActionId: ref.id });
     return { status: "pending", pendingActionId: ref.id };
   }

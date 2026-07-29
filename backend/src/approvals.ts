@@ -3,6 +3,7 @@ import { defineSecret } from "firebase-functions/params";
 import * as logger from "firebase-functions/logger";
 import { db, FieldValue } from "./admin";
 import { executeAction } from "./executeAgentAction";
+import { notificationRecipients, notifyUsers } from "./notifications";
 
 const zohoClientId = defineSecret("ZOHO_CLIENT_ID");
 const zohoClientSecret = defineSecret("ZOHO_CLIENT_SECRET");
@@ -29,8 +30,22 @@ export const onPendingActionApproved = onDocumentUpdated(
     const after = event.data?.after.data();
     if (!before || !after) return;
 
-    // Only handle the approval transition.
-    if (before.status !== "pending" || after.status !== "approved") return;
+    // Only handle a human decision made against a pending action.
+    if (before.status !== "pending" || (after.status !== "approved" && after.status !== "rejected")) return;
+
+    if (after.status === "rejected") {
+      const recipients = await notificationRecipients(after.enterprise_id, "approvers");
+      await notifyUsers({
+        enterpriseId: after.enterprise_id,
+        recipientUids: recipients,
+        kind: "action_failed",
+        title: "Agent action was declined",
+        body: after.action_summary || `${after.action_type.replace(/_/g, " ")} was not approved.`,
+        href: "/approvals",
+        entityId: event.params.id,
+      });
+      return;
+    }
 
     const ref = event.data!.after.ref;
     try {
@@ -69,12 +84,32 @@ export const onPendingActionApproved = onDocumentUpdated(
         external_ref: externalRef,
         executed_at: FieldValue.serverTimestamp(),
       });
+      const recipients = await notificationRecipients(after.enterprise_id, "approvers");
+      await notifyUsers({
+        enterpriseId: after.enterprise_id,
+        recipientUids: recipients,
+        kind: "action_completed",
+        title: "Approved action completed",
+        body: after.action_summary || `${after.action_type.replace(/_/g, " ")} completed successfully.`,
+        href: "/approvals",
+        entityId: event.params.id,
+      });
       logger.info("Approved action executed", { id: event.params.id, externalRef });
     } catch (e) {
       await ref.update({
         status: "error",
         error: (e as Error).message,
         executed_at: FieldValue.serverTimestamp(),
+      });
+      const recipients = await notificationRecipients(after.enterprise_id, "approvers");
+      await notifyUsers({
+        enterpriseId: after.enterprise_id,
+        recipientUids: recipients,
+        kind: "action_failed",
+        title: "Approved action failed",
+        body: (e as Error).message || "The approved action could not be completed.",
+        href: "/approvals",
+        entityId: event.params.id,
       });
       logger.error("Approved action failed", { id: event.params.id, error: (e as Error).message });
     }

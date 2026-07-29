@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { KnowledgeBase } from "@/components/settings/KnowledgeBase";
 import { GeneralSettings } from "@/components/settings/GeneralSettings";
 import { QuotationSettings } from "@/components/settings/QuotationSettings";
+import { NotificationSettings } from "@/components/settings/NotificationSettings";
 
 type TabId = "general" | "knowledge" | "quotation" | "notifications" | "security" | "appearance";
 
@@ -115,27 +116,7 @@ export default function SettingsPage() {
 
           {activeTab === "quotation" && <QuotationSettings />}
 
-          {activeTab === "notifications" && (
-            <div className="bg-white rounded-2xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">
-              <h3 className="text-lg font-bold mb-4">Notification Preferences</h3>
-              <div className="space-y-4">
-                {[
-                  "New message in inbox",
-                  "Agent requires approval",
-                  "Escalation triggered",
-                  "Weekly analytics digest",
-                  "Integration disconnected",
-                ].map((item) => (
-                  <div key={item} className="flex items-center justify-between py-2">
-                    <span className="text-sm text-gray-700">{item}</span>
-                    <button className="relative w-11 h-6 rounded-full bg-blue-500 transition-colors">
-                      <span className="absolute top-0.5 w-5 h-5 bg-white rounded-full shadow translate-x-[22px]" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          {activeTab === "notifications" && <NotificationSettings />}
 
           {activeTab === "security" && (
             <div className="bg-white rounded-2xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">

@@ -109,6 +109,17 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ---- Per-user notifications ----
+    match /notifications/{id} {
+      allow read: if signedIn() && resource.data.recipient_uid == request.auth.uid
+        && resource.data.enterprise_id == myEid();
+      allow update: if signedIn() && resource.data.recipient_uid == request.auth.uid
+        && request.resource.data.recipient_uid == resource.data.recipient_uid
+        && request.resource.data.enterprise_id == resource.data.enterprise_id
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'read_at']);
+      allow create, delete: if false;
+    }
+
     // ---- Inbox: conversations + messages (read within org; ingest is server-side) ----
     match /conversations/{id} {
       allow read: if isMember(resource.data.enterprise_id);

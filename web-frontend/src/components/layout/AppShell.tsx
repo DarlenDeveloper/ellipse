@@ -7,6 +7,7 @@ import { ModeProvider } from "./ModeContext";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { Sidebar } from "./Sidebar";
 import { IvyBubble } from "@/components/ivy/IvyBubble";
+import { NotificationCenter } from "./NotificationCenter";
 
 // Routes that render WITHOUT the app sidebar (pre-login / onboarding)
 const bareRoutes = ["/login", "/signup", "/onboarding"];
@@ -35,6 +36,7 @@ function ShellInner({ children }: { children: ReactNode }) {
   return (
     <>
       <Sidebar />
+      <NotificationCenter />
       <div
         className="min-h-screen transition-all duration-200"
         style={{ marginLeft: collapsed ? 70 : 230 }}

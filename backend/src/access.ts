@@ -1,5 +1,6 @@
 import { HttpsError } from "firebase-functions/v2/https";
 import { db, FieldValue } from "./admin";
+import { notificationRecipients, notifyUsers } from "./notifications";
 
 /**
  * Per-connection access to the organization's SHARED integrations.
@@ -92,6 +93,16 @@ export async function requestSharedAccess(callerUid: string, args: { types?: str
     status: "pending",
     requested_at: FieldValue.serverTimestamp(),
   });
+  const managers = await notificationRecipients(u.enterpriseId, "managers");
+  await notifyUsers({
+    enterpriseId: u.enterpriseId,
+    recipientUids: managers,
+    kind: "access_requested",
+    title: "Integration access requested",
+    body: `${u.name} requested access to ${selected.join(", ") || "company integrations"}.`,
+    href: "/users",
+    entityId: callerUid,
+  });
   return { ok: true, requested: selected };
 }
 
@@ -132,6 +143,17 @@ export async function respondAccessRequest(
     { status: approve ? "approved" : "denied", responded_by: callerUid, responded_at: FieldValue.serverTimestamp() },
     { merge: true }
   );
+  await notifyUsers({
+    enterpriseId: caller.enterpriseId,
+    recipientUids: [targetUid],
+    kind: approve ? "access_approved" : "access_denied",
+    title: approve ? "Integration access approved" : "Integration access declined",
+    body: approve
+      ? `You can now use: ${toGrant.join(", ")}.`
+      : "Your company integration access request was declined.",
+    href: "/integrations",
+    entityId: targetUid,
+  });
   return { ok: true, uid: targetUid, approved: approve, granted: approve ? toGrant : [] };
 }
 
