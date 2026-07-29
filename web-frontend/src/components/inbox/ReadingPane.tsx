@@ -26,6 +26,7 @@ type Message = {
   timestamp?: { toDate: () => Date };
   cc?: string;
   attachment?: { fileName?: string; size?: number; documentId?: string };
+  attachments?: { documentId: string; fileName: string; contentType: string; size: number; url: string }[];
 };
 
 type ProposedTask = {
@@ -176,7 +177,10 @@ export function ReadingPane({
     if (!conversation) return "";
     const transcript = messages.slice(-12).map((message) => {
       const sender = message.sender_type === "us" ? "Our team" : message.from || message.from_email || "Customer";
-      return `${sender}: ${(message.body || message.snippet || "").slice(0, 1800)}`;
+      const receivedFiles = message.attachments?.map((file) => `${file.fileName} (${file.contentType}, documentId ${file.documentId})`) ?? [];
+      const sentFile = message.attachment?.fileName ? [message.attachment.fileName] : [];
+      const fileLine = [...receivedFiles, ...sentFile].length ? `\nAttachments: ${[...receivedFiles, ...sentFile].join(", ")}` : "";
+      return `${sender}: ${(message.body || message.snippet || "").slice(0, 1800)}${fileLine}`;
     });
     return [
       `Conversation title: ${conversation.subject}`,
@@ -454,6 +458,25 @@ export function ReadingPane({
                 <div className="mt-3 inline-flex max-w-full items-center gap-2 rounded-xl border border-purple-100 bg-purple-50 px-3 py-2 text-xs font-semibold text-purple-800">
                   <Paperclip2 size={15} variant="Linear" className="shrink-0" />
                   <span className="truncate">{msg.attachment.fileName}</span>
+                </div>
+              )}
+              {!!msg.attachments?.length && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {msg.attachments.map((file) => (
+                    <a
+                      key={file.documentId}
+                      href={file.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex max-w-full items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 transition hover:border-blue-200 hover:bg-blue-100/70"
+                    >
+                      <Paperclip2 size={16} variant="Linear" className="shrink-0 text-blue-600" />
+                      <span className="min-w-0">
+                        <span className="block max-w-64 truncate text-xs font-semibold text-blue-900">{file.fileName}</span>
+                        <span className="block text-[10px] text-blue-500">{file.contentType} · {file.size < 1024 * 1024 ? `${Math.ceil(file.size / 1024)} KB` : `${(file.size / 1024 / 1024).toFixed(1)} MB`}</span>
+                      </span>
+                    </a>
+                  ))}
                 </div>
               )}
             </div>

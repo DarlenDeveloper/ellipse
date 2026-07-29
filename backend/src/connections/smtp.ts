@@ -2,6 +2,7 @@ import { ImapFlow } from "imapflow";
 import nodemailer from "nodemailer";
 import { simpleParser } from "mailparser";
 import { db, FieldValue } from "../admin";
+import { saveIncomingAttachments, type IncomingAttachment } from "../incomingAttachments";
 
 /**
  * SMTP/IMAP connection — for any custom email server.
@@ -127,16 +128,24 @@ export async function ingestRecentImap(enterpriseId: string, max = 15): Promise<
 
       // Parse the raw MIME source into a clean text body (fall back to snippet).
       let body = "";
+      let incoming: IncomingAttachment[] = [];
       if (msg.source) {
         try {
           const parsed = await simpleParser(msg.source);
           body = (parsed.text || parsed.html || "").toString().slice(0, 20000);
+          incoming = parsed.attachments.map((attachment, index) => ({
+            sourceId: attachment.cid || `${index}-${attachment.checksum || attachment.filename || "attachment"}`,
+            fileName: attachment.filename || `attachment-${index + 1}`,
+            contentType: attachment.contentType || "application/octet-stream",
+            content: attachment.content,
+          }));
         } catch {
           body = "";
         }
       }
 
-      await db.doc(`conversations/${enterpriseId}_${docId}`).set(
+      const conversationId = `${enterpriseId}_${docId}`;
+      await db.doc(`conversations/${conversationId}`).set(
         {
           enterprise_id: enterpriseId,
           channel: "smtp",
@@ -150,8 +159,17 @@ export async function ingestRecentImap(enterpriseId: string, max = 15): Promise<
         { merge: true }
       );
 
+      const attachments = await saveIncomingAttachments({
+        enterpriseId,
+        channel: "smtp",
+        messageId,
+        conversationId,
+        senderEmail: fromEmail,
+        attachments: incoming,
+      });
+
       await msgDocRef.set({
-        conversation_id: `${enterpriseId}_${docId}`,
+        conversation_id: conversationId,
         enterprise_id: enterpriseId,
         channel: "smtp",
         thread_id: threadId,
@@ -162,6 +180,7 @@ export async function ingestRecentImap(enterpriseId: string, max = 15): Promise<
         subject,
         snippet: body.slice(0, 200),
         body,
+        attachments,
         timestamp,
         created_at: FieldValue.serverTimestamp(),
       });

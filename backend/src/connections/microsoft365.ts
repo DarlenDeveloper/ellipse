@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import { db, FieldValue } from "../admin";
+import { canAcceptIncomingAttachment, saveIncomingAttachments, type IncomingAttachment } from "../incomingAttachments";
 
 /**
  * Microsoft 365 connection (Microsoft Graph).
@@ -164,7 +165,7 @@ export async function ingestRecentOutlook(enterpriseId: string, max = 15): Promi
 
   const url =
     `https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages` +
-    `?$top=${max}&$select=id,conversationId,subject,from,toRecipients,bodyPreview,body,receivedDateTime&$orderby=receivedDateTime desc`;
+    `?$top=${max}&$select=id,conversationId,subject,from,toRecipients,bodyPreview,body,receivedDateTime,hasAttachments&$orderby=receivedDateTime desc`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   const data = (await res.json()) as any;
   if (data.error) throw new Error(data.error.message);
@@ -203,6 +204,39 @@ export async function ingestRecentOutlook(enterpriseId: string, max = 15): Promi
     }
     await db.doc(`conversations/${convId}`).set(convPatch, { merge: true });
 
+    const incoming: IncomingAttachment[] = [];
+    if (m.hasAttachments) {
+      const attachmentRes = await fetch(
+        `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(m.id)}/attachments?$select=id,name,contentType,size,isInline`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const attachmentData = (await attachmentRes.json()) as any;
+      if (!attachmentRes.ok) throw new Error(attachmentData?.error?.message || "Outlook attachments could not be read");
+      for (const attachment of attachmentData.value ?? []) {
+        if (attachment.isInline || !canAcceptIncomingAttachment(attachment.name, Number(attachment.size), attachment.contentType)) continue;
+        const fileRes = await fetch(
+          `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(m.id)}/attachments/${encodeURIComponent(attachment.id)}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const file = (await fileRes.json()) as any;
+        if (!fileRes.ok) throw new Error(file?.error?.message || "Outlook attachment could not be downloaded");
+        if (file.contentBytes) incoming.push({
+          sourceId: attachment.id,
+          fileName: attachment.name,
+          contentType: attachment.contentType || "application/octet-stream",
+          content: Buffer.from(file.contentBytes, "base64"),
+        });
+      }
+    }
+    const attachments = await saveIncomingAttachments({
+      enterpriseId,
+      channel: "microsoft365",
+      messageId: m.id,
+      conversationId: convId,
+      senderEmail: fromEmail,
+      attachments: incoming,
+    });
+
     await msgRef.set({
       conversation_id: convId,
       enterprise_id: enterpriseId,
@@ -215,6 +249,7 @@ export async function ingestRecentOutlook(enterpriseId: string, max = 15): Promi
       subject: m.subject ?? "",
       snippet: m.bodyPreview ?? "",
       body: (m.body?.content ?? m.bodyPreview ?? "").slice(0, 20000),
+      attachments,
       timestamp,
       created_at: FieldValue.serverTimestamp(),
     });

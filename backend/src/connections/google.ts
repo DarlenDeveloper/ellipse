@@ -1,5 +1,6 @@
 import { google } from "googleapis";
 import { db, FieldValue } from "../admin";
+import { canAcceptIncomingAttachment, saveIncomingAttachments, type IncomingAttachment } from "../incomingAttachments";
 
 const REDIRECT_URI = "https://us-central1-ellipse-desk.cloudfunctions.net/gmailOAuthCallback";
 
@@ -235,6 +236,12 @@ function extractBody(payload: any): string {
   return "";
 }
 
+function gmailAttachmentParts(payload: any): any[] {
+  if (!payload) return [];
+  const own = payload.filename && payload.body?.attachmentId ? [payload] : [];
+  return [...own, ...(payload.parts ?? []).flatMap((part: any) => gmailAttachmentParts(part))];
+}
+
 function parseEmailAddress(from: string): string {
   const m = from.match(/<(.+?)>/);
   return (m ? m[1] : from).trim().toLowerCase();
@@ -310,6 +317,33 @@ export async function ingestRecentGmail(enterpriseId: string, max = 15, ownerUid
       { merge: true }
     );
 
+    const incoming: IncomingAttachment[] = [];
+    for (const part of gmailAttachmentParts(payload)) {
+      const fileName = String(part.filename ?? "").trim();
+      const declaredSize = Number(part.body?.size ?? 0);
+      const contentType = String(part.mimeType ?? "application/octet-stream");
+      if (!canAcceptIncomingAttachment(fileName, declaredSize, contentType)) continue;
+      const attachmentId = String(part.body.attachmentId);
+      const attachmentRes = await gmail.users.messages.attachments.get({ userId: "me", messageId: id, id: attachmentId });
+      const encoded = attachmentRes.data.data;
+      if (!encoded) continue;
+      incoming.push({
+        sourceId: attachmentId,
+        fileName,
+        contentType,
+        content: Buffer.from(encoded.replace(/-/g, "+").replace(/_/g, "/"), "base64"),
+      });
+    }
+    const attachments = await saveIncomingAttachments({
+      enterpriseId,
+      channel: "google-workspace",
+      messageId: id,
+      conversationId,
+      senderEmail: fromEmail,
+      ownerUid,
+      attachments: incoming,
+    });
+
     // Message
     await msgDocRef.set({
       conversation_id: conversationId,
@@ -324,6 +358,7 @@ export async function ingestRecentGmail(enterpriseId: string, max = 15, ownerUid
       subject,
       snippet: full.data.snippet ?? "",
       body: extractBody(payload).slice(0, 20000),
+      attachments,
       timestamp,
       created_at: FieldValue.serverTimestamp(),
       connection_scope: ownerUid ? "personal" : "org",
