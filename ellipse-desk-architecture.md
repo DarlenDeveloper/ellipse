@@ -45,6 +45,17 @@ pending_actions/{id}
   status: pending | approved | rejected | executed | error
   action_summary, external_ref, created_at
 
+notifications/{id}
+  enterprise_id, recipient_uid, kind, title, body, href, entity_id
+  read, created_at, read_at
+
+push_tokens/{token_hash}
+  enterprise_id, user_uid, token, user_agent, updated_at
+
+documents/{id}
+  enterprise_id, kind, file metadata + URL
+  source system/message/conversation/sender, connection_scope, owner_uid
+
 analytics_events/{id}
   source (message | webhook | calendar_change), workspace_id, payload, timestamp
 
@@ -67,7 +78,7 @@ Mode is checked once, in one function, `executeAgentAction`. No agent, connectio
 No agent runs. No Gemini call happens. The ingestion trigger (new message, Zoho or Odoo webhook, calendar change) writes straight to `analytics_events`. This is pure collection at the point of entry, not an agent output that got blocked afterward. Cheapest mode, and the only one with zero model cost.
 
 **Supervised**
-The relevant agent runs and produces a `function_call`. Instead of executing, `executeAgentAction` writes it to `pending_actions` with status `pending`, generates the `action_summary` from the agent's accompanying reasoning text, and sends a push notification to the mobile app. A human approves or rejects from the app, which triggers an `onUpdate` function that either executes against the target system or discards it.
+The relevant agent runs and produces a `function_call`. Instead of executing, `executeAgentAction` writes it to `pending_actions` with status `pending`, stores the agent reasoning as `action_summary`, and creates recipient-scoped in-app and Web Push notifications for eligible approvers. A human approves or rejects in the web app, which triggers an `onUpdate` function that executes or closes the action and emits the corresponding result notification.
 
 **Unsupervised**
 Same agent run, same `function_call`, but `executeAgentAction` executes immediately and writes the result with status `executed`.

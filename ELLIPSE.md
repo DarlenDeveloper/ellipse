@@ -30,6 +30,7 @@
 - Cross-channel thread linking
 - Smart grouping by customer, urgency, topic, sentiment
 - Real-time updates
+- Inbound and outbound file attachments with safe Storage/Data provenance
 
 ### 2. Integrations
 - Google Workspace (OAuth2 — Gmail, Calendar, Contacts, Drive)
@@ -66,6 +67,11 @@
 - Customer journey maps
 - Agent performance (override rate)
 - Custom KPIs per org
+
+### 7. Notifications
+- Recipient-scoped real-time notification center with unread state and deep links
+- Firebase Cloud Messaging browser/device push for inbox, approvals, action results and access requests
+- Per-user preferences and per-device opt-in/revocation
 
 ---
 
@@ -161,9 +167,9 @@ Integration ownership: an employee may use the **owner's shared integrations wit
 
 🟡 **Core built; controlled staff pilot only** (pre-production security and production-auth checks remain)
 
-**Live:** Unified inbox (Gmail, SMTP, Outlook, WhatsApp) with working search, cleaned email rendering, safe Markdown agent responses, personalized AI Brief / Draft reply / structured Create tasks / Ask Ivy, and human-reviewed replies across all messaging channels · **real Tasks Kanban** (manual + AI-extracted tasks, assignees, due dates, priorities, source backlinks, duplicate prevention) · **private personal Calendar** (explicit local events and optional employee-controlled task time blocks; no manager-calendar flooding) · per-connection agents + triage · Zoho CRM (enrich, write, rich reporting, `list_leads`, `get_zoho_quote`) · Website analytics · **Mercury Store** (custom key-auth API: products/orders/quotations/repairs with search + pagination) · Ivy + direct agent chat (floating bubble + `/ivy` page) · custom agents · document + multi-source report generation (deterministic, saved to Data, mirrored to OneDrive) · owner-only Quote Owner analysis · **Zoho-native quotation workflow** (resolve Lead/Account/Contact → exact Zoho Products → Quote → official mail-merge PDF → Ellipse Data) · **Gmail/SMTP/Outlook attachment replies** (gated) · **knowledge-base file upload** (PDF/image text extraction) · premium approval review/edit UI · Data page.
+**Live:** Unified inbox (Gmail, SMTP, Outlook, WhatsApp) with working search, cleaned email rendering, safe Markdown agent responses, personalized AI Brief / Draft reply / structured Create tasks / Ask Ivy, human-reviewed replies across all messaging channels, and **safe inbound/outbound email attachments linked to Data** · **real-time in-app notifications + FCM Web Push** for messages, approvals, action results and access requests · **real Tasks Kanban** (manual + AI-extracted tasks, assignees, due dates, priorities, source backlinks, duplicate prevention) · **private personal Calendar** (explicit local events and optional employee-controlled task time blocks; no manager-calendar flooding) · per-connection agents + triage · Zoho CRM (enrich, write, rich reporting, `list_leads`, `get_zoho_quote`) · Website analytics · **Mercury Store** (custom key-auth API: products/orders/quotations/repairs with search + pagination) · Ivy + direct agent chat (floating bubble + `/ivy` page) · custom agents · document + multi-source report generation (deterministic, saved to Data, mirrored to OneDrive) · owner-only Quote Owner analysis · **Zoho-native quotation workflow** (resolve Lead/Account/Contact → exact Zoho Products → Quote → official mail-merge PDF → Ellipse Data) · **knowledge-base file upload** (PDF/image text extraction) · premium approval review/edit UI · Data page.
 
-**Users & roles (live):** owner/admin/employee + `can_approve`; invited employees auto-join their org (`acceptInvite`); member management (invite/role/approve/remove/revoke); **per-connection shared access** with exact editable requests and owner/admin approval; approved shared access is immediately usable and is labelled as company access (it is not a personal connection). Ivy report sources and direct connection-agent calls are checked against the caller's grants server-side. Employee Agents hides ungranted agents and never presents organization action totals as the employee's activity. Personal per-user OAuth credential storage remains deferred and must be labelled unavailable/coming soon.
+**Users & roles (live):** owner/admin/employee + `can_approve`; invited employees auto-join their org (`acceptInvite`); member management (invite/role/approve/remove/revoke); **per-connection shared access** with exact editable requests and owner/admin approval; approved shared access is immediately usable and is labelled as company access (it is not a personal connection). Ivy report sources and direct connection-agent calls are checked against the caller's grants server-side. Employee Agents hides ungranted agents and never presents organization action totals as the employee's activity. Personal Google Workspace and Zoho OAuth credential storage is live and owner-scoped; personal Microsoft 365 and password/API connectors remain deferred.
 
 **Security (started):** Firestore **security rules** deployed (tenant isolation, role/owner write control, deny-by-default, private chats); connection **secrets** (OAuth tokens, API keys, SMTP passwords) moved to a locked `connection_secrets` collection no client can read.
 

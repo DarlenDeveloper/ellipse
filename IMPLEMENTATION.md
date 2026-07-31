@@ -113,10 +113,27 @@ Connections first (CRM → communication → marketing much later), Ivy (persona
 - Ivy can create a Zoho quotation, find a previously saved quotation, and attach it to a reply. Explicit inbound quotation requests can propose the compound workflow through Approvals.
 - Activation requirement: reconnect Zoho for Writer/mail-merge scopes and configure the exact template name before the first live test.
 
+### Done — inbound email attachments (2026-07-29)
+- Gmail, Microsoft 365 and SMTP/IMAP ingestion now discover and download new inbound attachments instead of discarding MIME/Graph/mailparser attachment parts.
+- Safe files are stored in Firebase Storage and represented in `documents` as `kind: email_attachment`, with source system, message/conversation, sender, connection scope, owner, content type, size and checksum/provenance metadata.
+- Inbox messages retain attachment references and render downloadable cards. Inbox **Ask Ivy** receives attachment names, types, sizes and Data document IDs as grounded conversation context.
+- Guardrails: maximum 10 files, 10 MB per file and 25 MB total; executable extensions and executable MIME types are rejected.
+- Existing message documents remain idempotently skipped, so old emails are not backfilled automatically. A future explicit backfill tool must be bounded and deduplicated.
+
+### Done — in-app and Web Push notifications (2026-07-29)
+- Real-time Firestore notification bell with unread badge, 30-item panel, relative timestamps, deep links, per-item read state and **Mark all read**.
+- Backend notification producers cover new inbound messages, pending approvals, approved/rejected/completed/failed actions, and shared-integration access requests/decisions.
+- Notifications are per-user. Personal-connection messages target their credential owner; shared-message notifications target active organization members; approval notifications target managers and members with `can_approve`.
+- Settings → Notifications is no longer mock UI: preferences persist on the user record and are enforced before in-app and push delivery.
+- Firebase Cloud Messaging Web Push is live in backend code: public VAPID key, service worker, PWA manifest, per-device token registration/revocation, click-through links and invalid-token cleanup.
+- Push is a secondary channel: FCM delivery errors are logged but never fail the underlying email, approval or agent action.
+- Each browser/device requires explicit user permission. iOS/iPadOS requires the installed Home Screen PWA. The service worker and manifest become available on the production domain only after the frontend is deployed.
+
 ### Done — security pass (started)
 - **Firestore rules** (`firestore.rules`, deployed): tenant isolation, deny-by-default, role/owner write control, approvals limited to managers/approvers, `ivy_chats` author-only, `connection_secrets` fully locked.
 - Task reads are limited to managers or the task's assignee/creator. Personal calendar reads are owner-only; all task/calendar writes go through authenticated callables.
 - **Secret split**: OAuth tokens / API keys / SMTP passwords → locked `connection_secrets` (`connectionSecrets.ts`); `connections` now secret-free; one-time `migrateConnectionSecrets` run on existing data.
+- Notification reads are recipient-only; clients may change only `read` and `read_at`. Push tokens are written through authenticated callables and are never client-readable.
 
 ### Next
 - **Organization audit logs (launch priority):** immutable actor/action/target/result records for authentication, invitations, role/grant changes, approvals, agent/tool execution, connection lifecycle, document/report creation/download/sharing, and security failures. Owner/admin viewer with filters and retention policy.

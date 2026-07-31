@@ -26,7 +26,24 @@ All connections live (incl. Mercury Store custom API). The product is suitable f
 5. **External calendar sync** — push explicitly confirmed local events to Google Calendar / Microsoft Graph; never sync every task deadline or flood owner/admin calendars.
 6. **Document notes + organization memory** — notes retain source/provenance; only explicitly promoted, editable/removable knowledge becomes org memory.
 
-Supporting: real-time push (Gmail/Zoho webhooks), Search Console, website chat agent, Ivy dashboard briefing card.
+Supporting: provider webhooks for instant Gmail/Zoho ingestion (browser/device push delivery is implemented), Search Console, website chat agent, Ivy dashboard briefing card.
+
+## ✅ Notifications + Web Push (DONE 2026-07-29)
+- [x] Recipient-scoped Firestore notifications with live bell, unread badge, deep links, mark-read and mark-all-read
+- [x] Persistent per-user preferences for new messages, approvals, action results, access events and integration health
+- [x] FCM Web Push with supplied VAPID key, service worker, PWA manifest and explicit permission UI
+- [x] Authenticated per-device token registration/revocation and automatic invalid-token cleanup
+- [x] New message, approval lifecycle and integration-access lifecycle producers
+- [x] Push errors isolated from business actions
+- [ ] Add an owner/admin test-notification button and delivery diagnostics UI
+- [ ] Add scheduled digest/reminder producers when those product flows are finalized
+
+## ✅ Incoming email attachments (DONE 2026-07-29)
+- [x] Gmail attachment-part download, Microsoft Graph attachment download and SMTP/IMAP `mailparser` attachment capture
+- [x] Storage + Data document persistence with source/provenance and personal/shared ownership metadata
+- [x] Inbox attachment cards and grounded Ask Ivy attachment context
+- [x] Safety limits: 10 files, 10 MB each, 25 MB total; executable file/MIME rejection
+- [ ] Optional bounded attachment backfill for emails ingested before 2026-07-29
 
 ## ✅ Inbox AI + rendering improvements (DONE 2026-07-27)
 - [x] Working search by subject/title, sender/customer, and integration/channel (Gmail, Outlook, WhatsApp, SMTP)
@@ -69,6 +86,7 @@ Supporting: real-time push (Gmail/Zoho webhooks), Search Console, website chat a
 ## ✅ Send email + attachments (DONE)
 - [x] `send_email` tool — brand-new email to ANY address, optional attachment (`attachDocumentId`, e.g. quotation PDF); gated (supervised → Approvals)
 - [x] Attachment support added to Gmail (MIME), SMTP (nodemailer), Outlook (Graph); channel auto-picked (Gmail → MS365 → SMTP); approval-time send downloads the file from Storage
+- [x] Incoming Gmail/Outlook/SMTP attachments are also ingested to Data and linked to Inbox messages (see dedicated section above)
 
 ## ✅ Knowledge base file upload (DONE)
 - [x] `ingestKnowledgeFile` — upload PDF/image/text; text extracted via Gemini multimodal (verbatim), stored + fed to agents; per-entry/total caps so a big file can't dominate the prompt
@@ -158,7 +176,7 @@ Supporting: real-time push (Gmail/Zoho webhooks), Search Console, website chat a
 ### Google Workspace (Gmail) — 🟢 working
 - [x] OAuth connect, token store, ingest, auto-sync (`scheduledGmailSync` 5 min), live inbox
 - [x] Gmail agent (CRM-aware, gated `send_reply`, threaded), signs with org name
-- [ ] Send/reply UI button in reading pane
+- [x] Send/reply UI button in reading pane, including CC and visible outgoing/received attachments
 - [ ] True real-time push (`users.watch` + Pub/Sub)
 - [ ] Refresh token → Secret Manager
 - [ ] Google Calendar + Contacts provider synchronization (local Ellipse calendar is live)
@@ -190,8 +208,9 @@ Supporting: real-time push (Gmail/Zoho webhooks), Search Console, website chat a
 - [x] `onMessageCreated` dispatch + triage gate; per-connection agents sharing `replyBase`
 - [x] `pending_actions` approval flow (`onPendingActionApproved`) — now also executes `save_file`
 - [x] Approvals page, Agents page (live monitoring)
-- [ ] Ivy backend (LAST)
-- [ ] Mode switcher persisted to Firestore
+- [x] Ivy backend
+- [x] Mode switcher persisted to Firestore
+- [x] In-app notifications + browser/device Web Push
 
 ## Website analytics — 🟢 working
 - [x] Tracker (`webTag`), collector (`collectWebEvent`, geo), register + verify install, analytics-only `/website` page (real-time, bounce, new vs returning, countries/cities, top pages)
