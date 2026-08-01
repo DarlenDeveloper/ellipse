@@ -1,6 +1,6 @@
 import * as logger from "firebase-functions/logger";
 import { randomUUID } from "crypto";
-import { db } from "./admin";
+import { db, FieldValue } from "./admin";
 import { callGemini } from "./gemini";
 import { executeAgentAction } from "./executeAgentAction";
 import { loadKnowledgeBase } from "./agents/knowledge";
@@ -13,9 +13,8 @@ import { TargetSystem } from "./types";
  *   - direct chat with a single connection agent (scoped to its channel + tools)
  *   - Ivy, the orchestrator, who can read across every agent and delegate actions
  *
- * Every ACTION a chat wants to take is routed through `executeAgentAction`, so
- * the workspace mode + approval rules are respected exactly like the automated
- * agents (Supervised → queued for approval, Autopilot → executed, Off → nothing).
+ * Most actions route through `executeAgentAction`. Quotations are the deliberate
+ * exception: they execute immediately and write an executed audit record.
  */
 
 export type ChatAction = { name: string; args?: Record<string, unknown>; result?: string };
@@ -306,10 +305,10 @@ const T = {
             properties: {
               product: { type: "string", description: "Exact Zoho Product name or SKU." },
               quantity: { type: "number" },
-              rate: { type: "number", description: "Optional approved unit price; omit to use Zoho Unit_Price." },
+              rate: { type: "number", description: "Required unit price from the user or authoritative knowledge base." },
               description: { type: "string", description: "Optional quotation-line description; defaults to the Zoho Product description." },
             },
-            required: ["product", "quantity"],
+            required: ["product", "quantity", "rate"],
           },
         },
         subject: { type: "string" },
@@ -1004,6 +1003,16 @@ async function toolCreateZohoQuotation(enterpriseId: string, agentId: string, ar
     return JSON.stringify({ error: "A real customer name and email are required before an official quotation can be queued. No action was created." });
   }
   if (!items.length) return JSON.stringify({ error: "At least one quotation item is required." });
+  const invalidItem = (items as Record<string, unknown>[]).find((item) =>
+    !String(item.product ?? item.description ?? "").trim() ||
+    !(Number(item.quantity) > 0) ||
+    !(Number(item.rate) > 0)
+  );
+  if (invalidItem) {
+    return JSON.stringify({
+      error: "Each quotation item needs a description, quantity and unit price. Ask for the missing unit price instead of guessing.",
+    });
+  }
   const workflowKey = randomUUID();
   const params: Record<string, unknown> = {
     workflowKey,
@@ -1026,16 +1035,69 @@ async function toolCreateZohoQuotation(enterpriseId: string, agentId: string, ar
   if (bankDetails) params.bankDetails = bankDetails;
   if (args.vatExempt === true) params.vatExempt = true;
   if (connectionOwnerUid) params.connectionOwnerUid = connectionOwnerUid;
-  const result = await executeAgentAction({
-    enterpriseId,
-    agentId: `${agentId}-agent`,
+  const { createZohoQuotationWorkflow } = await import("./zohoQuotations");
+  let output: { dealId?: string; documentId: string; fileName: string; url: string };
+  let crmError: string | null = null;
+  try {
+    output = await createZohoQuotationWorkflow(enterpriseId, params as any);
+  } catch (error) {
+    crmError = (error as Error).message;
+    const { createQuotationPdf } = await import("./quotations");
+    const pdf = await createQuotationPdf({
+      enterpriseId,
+      agentId,
+      agentLabel: AGENT_LABEL[agentId] ?? "Ivy Agent",
+      logo: AGENT_LOGO[agentId],
+      client: {
+        name: String(customer.company ?? name),
+        address: String(customer.billingCity ?? ""),
+        tin: String(customer.tin ?? ""),
+        contact_person: name,
+        contact_no: String(customer.phone ?? ""),
+        email,
+      },
+      items: (items as Record<string, unknown>[]).map((item) => ({
+        description: String(item.description ?? item.product ?? ""),
+        qty: Math.max(1, Number(item.quantity) || 1),
+        rate: Number(item.rate),
+      })),
+      currency: currency || "UGX",
+      vatExempt: args.vatExempt === true,
+      preparedBy,
+      date: quoteDate,
+      title: subject || `Quotation for ${String(customer.company ?? name)}`,
+      bankDetails,
+      source: { system: "ellipse_quotation", workflow_key: workflowKey, crm_error: crmError },
+    });
+    output = { documentId: pdf.id, fileName: pdf.name, url: pdf.url };
+  }
+  const audit = await db.collection("pending_actions").add({
+    enterprise_id: enterpriseId,
+    agent_id: `${agentId}-agent`,
     domain: "assistant",
-    actionType: "create_quotation_workflow",
+    action_type: "create_quotation_workflow",
     params,
-    targetSystem: "zoho",
-    reasoning: `Capture ${name} <${email}> as a Zoho Lead and Deal if needed, then generate the approved quotation PDF and save it to Data.`,
+    target_system: "zoho",
+    status: "executed",
+    approval_required: false,
+    crm_status: crmError ? "error" : "captured",
+    crm_error: crmError,
+    action_summary: `Created a fresh Deal and quotation PDF for ${name} <${email}>.`,
+    external_ref: JSON.stringify(output),
+    created_at: FieldValue.serverTimestamp(),
+    executed_at: FieldValue.serverTimestamp(),
   });
-  return JSON.stringify({ action: "create_zoho_quotation", workflowKey, ...result });
+  return JSON.stringify({
+    action: "create_zoho_quotation",
+    workflowKey,
+    status: "executed",
+    auditActionId: audit.id,
+    ...output,
+    name: output.fileName,
+    type: "pdf",
+    crmStatus: crmError ? "error" : "captured",
+    crmError,
+  });
 }
 
 async function toolFindZohoQuotation(enterpriseId: string, args: Record<string, unknown>) {
@@ -1500,7 +1562,7 @@ function buildSystem(
     : "";
 
   const quotationRule = connected.has("zoho")
-    ? `\n\nOFFICIAL QUOTATION RULE: Use create_zoho_quotation for every new quotation. It captures or reuses the Lead, Account, Contact and Deal in Zoho, then creates the PDF using Ellipse's fixed template. Require a real customer name, valid email, company/account name, exact product/model and quantity; ask one concise question for any missing required details. Also collect phone, location, TIN and prepared-by when available, but do not invent them. Treat the company knowledge base below as authoritative context and use relevant product/customer facts from it, while using Zoho Product pricing as the source of truth. A direct request to create a quotation authorizes queuing this combined workflow; if the user only asks for a draft without CRM capture, explain that leads must be captured and ask whether to create/reuse the Lead and Deal. A pending workflow means the PDF does NOT exist yet. Before sharing it, use get_action_status with the real pendingActionId; only call send_email after that returns an executed action with a real documentId.`
+    ? `\n\nOFFICIAL QUOTATION RULE: Use create_zoho_quotation for every new quotation. It immediately captures or reuses the Lead, Account and Contact, creates a FRESH Deal, creates a fresh PDF using Ellipse's fixed template, saves it to Data and returns it in chat; it does not wait for approval. Require a real customer name, valid email, company/account name, exact product description, quantity and unit price. Use a unit price from the authoritative company knowledge base when present; otherwise ask the user for it before calling the tool. Never guess a price. Also collect phone, location, TIN and prepared-by when available, but do not invent them. Every completed quotation is still written to the approvals collection as an executed audit record. When the tool returns executed with a real documentId, the file is ready to share.`
     : "";
 
   const connectedNames = [...connected].map((t) => CONNECTION_LABEL[t]).filter(Boolean);

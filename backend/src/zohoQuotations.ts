@@ -68,29 +68,6 @@ function splitName(name: string, email: string) {
   };
 }
 
-async function resolveProduct(enterpriseId: string, query: string) {
-  const terms = normalized(query).split(" ").filter((t) => t.length > 1);
-  let rows = await searchRecordsByWord(enterpriseId, "Products", query);
-  if (!rows.length && terms.length > 3) {
-    rows = await searchRecordsByWord(enterpriseId, "Products", terms.slice(0, 4).join(" "));
-  }
-  const ranked = rows
-    .map((row) => {
-      const text = normalized(`${row.Product_Name ?? ""} ${row.Product_Code ?? ""}`);
-      const score = terms.filter((term) => text.includes(term)).length;
-      return { row, score };
-    })
-    .filter(({ score }) => score >= Math.min(3, terms.length))
-    .sort((a, b) => b.score - a.score || normalized(a.row.Product_Name).localeCompare(normalized(b.row.Product_Name)));
-  if (!ranked.length) throw new Error(`No exact Zoho Product match for “${query}”. Sync or create the product first.`);
-  const exact = ranked.find(({ row }) => normalized(row.Product_Name) === normalized(query));
-  if (exact) return exact.row;
-  if (ranked.length > 1 && ranked[0].score === ranked[1].score) {
-    throw new Error(`Multiple Zoho Products match “${query}”. Use the exact product name or SKU.`);
-  }
-  return ranked[0].row;
-}
-
 /** Idempotent hybrid workflow: CRM capture in Zoho → deterministic Ellipse PDF. */
 export async function createZohoQuotationWorkflow(
   enterpriseId: string,
@@ -176,42 +153,30 @@ export async function createZohoQuotationWorkflow(
 
   const resolvedItems: Record<string, unknown>[] = [];
   for (const item of request.items) {
-    let product: Record<string, any> | undefined;
-    try {
-      product = await resolveProduct(enterpriseId, clean(item.product));
-    } catch (error) {
-      if (!(Number(item.rate) > 0)) throw error;
-    }
-    const rate = Number(item.rate) > 0 ? Number(item.rate) : Number(product?.Unit_Price ?? 0);
-    if (!(rate > 0)) throw new Error(`Zoho Product “${item.product}” has no usable price.`);
+    const rate = Number(item.rate);
+    if (!(rate > 0)) throw new Error(`A unit price is required for “${item.product}”.`);
     resolvedItems.push({
-      productId: product?.id,
-      description: clean(item.description) || clean(product?.Description) || clean(product?.Product_Name) || clean(item.product),
+      description: clean(item.description) || clean(item.product),
       quantity: Math.max(1, Number(item.quantity) || 1),
       rate,
     });
   }
 
-  const dealName = clean(request.dealName) || `${company} - Quotation`;
+  const dealName = clean(request.dealName) || `${company} - Quotation ${request.workflowKey.slice(0, 8)}`;
   let dealId = existing?.deal_id as string | undefined;
   if (!dealId) {
-    const deals = await searchRecordsByWord(enterpriseId, "Deals", dealName);
-    dealId = deals.find((deal) =>
-      normalized(deal.Deal_Name) === normalized(dealName) &&
-      (!deal.Account_Name?.id || deal.Account_Name.id === accountId)
-    )?.id;
-    if (!dealId) {
-      const closingDate = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
-      const dealStage = await resolveDealStage(enterpriseId);
-      dealId = (await createRecord(enterpriseId, "Deals", {
-        Deal_Name: dealName,
-        Account_Name: { id: accountId },
-        Contact_Name: { id: contactId },
-        Stage: dealStage,
-        Closing_Date: closingDate,
-        Description: `Quotation requested through Ellipse for ${request.customer.name}.`,
-      })) || undefined;
-    }
+    const closingDate = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+    const dealStage = await resolveDealStage(enterpriseId);
+    const amount = resolvedItems.reduce((sum, item) => sum + Number(item.rate) * Number(item.quantity), 0);
+    dealId = (await createRecord(enterpriseId, "Deals", {
+      Deal_Name: dealName,
+      Account_Name: { id: accountId },
+      Contact_Name: { id: contactId },
+      Stage: dealStage,
+      Closing_Date: closingDate,
+      Amount: amount,
+      Description: `Quotation requested through Ellipse for ${request.customer.name}.`,
+    })) || undefined;
     if (!dealId) throw new Error("Zoho did not create the Deal required by the quotation");
     await stateRef.set({ deal_id: dealId }, { merge: true });
   }
