@@ -239,7 +239,7 @@ const T = {
   create_quotation: {
     name: "create_quotation",
     description:
-      "Fallback only when Zoho is not connected: generate a branded proforma-invoice / quotation PDF and save it to the workspace Data page. " +
+      "Generate a branded proforma-invoice / quotation PDF and save it to the workspace Data page. " +
       "The company letterhead (logo, name, TIN, address, VAT rate, terms, prepared-by) comes from the org's saved quotation branding — do NOT invent those. " +
       "You provide the client details and the line items. Amounts, subtotal, VAT and total are computed automatically — never state or pre-compute them yourself. " +
       "For each item pass its unit price as `rate` and quantity as `qty`. When items refer to store products, look up their real price first with store_list (q search). " +
@@ -283,7 +283,7 @@ const T = {
   create_zoho_quotation: {
     name: "create_zoho_quotation",
     description:
-      "Create or resolve the customer in Zoho, create an official Zoho Quote using real Zoho Products, merge it to PDF with the configured Zoho Writer template, and save the exact PDF to Ellipse Data. This is the preferred quotation tool whenever Zoho is connected. The compound workflow goes through approval. Never use create_quotation instead when Zoho is the requested source.",
+      "Create or reuse the customer Lead, Account, Contact and Deal in Zoho, resolve real Zoho Products and prices, then generate a consistently formatted PDF with the approved Ellipse quotation template and save it to Data. The complete hybrid workflow goes through approval.",
     parameters: {
       type: "object",
       properties: {
@@ -314,6 +314,10 @@ const T = {
         },
         subject: { type: "string" },
         quoteDate: { type: "string", description: "Quote date in YYYY-MM-DD format; defaults to today." },
+        dealName: { type: "string", description: "Optional Zoho Deal name; defaults to '<company> - Quotation'." },
+        currency: { type: "string", description: "Currency code; defaults to UGX." },
+        vatExempt: { type: "boolean", description: "Set only when the user confirms VAT exemption." },
+        preparedBy: { type: "string", description: "Person preparing the quotation; defaults to quotation settings." },
       },
       required: ["customer", "items"],
     },
@@ -999,13 +1003,6 @@ async function toolCreateZohoQuotation(enterpriseId: string, agentId: string, ar
     return JSON.stringify({ error: "A real customer name and email are required before an official quotation can be queued. No action was created." });
   }
   if (!items.length) return JSON.stringify({ error: "At least one quotation item is required." });
-  const quotationSettings = (await db.doc(`quotation_settings/${enterpriseId}`).get()).data();
-  const configuredTemplate = String(quotationSettings?.zoho_mail_merge_template ?? "").trim();
-  if (!configuredTemplate) {
-    return JSON.stringify({
-      error: "The Zoho Quote mail-merge template is not configured. Set it in Settings → Quotation before creating an official PDF. No action was queued.",
-    });
-  }
   const workflowKey = randomUUID();
   const params: Record<string, unknown> = {
     workflowKey,
@@ -1015,9 +1012,16 @@ async function toolCreateZohoQuotation(enterpriseId: string, agentId: string, ar
   };
   const subject = String(args.subject ?? "").trim();
   const quoteDate = String(args.quoteDate ?? "").trim();
+  const dealName = String(args.dealName ?? "").trim();
+  const currency = String(args.currency ?? "").trim();
+  const preparedBy = String(args.preparedBy ?? "").trim();
   const connectionOwnerUid = String(args.connectionOwnerUid ?? "").trim();
   if (subject) params.subject = subject;
   if (quoteDate) params.quoteDate = quoteDate;
+  if (dealName) params.dealName = dealName;
+  if (currency) params.currency = currency;
+  if (preparedBy) params.preparedBy = preparedBy;
+  if (args.vatExempt === true) params.vatExempt = true;
   if (connectionOwnerUid) params.connectionOwnerUid = connectionOwnerUid;
   const result = await executeAgentAction({
     enterpriseId,
@@ -1026,7 +1030,7 @@ async function toolCreateZohoQuotation(enterpriseId: string, agentId: string, ar
     actionType: "create_quotation_workflow",
     params,
     targetSystem: "zoho",
-    reasoning: `Create an official Zoho quotation for ${name} <${email}>, merge the approved Zoho template to PDF, and save it to Data.`,
+    reasoning: `Capture ${name} <${email}> as a Zoho Lead and Deal if needed, then generate the approved quotation PDF and save it to Data.`,
   });
   return JSON.stringify({ action: "create_zoho_quotation", workflowKey, ...result });
 }
@@ -1037,12 +1041,22 @@ async function toolFindZohoQuotation(enterpriseId: string, args: Record<string, 
   const snap = await db.collection("documents").where("enterprise_id", "==", enterpriseId).get();
   const rows = snap.docs
     .map((doc) => ({ id: doc.id, ...doc.data() } as any))
-    .filter((doc) => doc.source?.system === "zoho" && doc.source?.module === "Quotes")
+    .filter((doc) =>
+      (doc.source?.system === "zoho" && doc.source?.module === "Quotes") ||
+      doc.source?.system === "zoho_ellipse_hybrid"
+    )
     .filter((doc) => !email || String(doc.customer?.email ?? "").toLowerCase() === email)
-    .filter((doc) => !quoteId || doc.source?.quote_id === quoteId)
+    .filter((doc) => !quoteId || doc.source?.quote_id === quoteId || doc.source?.deal_id === quoteId)
     .sort((a, b) => (b.created_at?.toMillis?.() ?? 0) - (a.created_at?.toMillis?.() ?? 0))
     .slice(0, 5)
-    .map((doc) => ({ documentId: doc.id, name: doc.file?.name, quoteId: doc.source?.quote_id, customer: doc.customer, createdAt: doc.created_at?.toDate?.()?.toISOString?.() }));
+    .map((doc) => ({
+      documentId: doc.id,
+      name: doc.file?.name,
+      quoteId: doc.source?.quote_id,
+      dealId: doc.source?.deal_id,
+      customer: doc.customer,
+      createdAt: doc.created_at?.toDate?.()?.toISOString?.(),
+    }));
   return JSON.stringify({ found: rows.length > 0, quotations: rows });
 }
 
@@ -1483,7 +1497,7 @@ function buildSystem(
     : "";
 
   const quotationRule = connected.has("zoho")
-    ? `\n\nOFFICIAL QUOTATION RULE: Zoho is connected, so never use or claim a manually generated quotation. New quotations must use create_zoho_quotation and require the real customer name, valid email, exact product/model and quantity. If any are missing, ask for them. A pending Zoho workflow means the PDF does NOT exist yet. Before sharing it, use get_action_status with the real pendingActionId; only call send_email after that returns an executed action with a real documentId.`
+    ? `\n\nOFFICIAL QUOTATION RULE: Use create_zoho_quotation for every new quotation. It captures or reuses the Lead, Account, Contact and Deal in Zoho, then creates the PDF using Ellipse's fixed template. Require a real customer name, valid email, company/account name, exact product/model and quantity; ask one concise question for any missing required details. Also collect phone, location, TIN and prepared-by when available, but do not invent them. Treat the company knowledge base below as authoritative context and use relevant product/customer facts from it, while using Zoho Product pricing as the source of truth. A direct request to create a quotation authorizes queuing this combined workflow; if the user only asks for a draft without CRM capture, explain that leads must be captured and ask whether to create/reuse the Lead and Deal. A pending workflow means the PDF does NOT exist yet. Before sharing it, use get_action_status with the real pendingActionId; only call send_email after that returns an executed action with a real documentId.`
     : "";
 
   const connectedNames = [...connected].map((t) => CONNECTION_LABEL[t]).filter(Boolean);
@@ -1532,9 +1546,9 @@ function deterministicActionReply(actions: ChatAction[], files: { name: string; 
     if (action.name === "create_quotation" && data.created) {
       lines.push(`Created ${data.name || "the quotation PDF"} and saved it to Data.`);
     } else if (action.name === "create_zoho_quotation") {
-      if (data.status === "pending") lines.push(`Zoho quotation creation is pending approval (action ${data.pendingActionId}). The PDF does not exist yet.`);
-      else if (data.status === "executed") lines.push("The Zoho quotation workflow completed and its PDF was saved to Data.");
-      else lines.push(`Zoho quotation creation was not completed${data.reason ? `: ${data.reason}` : "."}`);
+      if (data.status === "pending") lines.push(`CRM capture and quotation creation are pending approval (action ${data.pendingActionId}). The PDF does not exist yet.`);
+      else if (data.status === "executed") lines.push("The Lead/Deal workflow completed and its quotation PDF was saved to Data.");
+      else lines.push(`CRM capture and quotation creation were not completed${data.reason ? `: ${data.reason}` : "."}`);
     } else if (action.name === "send_email") {
       const attachment = data.attached ? ` with ${data.attached} attached` : " without an attachment";
       if (data.status === "pending") lines.push(`Email to ${data.to} is pending approval${attachment} (action ${data.pendingActionId}).`);

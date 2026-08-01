@@ -82,13 +82,13 @@ Full read/create/update/delete on every module:
 
 ## Reporting features built on Zoho (live)
 
-## Official quotation documents (live code; activation required)
+## Official quotation documents (hybrid workflow)
 
-- Ellipse no longer needs to manually recreate the official Zoho quotation file. The compound workflow creates a real `Quotes` record and calls Zoho CRM `download_mail_merge` to receive the official PDF bytes.
-- Customer chain: Lead (prospect capture) plus Account and Contact (required Quote lookups). Product lines must resolve to exact Zoho `Products` records; ambiguity or missing price stops the workflow instead of guessing.
-- The PDF is saved to Ellipse Data with Quote/customer/template/workflow provenance and SHA-256, then the same saved document can be attached to Gmail, SMTP or Outlook replies.
-- Required OAuth scopes now include `ZohoCRM.settings.mailmerge.CREATE`, `ZohoWriter.documentEditor.ALL`, and `ZohoWriter.merge.ALL`. Existing Zoho installations must reconnect to grant them.
-- Owner setup: create/confirm a Quotes mail-merge template, then enter its exact name under Settings → Quotation → Zoho quotation document.
+- The compound workflow creates or reuses the Lead, Account, Contact and Deal in Zoho, then generates the customer-facing PDF with Ellipse's deterministic quotation template.
+- Product lines resolve to exact Zoho `Products` records and use the CRM `Unit_Price` unless an approved rate was supplied. Ambiguity or missing price stops the workflow instead of guessing.
+- The PDF is saved to Ellipse Data with Lead/Account/Contact/Deal/workflow provenance and can be attached to Gmail, SMTP or Outlook replies.
+- Zoho Writer/mail-merge scopes and a Zoho Quotes mail-merge template are no longer required for quotation generation.
+- Owner setup is limited to Settings → Quotation branding, numbering, VAT, prepared-by and terms.
 - Outlook reply attachments above 3 MB still require a Microsoft Graph upload-session enhancement.
 
 ### Field mapping — client's detailed report columns → Quotes module API names

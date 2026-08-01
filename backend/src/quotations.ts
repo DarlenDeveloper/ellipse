@@ -104,6 +104,7 @@ export async function createQuotationPdf(opts: {
   preparedBy?: string;
   date?: string; // MM/DD/YYYY; default today
   title?: string;
+  source?: Record<string, unknown>;
 }): Promise<CreatedQuotation> {
   const branding = await loadQuotationBranding(opts.enterpriseId);
   const currency = opts.currency || "UGX";
@@ -124,7 +125,7 @@ export async function createQuotationPdf(opts: {
   const dateStr = opts.date || new Date().toLocaleDateString("en-US");
   const logoBuf = await loadLogoBuffer(branding.logo_path);
 
-  const buffer = await renderPdf({
+  const buffer = await renderQuotationPdf({
     branding,
     client: opts.client || {},
     items,
@@ -165,13 +166,19 @@ export async function createQuotationPdf(opts: {
     storage_path: path,
     content_type: PDF_TYPE,
     quotation: { proforma_no: proformaNo, client: opts.client?.name ?? "", total, currency },
+    customer: {
+      name: opts.client?.contact_person || opts.client?.name || "",
+      email: opts.client?.email || "",
+      company: opts.client?.name || "",
+    },
+    source: opts.source ?? { system: "ellipse", type: "quotation" },
     created_at: FieldValue.serverTimestamp(),
   });
 
   return { id: docId, name: filename, url, type: "pdf", size: buffer.length, proforma_no: proformaNo, total, currency };
 }
 
-function renderPdf(p: {
+export function renderQuotationPdf(p: {
   branding: QuotationBranding;
   client: QuotationClient;
   items: QuotationItem[];

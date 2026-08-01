@@ -1,8 +1,6 @@
-import { createHash, randomUUID } from "crypto";
-import { db, bucket, FieldValue } from "./admin";
+import { db, FieldValue } from "./admin";
 import {
   createRecord,
-  downloadQuoteMailMerge,
   searchByEmail,
   searchRecordsByWord,
   getZohoConnectionOwner,
@@ -24,7 +22,10 @@ export type ZohoQuotationRequest = {
   items: { product: string; quantity: number; rate?: number; description?: string }[];
   subject?: string;
   quoteDate?: string;
-  templateName?: string;
+  dealName?: string;
+  currency?: string;
+  vatExempt?: boolean;
+  preparedBy?: string;
   conversationId?: string;
 };
 
@@ -48,6 +49,14 @@ async function resolveAccountTinField(enterpriseId: string): Promise<string | un
   const exact = fields.find((field) => /^(client\s+)?tin(\s*(no|number))?\.?$/i.test(field.label.trim()));
   const taxId = fields.find((field) => /tax\s*(identification|id)\s*(no|number)?/i.test(field.label));
   return (exact ?? taxId)?.api_name;
+}
+
+async function resolveDealStage(enterpriseId: string): Promise<string> {
+  const fields = await listModuleFields(enterpriseId, "Deals");
+  const values = fields.find((field) => field.api_name === "Stage")?.pick_list_values ?? [];
+  return values.find((value) => normalized(value) === "qualification")
+    ?? values.find((value) => !/closed|lost|won/i.test(value))
+    ?? "Qualification";
 }
 
 function splitName(name: string, email: string) {
@@ -78,26 +87,23 @@ async function resolveProduct(enterpriseId: string, query: string) {
   return ranked[0].row;
 }
 
-/** Idempotent compound workflow: customer → Zoho Quote → Writer PDF → Ellipse Data. */
+/** Idempotent hybrid workflow: CRM capture in Zoho → deterministic Ellipse PDF. */
 export async function createZohoQuotationWorkflow(
   enterpriseId: string,
   request: ZohoQuotationRequest
-): Promise<{ quoteId: string; documentId: string; fileName: string; url: string }> {
+): Promise<{ dealId: string; documentId: string; fileName: string; url: string }> {
   if (!request.workflowKey) throw new Error("Missing quotation workflow key");
   if (!request.customer?.email || !request.customer?.name) throw new Error("Customer name and email are required");
   if (!request.items?.length) throw new Error("At least one quotation item is required");
 
-  const settings = (await db.doc(`quotation_settings/${enterpriseId}`).get()).data();
   const connectionOwnerUid = getZohoConnectionOwner();
-  const templateName = clean(request.templateName || settings?.zoho_mail_merge_template);
-  if (!templateName) throw new Error("Configure the Zoho Quote mail-merge template in Settings → Quotation first.");
 
   const stateRef = db.doc(`quotation_workflows/${request.workflowKey}`);
   const existing = (await stateRef.get()).data();
-  if (existing?.status === "complete" && existing.document_id && existing.quote_id) {
+  if (existing?.status === "complete" && existing.document_id && existing.deal_id) {
     const document = (await db.doc(`documents/${existing.document_id}`).get()).data();
     return {
-      quoteId: existing.quote_id,
+      dealId: existing.deal_id,
       documentId: existing.document_id,
       fileName: document?.file?.name,
       url: document?.file?.url,
@@ -132,9 +138,6 @@ export async function createZohoQuotationWorkflow(
   const billingCity = clean(request.customer.billingCity);
   const clientTin = clean(request.customer.tin);
   const tinField = clientTin ? await resolveAccountTinField(enterpriseId) : undefined;
-  if (clientTin && !tinField) {
-    throw new Error("Client TIN was supplied, but no TIN field exists in the Zoho Accounts module.");
-  }
   const accountFields: Record<string, unknown> = {
     Account_Name: company,
     Billing_City: billingCity || undefined,
@@ -145,7 +148,7 @@ export async function createZohoQuotationWorkflow(
     const accounts = await searchRecordsByWord(enterpriseId, "Accounts", company);
     accountId = accounts.find((a) => normalized(a.Account_Name) === normalized(company))?.id;
     if (!accountId) accountId = (await createRecord(enterpriseId, "Accounts", accountFields)) || undefined;
-    if (!accountId) throw new Error("Zoho did not create the Account required by the Quote");
+    if (!accountId) throw new Error("Zoho did not create the Account required by the Deal");
     await stateRef.set({ account_id: accountId }, { merge: true });
   }
   if (accountId && (billingCity || clientTin)) {
@@ -163,65 +166,88 @@ export async function createZohoQuotationWorkflow(
         Account_Name: { id: accountId },
       })) || undefined;
     }
-    if (!contactId) throw new Error("Zoho did not create the Contact required by the Quote");
+    if (!contactId) throw new Error("Zoho did not create the Contact required by the Deal");
     await stateRef.set({ contact_id: contactId }, { merge: true });
   }
 
-  let quoteId = existing?.quote_id as string | undefined;
   const resolvedItems: Record<string, unknown>[] = [];
-  if (!quoteId) {
-    for (const item of request.items) {
-      const product = await resolveProduct(enterpriseId, clean(item.product));
-      const rate = Number(item.rate) > 0 ? Number(item.rate) : Number(product.Unit_Price ?? 0);
-      if (!(rate > 0)) throw new Error(`Zoho Product “${item.product}” has no usable price.`);
-      resolvedItems.push({
-        Product_Name: { id: product.id },
-        Quantity: Math.max(1, Number(item.quantity) || 1),
-        List_Price: rate,
-        Description: clean(item.description) || clean(product.Description) || undefined,
-      });
-    }
-    quoteId = (await createRecord(enterpriseId, "Quotes", {
-      Subject: clean(request.subject) || `Quotation for ${company}`,
-      Quote_Date: clean(request.quoteDate) || new Date().toISOString().slice(0, 10),
-      Account_Name: { id: accountId },
-      Contact_Name: { id: contactId },
-      Billing_City: billingCity || undefined,
-      Quote_Stage: "Draft",
-      Quoted_Items: resolvedItems,
-    })) || undefined;
-    if (!quoteId) throw new Error("Zoho did not create the Quote");
-    await stateRef.set({ quote_id: quoteId }, { merge: true });
+  for (const item of request.items) {
+    const product = await resolveProduct(enterpriseId, clean(item.product));
+    const rate = Number(item.rate) > 0 ? Number(item.rate) : Number(product.Unit_Price ?? 0);
+    if (!(rate > 0)) throw new Error(`Zoho Product “${item.product}” has no usable price.`);
+    resolvedItems.push({
+      productId: product.id,
+      description: clean(item.description) || clean(product.Description) || clean(product.Product_Name) || clean(item.product),
+      quantity: Math.max(1, Number(item.quantity) || 1),
+      rate,
+    });
   }
 
-  const safeName = `Zoho_Quotation_${quoteId}.pdf`;
-  const pdf = await downloadQuoteMailMerge(enterpriseId, quoteId, templateName, safeName);
-  const documentId = `zoho_quote_${createHash("sha256").update(`${enterpriseId}:${quoteId}:${templateName}`).digest("hex").slice(0, 32)}`;
-  const path = `documents/${enterpriseId}/${documentId}/${safeName}`;
-  const token = randomUUID();
-  await bucket().file(path).save(pdf, {
-    contentType: "application/pdf",
-    metadata: { metadata: { firebaseStorageDownloadTokens: token } },
-    resumable: false,
-  });
-  const url = `https://firebasestorage.googleapis.com/v0/b/${bucket().name}/o/${encodeURIComponent(path)}?alt=media&token=${token}`;
-  await db.doc(`documents/${documentId}`).set({
-    enterprise_id: enterpriseId,
-    agent: request.agentId,
-    agent_label: "Zoho CRM",
+  const dealName = clean(request.dealName) || `${company} - Quotation`;
+  let dealId = existing?.deal_id as string | undefined;
+  if (!dealId) {
+    const deals = await searchRecordsByWord(enterpriseId, "Deals", dealName);
+    dealId = deals.find((deal) =>
+      normalized(deal.Deal_Name) === normalized(dealName) &&
+      (!deal.Account_Name?.id || deal.Account_Name.id === accountId)
+    )?.id;
+    if (!dealId) {
+      const closingDate = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+      const dealStage = await resolveDealStage(enterpriseId);
+      dealId = (await createRecord(enterpriseId, "Deals", {
+        Deal_Name: dealName,
+        Account_Name: { id: accountId },
+        Contact_Name: { id: contactId },
+        Stage: dealStage,
+        Closing_Date: closingDate,
+        Description: `Quotation requested through Ellipse for ${request.customer.name}.`,
+      })) || undefined;
+    }
+    if (!dealId) throw new Error("Zoho did not create the Deal required by the quotation");
+    await stateRef.set({ deal_id: dealId }, { merge: true });
+  }
+
+  const { createQuotationPdf } = await import("./quotations");
+  const quotation = await createQuotationPdf({
+    enterpriseId,
+    agentId: request.agentId,
+    agentLabel: "Ivy Agent",
     logo: "/logos/zoho.png",
-    title: clean(request.subject) || `Zoho Quotation for ${company}`,
-    kind: "pdf",
-    file: { name: safeName, url, type: "pdf", size: pdf.length },
-    storage_path: path,
-    content_type: "application/pdf",
-    source: { system: "zoho", module: "Quotes", quote_id: quoteId, lead_id: leadId, account_id: accountId, contact_id: contactId, template_name: templateName, workflow_key: request.workflowKey },
-    customer: { name: request.customer.name, email, company },
-    connection_scope: connectionOwnerUid ? "personal" : "org",
-    owner_uid: connectionOwnerUid ?? null,
-    sha256: createHash("sha256").update(pdf).digest("hex"),
-    created_at: FieldValue.serverTimestamp(),
+    client: {
+      name: company,
+      address: billingCity,
+      tin: clientTin,
+      contact_person: request.customer.name,
+      contact_no: clean(request.customer.phone),
+      email,
+    },
+    items: resolvedItems.map((item) => ({
+      description: String(item.description),
+      rate: Number(item.rate),
+      qty: Number(item.quantity),
+    })),
+    currency: clean(request.currency) || "UGX",
+    vatExempt: Boolean(request.vatExempt),
+    preparedBy: clean(request.preparedBy),
+    date: clean(request.quoteDate),
+    title: clean(request.subject) || `Quotation for ${company}`,
+    source: {
+      system: "zoho_ellipse_hybrid",
+      module: "Deals",
+      deal_id: dealId,
+      lead_id: leadId,
+      account_id: accountId,
+      contact_id: contactId,
+      workflow_key: request.workflowKey,
+      connection_scope: connectionOwnerUid ? "personal" : "org",
+      owner_uid: connectionOwnerUid ?? null,
+    },
+  });
+  await stateRef.set({
+    status: "complete",
+    deal_id: dealId,
+    document_id: quotation.id,
+    completed_at: FieldValue.serverTimestamp(),
   }, { merge: true });
-  await stateRef.set({ status: "complete", quote_id: quoteId, document_id: documentId, completed_at: FieldValue.serverTimestamp() }, { merge: true });
-  return { quoteId, documentId, fileName: safeName, url };
+  return { dealId, documentId: quotation.id, fileName: quotation.name, url: quotation.url };
 }

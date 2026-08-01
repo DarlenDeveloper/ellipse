@@ -224,12 +224,15 @@ export async function listModules(enterpriseId: string): Promise<any> {
 export async function listModuleFields(
   enterpriseId: string,
   module: string
-): Promise<{ api_name: string; label: string; data_type: string }[]> {
+): Promise<{ api_name: string; label: string; data_type: string; pick_list_values?: string[] }[]> {
   const data = await zohoRequest(enterpriseId, `settings/fields?module=${encodeURIComponent(module)}`);
   return (data?.fields ?? []).map((f: any) => ({
     api_name: f.api_name,
     label: f.field_label,
     data_type: f.data_type,
+    pick_list_values: Array.isArray(f.pick_list_values)
+      ? f.pick_list_values.map((value: any) => String(value.actual_value ?? value.display_value ?? "")).filter(Boolean)
+      : undefined,
   }));
 }
 
