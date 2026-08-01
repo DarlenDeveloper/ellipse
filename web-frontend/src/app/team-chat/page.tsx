@@ -11,7 +11,7 @@ import {
   where,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
-import { People, SearchNormal1, Send2, User, Crown, ShieldTick, TickCircle } from "iconsax-react";
+import { People, SearchNormal1, Send2 } from "iconsax-react";
 import { db, functions } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 import { useAccess } from "@/lib/use-access";
@@ -82,7 +82,7 @@ export default function TeamChatPage() {
   const [search, setSearch] = useState("");
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
-  const [startingUid, setStartingUid] = useState<string | null>(null);
+  const [pendingChat, setPendingChat] = useState<Chat | null>(null);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -143,8 +143,14 @@ export default function TeamChatPage() {
   }, [user, enterpriseId]);
 
   useEffect(() => {
+    if (pendingChat && directChats.some((chat) => chat.id === pendingChat.id)) setPendingChat(null);
+  }, [directChats, pendingChat]);
+
+  const selectedIsReady = selectedId === groupChat?.id || directChats.some((chat) => chat.id === selectedId);
+
+  useEffect(() => {
     setMessages([]);
-    if (!selectedId || !user) return;
+    if (!selectedId || !user || !selectedIsReady) return;
     const messagesQuery = query(collection(db, "internal_chats", selectedId, "messages"), orderBy("created_at", "asc"));
     const unsubscribe = onSnapshot(messagesQuery, (snapshot) => {
       setMessages(snapshot.docs.map((item) => ({ id: item.id, ...(item.data() as Omit<ChatMessage, "id">) })));
@@ -153,11 +159,11 @@ export default function TeamChatPage() {
     setReadAt((current) => ({ ...current, [selectedId]: Timestamp.now() }));
     httpsCallable(functions, "markInternalChatRead")({ chatId: selectedId }).catch(() => undefined);
     return unsubscribe;
-  }, [selectedId, user]);
+  }, [selectedId, user, selectedIsReady]);
 
   const selectedChat = selectedId === groupChat?.id
     ? groupChat
-    : directChats.find((chat) => chat.id === selectedId) ?? null;
+    : directChats.find((chat) => chat.id === selectedId) ?? (pendingChat?.id === selectedId ? pendingChat : null);
   const counterpartUid = selectedChat?.type === "direct"
     ? selectedChat.participant_uids?.find((uid) => uid !== user?.uid)
     : undefined;
@@ -175,20 +181,30 @@ export default function TeamChatPage() {
   const openMember = async (member: Member) => {
     const existing = chatForMember(member.id);
     if (existing) return setSelectedId(existing.id);
-    setStartingUid(member.id); setError(null);
+    if (!user || !enterpriseId) return;
+    const chatId = `direct_${enterpriseId}_${[user.uid, member.id].sort().join("_")}`;
+    setPendingChat({
+      id: chatId,
+      enterprise_id: enterpriseId,
+      type: "direct",
+      participant_uids: [user.uid, member.id],
+      participant_names: { [user.uid]: user.displayName || user.email || "You", [member.id]: memberName(member) },
+      participant_emails: { [user.uid]: user.email || "", [member.id]: member.email || "" },
+    });
+    setSelectedId(chatId);
+    setError(null);
     try {
-      const result = await httpsCallable(functions, "startInternalChat")({ targetUid: member.id });
-      setSelectedId((result.data as { chatId: string }).chatId);
+      await httpsCallable(functions, "startInternalChat")({ targetUid: member.id });
     } catch (cause) {
+      setPendingChat(null);
+      setSelectedId(null);
       setError((cause as Error).message || "The direct chat could not be opened.");
-    } finally {
-      setStartingUid(null);
     }
   };
 
   const send = async () => {
     const text = draft.trim();
-    if (!selectedId || !text || sending) return;
+    if (!selectedId || !text || sending || !selectedIsReady) return;
     setSending(true); setError(null); setDraft("");
     try {
       await httpsCallable(functions, "sendInternalMessage")({ chatId: selectedId, text });
@@ -203,8 +219,8 @@ export default function TeamChatPage() {
   if (accessLoading) return <div className="flex h-screen items-center justify-center text-sm text-gray-400">Opening Team Chat…</div>;
 
   return (
-    <main className="flex h-screen min-w-0 bg-[#f7f7f8] p-5">
-      <section className="flex min-w-0 flex-1 overflow-hidden rounded-[28px] border border-gray-100 bg-white shadow-sm">
+    <main className="flex h-screen min-w-0 bg-[#f7f7f8]">
+      <section className="flex min-w-0 flex-1 overflow-hidden bg-white">
         <aside className="flex w-[330px] shrink-0 flex-col border-r border-gray-100">
           <div className="p-5 pb-3">
             <h1 className="text-2xl font-bold tracking-tight">Team Chat</h1>
@@ -222,7 +238,8 @@ export default function TeamChatPage() {
             <div className="space-y-1">
               {visibleMembers.map((member) => {
                 const chat = chatForMember(member.id);
-                return <ChatRow key={member.id} chat={chat} active={chat?.id === selectedId} unread={chat ? isUnread(chat) : false} name={memberName(member)} subtitle={chat?.last_message || member.email || "Start a conversation"} onClick={() => openMember(member)} loading={startingUid === member.id} />;
+                const active = chat?.id === selectedId || Boolean(!chat && pendingChat?.participant_uids?.includes(member.id) && pendingChat.id === selectedId);
+                return <ChatRow key={member.id} chat={chat} active={active} unread={chat ? isUnread(chat) : false} name={memberName(member)} subtitle={chat?.last_message || member.email || "Start a conversation"} onClick={() => openMember(member)} />;
               })}
             </div>
           </div>
@@ -252,17 +269,11 @@ export default function TeamChatPage() {
               {error && <p className="mb-2 text-xs text-red-600">{error}</p>}
               <div className="flex items-end gap-3 rounded-2xl bg-gray-50 px-4 py-2.5 ring-purple-100 focus-within:ring-4">
                 <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} rows={1} maxLength={5000} placeholder={`Message ${selectedName}`} className="max-h-32 flex-1 resize-none bg-transparent py-1.5 text-sm outline-none" />
-                <button type="button" onClick={send} disabled={!draft.trim() || sending} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40"><Send2 size={18} variant="Bold" /></button>
+                <button type="button" onClick={send} disabled={!draft.trim() || sending || !selectedIsReady} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40"><Send2 size={18} variant="Bold" /></button>
               </div>
             </div>
           </> : <div className="flex h-full items-center justify-center text-sm text-gray-400">Choose a member to start chatting.</div>}
         </section>
-
-        <aside className="hidden w-[270px] shrink-0 border-l border-gray-100 bg-white p-5 xl:block">
-          <h2 className="text-sm font-bold">Conversation info</h2>
-          {selectedChat && <div className="mt-6 text-center"><div className="flex justify-center"><Avatar name={selectedName} group={selectedChat.type === "group"} large /></div><p className="mt-3 font-bold">{selectedName}</p><p className="mt-1 text-xs text-gray-400">{selectedChat.type === "group" ? "Pinned organization group" : counterpart?.email}</p></div>}
-          {selectedChat?.type === "group" && <div className="mt-7"><div className="mb-3 flex items-center justify-between"><p className="text-xs font-bold uppercase tracking-wider text-gray-400">Members</p><span className="text-xs text-gray-400">{members.length}</span></div><div className="space-y-3">{members.map((member) => <div key={member.id} className="flex items-center gap-2.5"><Avatar name={memberName(member)} small /><div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold">{memberName(member)}</p><p className="truncate text-[10px] text-gray-400">{member.email}</p></div>{member.role === "owner" ? <Crown size={14} className="text-amber-500" /> : member.role === "admin" ? <ShieldTick size={14} className="text-violet-500" /> : <TickCircle size={14} className="text-emerald-500" />}</div>)}</div></div>}
-        </aside>
       </section>
     </main>
   );
@@ -273,6 +284,6 @@ function Avatar({ name, group, large, small }: { name: string; group?: boolean; 
   return <span className={cn("flex shrink-0 items-center justify-center rounded-full font-bold", size, group ? "bg-violet-600 text-white" : avatarClass(name))}>{group ? <People size={large ? 27 : 18} variant="Bold" /> : initials(name)}</span>;
 }
 
-function ChatRow({ chat, active, unread, name, subtitle, onClick, group, loading }: { chat?: Chat; active: boolean; unread: boolean; name: string; subtitle: string; onClick: () => void; group?: boolean; loading?: boolean }) {
-  return <button type="button" onClick={onClick} disabled={loading} className={cn("flex w-full items-center gap-3 rounded-2xl border p-3 text-left transition", active ? "border-violet-200 bg-violet-50" : "border-transparent hover:bg-gray-50")}><Avatar name={name} group={group} /><span className="min-w-0 flex-1"><span className={cn("block truncate text-sm", unread ? "font-bold text-gray-950" : "font-semibold text-gray-700")}>{loading ? "Opening…" : name}</span><span className={cn("mt-0.5 block truncate text-xs", unread ? "font-medium text-gray-700" : "text-gray-400")}>{subtitle}</span></span><span className="flex shrink-0 flex-col items-end gap-2">{chat?.last_message_at && <span className="text-[10px] text-gray-400">{timeLabel(chat.last_message_at)}</span>}{unread && <span className="h-2 w-2 rounded-full bg-violet-600" />}</span></button>;
+function ChatRow({ chat, active, unread, name, subtitle, onClick, group }: { chat?: Chat; active: boolean; unread: boolean; name: string; subtitle: string; onClick: () => void; group?: boolean }) {
+  return <button type="button" onClick={onClick} className={cn("flex w-full items-center gap-3 rounded-2xl border p-3 text-left transition", active ? "border-violet-200 bg-violet-50" : "border-transparent hover:bg-gray-50")}><Avatar name={name} group={group} /><span className="min-w-0 flex-1"><span className={cn("block truncate text-sm", unread ? "font-bold text-gray-950" : "font-semibold text-gray-700")}>{name}</span><span className={cn("mt-0.5 block truncate text-xs", unread ? "font-medium text-gray-700" : "text-gray-400")}>{subtitle}</span></span><span className="flex shrink-0 flex-col items-end gap-2">{chat?.last_message_at && <span className="text-[10px] text-gray-400">{timeLabel(chat.last_message_at)}</span>}{unread && <span className="h-2 w-2 rounded-full bg-violet-600" />}</span></button>;
 }
