@@ -1009,8 +1009,12 @@ async function toolCreateZohoQuotation(enterpriseId: string, agentId: string, ar
     !(Number(item.rate) > 0)
   );
   if (invalidItem) {
+    const productName = String(invalidItem.product ?? invalidItem.description ?? "that item").trim();
     return JSON.stringify({
-      error: "Each quotation item needs a description, quantity and unit price. Ask for the missing unit price instead of guessing.",
+      needsInput: true,
+      missingField: "unit_price",
+      product: productName,
+      question: `What unit price should I use for ${productName}? I won't guess a price.`,
     });
   }
   const workflowKey = randomUUID();
@@ -1732,7 +1736,10 @@ export async function chatWithAgent(
       }
       logger.info("tool result", { agentId, tool: call.name, enterpriseId, out: out.slice(0, 500) });
       results.push(`${call.name} → ${out}`);
-      if (MUTATING_TOOLS.has(call.name) && !repeatedMutation) actions.push({ name: call.name, args: call.args, result: out });
+      const parsedToolOutput = parseToolResult(out);
+      if (MUTATING_TOOLS.has(call.name) && !repeatedMutation && !parsedToolOutput?.needsInput) {
+        actions.push({ name: call.name, args: call.args, result: out });
+      }
       if (["create_document", "generate_report", "generate_owner_analysis", "create_quotation", "get_action_status", "create_zoho_quotation"].includes(call.name)) {
         try {
           const parsed = JSON.parse(out) as { name?: string; url?: string; file?: { name?: string; url?: string; type?: string }; files?: { name: string; url: string; type?: string }[]; externalRef?: string };
