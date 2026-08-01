@@ -165,7 +165,7 @@ export async function ingestRecentOutlook(enterpriseId: string, max = 15): Promi
 
   const url =
     `https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages` +
-    `?$top=${max}&$select=id,conversationId,subject,from,toRecipients,bodyPreview,body,receivedDateTime,hasAttachments&$orderby=receivedDateTime desc`;
+    `?$top=${max}&$select=id,conversationId,subject,from,toRecipients,ccRecipients,bodyPreview,body,receivedDateTime,hasAttachments&$orderby=receivedDateTime desc`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
   const data = (await res.json()) as any;
   if (data.error) throw new Error(data.error.message);
@@ -177,11 +177,13 @@ export async function ingestRecentOutlook(enterpriseId: string, max = 15): Promi
   for (const m of messages) {
     const docId = `ms_${sanitizeId(m.id)}`;
     const msgRef = db.doc(`messages/${docId}`);
-    if ((await msgRef.get()).exists) continue;
+    const alreadyIngested = (await msgRef.get()).exists;
 
     const fromEmail = (m.from?.emailAddress?.address ?? "").toLowerCase();
     const fromName = m.from?.emailAddress?.name ?? fromEmail;
     const toEmail = (m.toRecipients?.[0]?.emailAddress?.address ?? "").toLowerCase();
+    const to = (m.toRecipients ?? []).map((recipient: any) => recipient.emailAddress?.address).filter(Boolean).join(", ");
+    const cc = (m.ccRecipients ?? []).map((recipient: any) => recipient.emailAddress?.address).filter(Boolean).join(", ");
     const convGraphId = m.conversationId ?? m.id;
     const convId = `${enterpriseId}_ms_${sanitizeId(convGraphId)}`;
     const senderType = account && fromEmail === account ? "us" : "customer";
@@ -193,6 +195,7 @@ export async function ingestRecentOutlook(enterpriseId: string, max = 15): Promi
       thread_id: convGraphId,
       subject: m.subject || "(no subject)",
       customer_ref: senderType === "customer" ? fromEmail : toEmail,
+      account_email: account,
       status: "open",
       last_message_at: timestamp,
       updated_at: FieldValue.serverTimestamp(),
@@ -203,6 +206,11 @@ export async function ingestRecentOutlook(enterpriseId: string, max = 15): Promi
       stamped.add(convId);
     }
     await db.doc(`conversations/${convId}`).set(convPatch, { merge: true });
+
+    if (alreadyIngested) {
+      await msgRef.set({ to, cc: cc || null }, { merge: true });
+      continue;
+    }
 
     const incoming: IncomingAttachment[] = [];
     if (m.hasAttachments) {
@@ -246,6 +254,8 @@ export async function ingestRecentOutlook(enterpriseId: string, max = 15): Promi
       sender_type: senderType,
       from: fromName,
       from_email: fromEmail,
+      to,
+      cc: cc || null,
       subject: m.subject ?? "",
       snippet: m.bodyPreview ?? "",
       body: (m.body?.content ?? m.bodyPreview ?? "").slice(0, 20000),

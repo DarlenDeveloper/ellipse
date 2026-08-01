@@ -116,7 +116,7 @@ export async function ingestRecentImap(enterpriseId: string, max = 15): Promise<
       const messageId = env?.messageId || `smtp_${msg.uid}`;
       const docId = `smtp_${enterpriseId}_${Buffer.from(messageId).toString("base64").replace(/[^a-zA-Z0-9]/g, "").slice(0, 60)}`;
       const msgDocRef = db.doc(`messages/${docId}`);
-      if ((await msgDocRef.get()).exists) continue;
+      const alreadyIngested = (await msgDocRef.get()).exists;
 
       const fromAddr = env?.from?.[0];
       const from = fromAddr ? `${fromAddr.name ?? ""} <${fromAddr.address ?? ""}>`.trim() : "";
@@ -128,11 +128,17 @@ export async function ingestRecentImap(enterpriseId: string, max = 15): Promise<
 
       // Parse the raw MIME source into a clean text body (fall back to snippet).
       let body = "";
+      let to = env?.to?.map((address) => address.address).filter(Boolean).join(", ") ?? "";
+      let cc = "";
       let incoming: IncomingAttachment[] = [];
       if (msg.source) {
         try {
           const parsed = await simpleParser(msg.source);
           body = (parsed.text || parsed.html || "").toString().slice(0, 20000);
+          const parsedTo = Array.isArray(parsed.to) ? parsed.to : parsed.to ? [parsed.to] : [];
+          const parsedCc = Array.isArray(parsed.cc) ? parsed.cc : parsed.cc ? [parsed.cc] : [];
+          to = parsedTo.flatMap((group) => group.value).map((address) => address.address).filter(Boolean).join(", ") || to;
+          cc = parsedCc.flatMap((group) => group.value).map((address) => address.address).filter(Boolean).join(", ");
           incoming = parsed.attachments.map((attachment, index) => ({
             sourceId: attachment.cid || `${index}-${attachment.checksum || attachment.filename || "attachment"}`,
             fileName: attachment.filename || `attachment-${index + 1}`,
@@ -152,12 +158,18 @@ export async function ingestRecentImap(enterpriseId: string, max = 15): Promise<
           thread_id: threadId,
           subject,
           customer_ref: senderType === "customer" ? fromEmail : account,
+          account_email: account,
           status: "open",
           last_message_at: timestamp,
           updated_at: FieldValue.serverTimestamp(),
         },
         { merge: true }
       );
+
+      if (alreadyIngested) {
+        await msgDocRef.set({ to, cc: cc || null }, { merge: true });
+        continue;
+      }
 
       const attachments = await saveIncomingAttachments({
         enterpriseId,
@@ -177,6 +189,8 @@ export async function ingestRecentImap(enterpriseId: string, max = 15): Promise<
         sender_type: senderType,
         from,
         from_email: fromEmail,
+        to,
+        cc: cc || null,
         subject,
         snippet: body.slice(0, 200),
         body,

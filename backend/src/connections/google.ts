@@ -284,7 +284,7 @@ export async function ingestRecentGmail(enterpriseId: string, max = 15, ownerUid
     if (!id) continue;
     const scopedId = ownerUid ? `${ownerUid}_${id}` : id;
     const msgDocRef = db.doc(`messages/${scopedId}`);
-    if ((await msgDocRef.get()).exists) continue; // already ingested
+    const alreadyIngested = (await msgDocRef.get()).exists;
 
     const full = await gmail.users.messages.get({ userId: "me", id, format: "full" });
     const payload = full.data.payload;
@@ -292,6 +292,7 @@ export async function ingestRecentGmail(enterpriseId: string, max = 15, ownerUid
 
     const from = header(headers, "From");
     const to = header(headers, "To");
+    const cc = header(headers, "Cc");
     const subject = header(headers, "Subject");
     const dateStr = header(headers, "Date");
     const fromEmail = parseEmailAddress(from);
@@ -308,6 +309,7 @@ export async function ingestRecentGmail(enterpriseId: string, max = 15, ownerUid
         thread_id: threadId,
         subject: subject || "(no subject)",
         customer_ref: senderType === "customer" ? fromEmail : to,
+        account_email: accountEmail,
         status: "open",
         last_message_at: timestamp,
         updated_at: FieldValue.serverTimestamp(),
@@ -316,6 +318,13 @@ export async function ingestRecentGmail(enterpriseId: string, max = 15, ownerUid
       },
       { merge: true }
     );
+
+    // Older records predate recipient capture. Hydrate them during normal sync
+    // without duplicating attachments, analytics, or notifications.
+    if (alreadyIngested) {
+      await msgDocRef.set({ to, cc: cc || null }, { merge: true });
+      continue;
+    }
 
     const incoming: IncomingAttachment[] = [];
     for (const part of gmailAttachmentParts(payload)) {
@@ -355,6 +364,7 @@ export async function ingestRecentGmail(enterpriseId: string, max = 15, ownerUid
       from,
       from_email: fromEmail,
       to,
+      cc: cc || null,
       subject,
       snippet: full.data.snippet ?? "",
       body: extractBody(payload).slice(0, 20000),

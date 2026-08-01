@@ -13,6 +13,7 @@ type Conversation = {
   subject: string;
   customer_ref: string;
   channel?: string;
+  account_email?: string;
 } | null;
 
 type Message = {
@@ -24,6 +25,7 @@ type Message = {
   snippet: string;
   sender_type: "us" | "customer";
   timestamp?: { toDate: () => Date };
+  to?: string;
   cc?: string;
   attachment?: { fileName?: string; size?: number; documentId?: string };
   attachments?: { documentId: string; fileName: string; contentType: string; size: number; url: string }[];
@@ -165,6 +167,23 @@ export function ReadingPane({
     setError(null);
     setSendNotice(null);
   }, [conversation?.id]);
+
+  // Behave like Reply all: carry the latest inbound message's original CC list
+  // into the composer. The user can still edit or remove recipients before send.
+  useEffect(() => {
+    if (!isEmail) return;
+    const latestInbound = [...messages].reverse().find((message) => message.sender_type === "customer");
+    const excluded = new Set([conversation?.account_email, latestInbound?.from_email]
+      .filter(Boolean)
+      .map((address) => String(address).toLowerCase()));
+    const replyAll = [latestInbound?.to, latestInbound?.cc]
+      .filter(Boolean)
+      .flatMap((value) => String(value).split(","))
+      .map((value) => value.match(/<([^>]+)>/)?.[1] ?? value)
+      .map((value) => value.trim())
+      .filter((value) => value && !excluded.has(value.toLowerCase()));
+    setCc(Array.from(new Set(replyAll.map((value) => value.toLowerCase()))).join(", "));
+  }, [conversation?.id, conversation?.account_email, isEmail, messages]);
 
   const fileAsBase64 = (file: File) => new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -445,9 +464,10 @@ export function ReadingPane({
                   </div>
                   <div>
                     <p className="text-sm font-semibold">{msg.from}</p>
-                    <p className="text-xs text-gray-400">
-                      {msg.sender_type === "us" ? "Sent" : "to you"}
-                    </p>
+                    {msg.from_email && !msg.from.toLowerCase().includes(msg.from_email.toLowerCase()) && (
+                      <p className="text-xs text-gray-500">{msg.from_email}</p>
+                    )}
+                    <p className="text-xs text-gray-400">{msg.sender_type === "us" ? "Sent" : `to ${msg.to || "you"}`}</p>
                   </div>
                 </div>
                 <span className="text-xs text-gray-400 shrink-0">{fmtFull(msg.timestamp)}</span>

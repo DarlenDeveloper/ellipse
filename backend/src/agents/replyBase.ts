@@ -53,12 +53,12 @@ function renderContext(e: ZohoEnrichment): string {
   }. Deals: ${deals}.`;
 }
 
-function buildSystem(orgName: string, cfg: ReplyAgentConfig): string {
+function buildSystem(orgName: string, senderName: string, cfg: ReplyAgentConfig): string {
   const toneLine =
     cfg.tone === "chat"
       ? `- This is a chat channel: keep the reply short, friendly, and conversational. No email formalities, no subject line. A brief sign-off like "— ${orgName}" is fine but keep it light.`
       : `- Match a professional, helpful email tone.
-- ALWAYS sign off as "The ${orgName} Team". NEVER use placeholders like [Your Name] or [Company Name].`;
+- ALWAYS sign off using the real representative and company names exactly like this: "${senderName},\n${orgName}". NEVER use "The ${orgName} Team" or placeholders like [Your Name] or [Company Name].`;
   return `You are the ${cfg.agentLabel} agent for ${orgName}, acting inside Ellipse, a business automation platform.
 You read a customer conversation and draft a reply on ${orgName}'s behalf.
 ${toneLine}
@@ -85,10 +85,23 @@ export async function draftAndRoute(
     channel?: string;
     connection_scope?: string;
     owner_uid?: string;
+    account_email?: string;
   };
 
   const entSnap = await db.doc(`enterprises/${enterpriseId}`).get();
   const orgName = (entSnap.data()?.name as string) || "our team";
+  let senderName = "Customer Support";
+  if (conv.owner_uid) {
+    const owner = await db.doc(`users/${conv.owner_uid}`).get();
+    senderName = (owner.data()?.display_name as string) || senderName;
+  } else {
+    const owners = await db.collection("users")
+      .where("enterprise_id", "==", enterpriseId)
+      .where("role", "==", "owner")
+      .limit(1)
+      .get();
+    senderName = (owners.docs[0]?.data()?.display_name as string) || senderName;
+  }
 
   const msgsSnap = await db.collection("messages").where("conversation_id", "==", conversationId).get();
   const messages = msgsSnap.docs
@@ -97,6 +110,9 @@ export async function draftAndRoute(
         d.data() as {
           sender_type?: string;
           from?: string;
+          from_email?: string;
+          to?: string;
+          cc?: string;
           body?: string;
           snippet?: string;
           timestamp?: FirebaseFirestore.Timestamp;
@@ -106,6 +122,17 @@ export async function draftAndRoute(
     .slice(-10);
 
   const ref = (conv.customer_ref ?? "").toLowerCase();
+  const latestInbound = [...messages].reverse().find((message) => message.sender_type === "customer");
+  const excludedReplyAddresses = new Set([conv.account_email, latestInbound?.from_email]
+    .filter(Boolean)
+    .map((address) => String(address).toLowerCase()));
+  const replyAllCc = [latestInbound?.to, latestInbound?.cc]
+    .filter(Boolean)
+    .flatMap((value) => String(value).split(","))
+    .map((value) => value.match(/<([^>]+)>/)?.[1] ?? value)
+    .map((value) => value.trim().toLowerCase())
+    .filter((value) => value && !excludedReplyAddresses.has(value));
+  const cc = Array.from(new Set(replyAllCc)).join(", ") || undefined;
 
   let context: ZohoEnrichment = { found: false, type: null, record: null, deals: [] };
   const personalOwner = conv.connection_scope === "personal" ? conv.owner_uid : undefined;
@@ -160,7 +187,7 @@ export async function draftAndRoute(
     .filter(Boolean)
     .join("\n");
 
-  const gemini = await callGemini({ system: buildSystem(orgName, cfg), prompt, tools: TOOLS });
+  const gemini = await callGemini({ system: buildSystem(orgName, senderName, cfg), prompt, tools: TOOLS });
 
   let action: ReplyAgentResult["action"] = null;
   const call = gemini.functionCalls.find((c) => c.name === "send_reply");
@@ -177,6 +204,7 @@ export async function draftAndRoute(
         to: ref,
         subject: conv.subject ?? "",
         body,
+        cc,
         connectionOwnerUid: personalOwner,
       },
       targetSystem: cfg.targetSystem,

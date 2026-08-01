@@ -67,7 +67,10 @@ function InstantPageTransition() {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const isBare = bareRoutes.some((r) => pathname.startsWith(r));
+  // The root page performs a server redirect to /login. It must render outside
+  // the protected shell; otherwise the auth spinner hides it before the
+  // redirect can complete for signed-out users.
+  const isBare = pathname === "/" || bareRoutes.some((r) => pathname.startsWith(r));
 
   if (isBare) {
     return <AuthProvider>{children}</AuthProvider>;
