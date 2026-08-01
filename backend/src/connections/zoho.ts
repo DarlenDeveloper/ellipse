@@ -925,7 +925,7 @@ export async function createRecord(
     body: { data: [fields] },
   });
   const result = data?.data?.[0];
-  if (result?.status === "error" || result?.code) {
+  if (result?.status === "error" || (result?.code && result.code !== "SUCCESS")) {
     throw new Error(`Zoho ${module} create failed: ${result.message ?? result.code}`);
   }
   return result?.details?.id ?? null;
@@ -943,7 +943,7 @@ export async function updateRecord(
     body: { data: [fields] },
   });
   const result = data?.data?.[0];
-  if (result?.status === "error" || result?.code) {
+  if (result?.status === "error" || (result?.code && result.code !== "SUCCESS")) {
     throw new Error(`Zoho ${module} update failed: ${result.message ?? result.code}`);
   }
   return result?.details?.id ?? null;
