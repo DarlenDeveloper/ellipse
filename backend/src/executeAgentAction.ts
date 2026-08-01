@@ -181,8 +181,9 @@ async function executeZohoAction(
   const zoho = await import("./connections/zoho");
   const ownerUid = params.connectionOwnerUid as string | undefined;
   if (ownerUid) {
+    const { connectionOwnerUid: _connectionOwnerUid, ...paramsWithoutOwner } = params;
     return zoho.withZohoConnectionOwner(ownerUid, () =>
-      executeZohoAction(enterpriseId, actionType, { ...params, connectionOwnerUid: undefined })
+      executeZohoAction(enterpriseId, actionType, paramsWithoutOwner)
     );
   }
   const module = (params.module as string) ?? "Leads";

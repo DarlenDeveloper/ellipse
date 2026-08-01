@@ -6,20 +6,49 @@ import {
   searchByEmail,
   searchRecordsByWord,
   getZohoConnectionOwner,
+  listModuleFields,
+  updateRecord,
 } from "./connections/zoho";
 
 export type ZohoQuotationRequest = {
   workflowKey: string;
   agentId: string;
-  customer: { name: string; email: string; company?: string; phone?: string };
-  items: { product: string; quantity: number; rate?: number }[];
+  customer: {
+    name: string;
+    email: string;
+    company?: string;
+    phone?: string;
+    billingCity?: string;
+    tin?: string;
+  };
+  items: { product: string; quantity: number; rate?: number; description?: string }[];
   subject?: string;
+  quoteDate?: string;
   templateName?: string;
   conversationId?: string;
 };
 
 const clean = (value: unknown) => String(value ?? "").trim();
 const normalized = (value: unknown) => clean(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+function omitUndefined(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(omitUndefined);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, child]) => child !== undefined)
+        .map(([key, child]) => [key, omitUndefined(child)])
+    );
+  }
+  return value;
+}
+
+async function resolveAccountTinField(enterpriseId: string): Promise<string | undefined> {
+  const fields = await listModuleFields(enterpriseId, "Accounts");
+  const exact = fields.find((field) => /^(client\s+)?tin(\s*(no|number))?\.?$/i.test(field.label.trim()));
+  const taxId = fields.find((field) => /tax\s*(identification|id)\s*(no|number)?/i.test(field.label));
+  return (exact ?? taxId)?.api_name;
+}
 
 function splitName(name: string, email: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -74,7 +103,12 @@ export async function createZohoQuotationWorkflow(
       url: document?.file?.url,
     };
   }
-  await stateRef.set({ enterprise_id: enterpriseId, status: "running", request, updated_at: FieldValue.serverTimestamp() }, { merge: true });
+  await stateRef.set({
+    enterprise_id: enterpriseId,
+    status: "running",
+    request: omitUndefined(request),
+    updated_at: FieldValue.serverTimestamp(),
+  }, { merge: true });
 
   const email = clean(request.customer.email).toLowerCase();
   const names = splitName(clean(request.customer.name), email);
@@ -95,13 +129,27 @@ export async function createZohoQuotationWorkflow(
   }
 
   const company = clean(request.customer.company) || clean(request.customer.name);
+  const billingCity = clean(request.customer.billingCity);
+  const clientTin = clean(request.customer.tin);
+  const tinField = clientTin ? await resolveAccountTinField(enterpriseId) : undefined;
+  if (clientTin && !tinField) {
+    throw new Error("Client TIN was supplied, but no TIN field exists in the Zoho Accounts module.");
+  }
+  const accountFields: Record<string, unknown> = {
+    Account_Name: company,
+    Billing_City: billingCity || undefined,
+    ...(tinField ? { [tinField]: clientTin } : {}),
+  };
   let accountId = existing?.account_id as string | undefined;
   if (!accountId) {
     const accounts = await searchRecordsByWord(enterpriseId, "Accounts", company);
     accountId = accounts.find((a) => normalized(a.Account_Name) === normalized(company))?.id;
-    if (!accountId) accountId = (await createRecord(enterpriseId, "Accounts", { Account_Name: company })) || undefined;
+    if (!accountId) accountId = (await createRecord(enterpriseId, "Accounts", accountFields)) || undefined;
     if (!accountId) throw new Error("Zoho did not create the Account required by the Quote");
     await stateRef.set({ account_id: accountId }, { merge: true });
+  }
+  if (accountId && (billingCity || clientTin)) {
+    await updateRecord(enterpriseId, "Accounts", accountId, accountFields);
   }
 
   let contactId = existing?.contact_id as string | undefined;
@@ -130,12 +178,15 @@ export async function createZohoQuotationWorkflow(
         Product_Name: { id: product.id },
         Quantity: Math.max(1, Number(item.quantity) || 1),
         List_Price: rate,
+        Description: clean(item.description) || clean(product.Description) || undefined,
       });
     }
     quoteId = (await createRecord(enterpriseId, "Quotes", {
       Subject: clean(request.subject) || `Quotation for ${company}`,
+      Quote_Date: clean(request.quoteDate) || new Date().toISOString().slice(0, 10),
       Account_Name: { id: accountId },
       Contact_Name: { id: contactId },
+      Billing_City: billingCity || undefined,
       Quote_Stage: "Draft",
       Quoted_Items: resolvedItems,
     })) || undefined;

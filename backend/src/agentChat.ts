@@ -294,6 +294,8 @@ const T = {
             email: { type: "string" },
             company: { type: "string" },
             phone: { type: "string" },
+            billingCity: { type: "string", description: "Customer billing city / location." },
+            tin: { type: "string", description: "Client tax identification number, saved on the Zoho Account." },
           },
           required: ["name", "email"],
         },
@@ -305,11 +307,13 @@ const T = {
               product: { type: "string", description: "Exact Zoho Product name or SKU." },
               quantity: { type: "number" },
               rate: { type: "number", description: "Optional approved unit price; omit to use Zoho Unit_Price." },
+              description: { type: "string", description: "Optional quotation-line description; defaults to the Zoho Product description." },
             },
             required: ["product", "quantity"],
           },
         },
         subject: { type: "string" },
+        quoteDate: { type: "string", description: "Quote date in YYYY-MM-DD format; defaults to today." },
       },
       required: ["customer", "items"],
     },
@@ -1010,8 +1014,10 @@ async function toolCreateZohoQuotation(enterpriseId: string, agentId: string, ar
     items,
   };
   const subject = String(args.subject ?? "").trim();
+  const quoteDate = String(args.quoteDate ?? "").trim();
   const connectionOwnerUid = String(args.connectionOwnerUid ?? "").trim();
   if (subject) params.subject = subject;
+  if (quoteDate) params.quoteDate = quoteDate;
   if (connectionOwnerUid) params.connectionOwnerUid = connectionOwnerUid;
   const result = await executeAgentAction({
     enterpriseId,
