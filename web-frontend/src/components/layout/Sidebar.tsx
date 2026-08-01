@@ -17,6 +17,7 @@ import {
   Setting2,
   TaskSquare,
   Calendar1,
+  Messages2,
   ArrowLeft2,
   ArrowRight2,
   LogoutCurve,
@@ -29,6 +30,7 @@ import { useAccess } from "@/lib/use-access";
 const navItems = [
   { icon: Home2, label: "Dashboard", href: "/dashboard" },
   { icon: Sms, label: "Inbox", href: "/inbox" },
+  { icon: Messages2, label: "Team Chat", href: "/team-chat" },
   { icon: ClipboardTick, label: "Approvals", href: "/approvals" },
   { icon: Hierarchy, label: "Integrations", href: "/integrations" },
   { icon: Cpu, label: "Agents", href: "/agents" },

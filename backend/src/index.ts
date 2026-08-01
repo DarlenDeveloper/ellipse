@@ -796,6 +796,30 @@ export const markConversationRead = onCall(async (request) => {
   return markConversationRead(request.auth.uid, request.data ?? {});
 });
 
+export const ensureTeamChat = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const chat = await import("./internalChat");
+  return chat.ensureTeamChat(request.auth.uid);
+});
+
+export const startInternalChat = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const chat = await import("./internalChat");
+  return chat.startInternalChat(request.auth.uid, request.data ?? {});
+});
+
+export const sendInternalMessage = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const chat = await import("./internalChat");
+  return chat.sendInternalMessage(request.auth.uid, request.data ?? {});
+});
+
+export const markInternalChatRead = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const chat = await import("./internalChat");
+  return chat.markInternalChatRead(request.auth.uid, request.data ?? {});
+});
+
 /** Human-composed Inbox reply. It uses the universal gate just like agent replies. */
 export const sendReply = onCall(
   {

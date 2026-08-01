@@ -10,7 +10,8 @@ export type NotificationKind =
   | "action_failed"
   | "access_requested"
   | "access_approved"
-  | "access_denied";
+  | "access_denied"
+  | "internal_message";
 
 type Recipient = { notification_preferences?: Record<string, boolean> };
 
@@ -22,6 +23,7 @@ const preferenceKey: Partial<Record<NotificationKind, string>> = {
   access_requested: "accessRequest",
   access_approved: "accessRequest",
   access_denied: "accessRequest",
+  internal_message: "newMessage",
 };
 
 export async function notifyUsers(args: {

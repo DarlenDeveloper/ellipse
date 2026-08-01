@@ -40,6 +40,11 @@ service cloud.firestore {
     function isOwner(eid) {
       return isMember(eid) && myRole() == 'owner';
     }
+    function canReadInternalChat(chatId) {
+      let chat = get(/databases/$(database)/documents/internal_chats/$(chatId)).data;
+      return isMember(chat.enterprise_id)
+        && (chat.type == 'group' || request.auth.uid in chat.participant_uids);
+    }
 
     // ---- Users ----
     match /users/{uid} {
@@ -132,6 +137,23 @@ service cloud.firestore {
 
     // Per-user inbox read receipts (written by the callable only).
     match /conversation_reads/{id} {
+      allow read: if signedIn() && resource.data.user_id == request.auth.uid
+        && resource.data.enterprise_id == myEid();
+      allow write: if false;
+    }
+
+    // ---- Internal organization chat (writes are server-validated callables) ----
+    match /internal_chats/{chatId} {
+      allow read: if isMember(resource.data.enterprise_id)
+        && (resource.data.type == 'group' || request.auth.uid in resource.data.participant_uids);
+      allow write: if false;
+
+      match /messages/{messageId} {
+        allow read: if canReadInternalChat(chatId);
+        allow write: if false;
+      }
+    }
+    match /internal_chat_reads/{id} {
       allow read: if signedIn() && resource.data.user_id == request.auth.uid
         && resource.data.enterprise_id == myEid();
       allow write: if false;
