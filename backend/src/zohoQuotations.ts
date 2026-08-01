@@ -26,6 +26,7 @@ export type ZohoQuotationRequest = {
   currency?: string;
   vatExempt?: boolean;
   preparedBy?: string;
+  bankDetails?: string;
   conversationId?: string;
 };
 
@@ -229,6 +230,7 @@ export async function createZohoQuotationWorkflow(
     currency: clean(request.currency) || "UGX",
     vatExempt: Boolean(request.vatExempt),
     preparedBy: clean(request.preparedBy),
+    bankDetails: clean(request.bankDetails),
     date: clean(request.quoteDate),
     title: clean(request.subject) || `Quotation for ${company}`,
     source: {

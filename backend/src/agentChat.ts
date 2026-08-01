@@ -318,6 +318,7 @@ const T = {
         currency: { type: "string", description: "Currency code; defaults to UGX." },
         vatExempt: { type: "boolean", description: "Set only when the user confirms VAT exemption." },
         preparedBy: { type: "string", description: "Person preparing the quotation; defaults to quotation settings." },
+        bankDetails: { type: "string", description: "Optional bank details; normally loaded automatically from the 'Bank Details' knowledge-base entry." },
       },
       required: ["customer", "items"],
     },
@@ -1015,12 +1016,14 @@ async function toolCreateZohoQuotation(enterpriseId: string, agentId: string, ar
   const dealName = String(args.dealName ?? "").trim();
   const currency = String(args.currency ?? "").trim();
   const preparedBy = String(args.preparedBy ?? "").trim();
+  const bankDetails = String(args.bankDetails ?? "").trim();
   const connectionOwnerUid = String(args.connectionOwnerUid ?? "").trim();
   if (subject) params.subject = subject;
   if (quoteDate) params.quoteDate = quoteDate;
   if (dealName) params.dealName = dealName;
   if (currency) params.currency = currency;
   if (preparedBy) params.preparedBy = preparedBy;
+  if (bankDetails) params.bankDetails = bankDetails;
   if (args.vatExempt === true) params.vatExempt = true;
   if (connectionOwnerUid) params.connectionOwnerUid = connectionOwnerUid;
   const result = await executeAgentAction({

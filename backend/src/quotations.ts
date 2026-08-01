@@ -91,6 +91,14 @@ export type CreatedQuotation = {
   currency: string;
 };
 
+async function loadKnowledgeBankDetails(enterpriseId: string): Promise<string> {
+  const snap = await db.collection("knowledge_base").where("enterprise_id", "==", enterpriseId).get();
+  const entry = snap.docs
+    .map((doc) => doc.data() as { title?: string; content?: string })
+    .find((item) => /bank\s+details/i.test(String(item.title ?? "")) && String(item.content ?? "").trim());
+  return String(entry?.content ?? "").trim();
+}
+
 export async function createQuotationPdf(opts: {
   enterpriseId: string;
   agentId: string;
@@ -105,6 +113,7 @@ export async function createQuotationPdf(opts: {
   date?: string; // MM/DD/YYYY; default today
   title?: string;
   source?: Record<string, unknown>;
+  bankDetails?: string;
 }): Promise<CreatedQuotation> {
   const branding = await loadQuotationBranding(opts.enterpriseId);
   const currency = opts.currency || "UGX";
@@ -124,6 +133,7 @@ export async function createQuotationPdf(opts: {
   const proformaNo = await nextProformaNumber(opts.enterpriseId, prefix);
   const dateStr = opts.date || new Date().toLocaleDateString("en-US");
   const logoBuf = await loadLogoBuffer(branding.logo_path);
+  const bankDetails = opts.bankDetails?.trim() || await loadKnowledgeBankDetails(opts.enterpriseId);
 
   const buffer = await renderQuotationPdf({
     branding,
@@ -139,6 +149,7 @@ export async function createQuotationPdf(opts: {
     preparedBy: opts.preparedBy || branding.prepared_by || "",
     logoBuf,
     vatExempt: !!opts.vatExempt || vatRate === 0,
+    bankDetails,
   });
 
   // Store + record on the Data page.
@@ -192,6 +203,7 @@ export function renderQuotationPdf(p: {
   preparedBy: string;
   logoBuf: Buffer | null;
   vatExempt: boolean;
+  bankDetails: string;
 }): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: "A4", margin: 40 });
@@ -328,6 +340,18 @@ export function renderQuotationPdf(p: {
       doc.font("Helvetica").fontSize(9).fillColor("#333333");
       for (const line of branding.terms.split(/\n+/).filter(Boolean)) {
         doc.text(line.startsWith("-") ? line : `- ${line}`, LEFT, doc.y + 3, { width: RIGHT - LEFT });
+      }
+    }
+    let footerY = doc.y + 18;
+    if (p.bankDetails) {
+      if (footerY > 675) {
+        doc.addPage();
+        footerY = 48;
+      }
+      doc.font("Helvetica-Bold").fontSize(13).fillColor(DARK).text("Bank Details", LEFT, footerY);
+      doc.font("Helvetica").fontSize(9).fillColor("#333333");
+      for (const line of p.bankDetails.split(/\n+/).map((value) => value.trim()).filter(Boolean)) {
+        doc.text(line, LEFT, doc.y + 3, { width: RIGHT - LEFT });
       }
     }
     doc.moveTo(LEFT, doc.y + 16).lineTo(RIGHT, doc.y + 16).lineWidth(1).strokeColor("#111111").stroke();
