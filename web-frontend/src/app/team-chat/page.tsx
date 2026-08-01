@@ -11,7 +11,7 @@ import {
   where,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
-import { People, SearchNormal1, Send2 } from "iconsax-react";
+import { People, SearchNormal1, Send2, User } from "iconsax-react";
 import { db, functions } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 import { useAccess } from "@/lib/use-access";
@@ -51,10 +51,6 @@ const avatarClasses = ["bg-violet-100 text-violet-700", "bg-blue-100 text-blue-7
 
 function memberName(member?: Member | null) {
   return member?.display_name || member?.email || "Member";
-}
-
-function initials(name: string) {
-  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "?";
 }
 
 function avatarClass(value: string) {
@@ -281,7 +277,8 @@ export default function TeamChatPage() {
 
 function Avatar({ name, group, large, small }: { name: string; group?: boolean; large?: boolean; small?: boolean }) {
   const size = large ? "h-16 w-16 text-lg" : small ? "h-8 w-8 text-[10px]" : "h-10 w-10 text-xs";
-  return <span className={cn("flex shrink-0 items-center justify-center rounded-full font-bold", size, group ? "bg-violet-600 text-white" : avatarClass(name))}>{group ? <People size={large ? 27 : 18} variant="Bold" /> : initials(name)}</span>;
+  const iconSize = large ? 29 : small ? 17 : 21;
+  return <span className={cn("flex shrink-0 items-center justify-center rounded-full font-bold", size, group ? "bg-violet-600 text-white" : avatarClass(name))}>{group ? <People size={large ? 27 : 18} variant="Bold" /> : <User size={iconSize} variant="Bold" />}</span>;
 }
 
 function ChatRow({ chat, active, unread, name, subtitle, onClick, group }: { chat?: Chat; active: boolean; unread: boolean; name: string; subtitle: string; onClick: () => void; group?: boolean }) {
