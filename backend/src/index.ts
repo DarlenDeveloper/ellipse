@@ -899,27 +899,63 @@ export const sendReply = onCall(
   }
 );
 
-/** Upload one human-selected Inbox attachment before it enters the approval gate. */
-export const uploadInboxAttachment = onCall(async (request) => {
+const MAX_INBOX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
+
+/** Prepare a direct-to-Storage upload so large files do not cross callable limits. */
+export const prepareInboxAttachment = onCall(async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
   const enterpriseId = request.data?.enterpriseId as string | undefined;
   const originalName = (request.data?.fileName as string | undefined)?.trim();
   const contentType = (request.data?.contentType as string | undefined)?.trim() || "application/octet-stream";
-  const encoded = request.data?.base64 as string | undefined;
-  if (!enterpriseId || !originalName || !encoded) throw new HttpsError("invalid-argument", "Missing attachment data.");
-  const { db, bucket, FieldValue } = await import("./admin");
+  const size = Number(request.data?.size ?? 0);
+  if (!enterpriseId || !originalName || !size) throw new HttpsError("invalid-argument", "Missing attachment data.");
+  if (size > MAX_INBOX_ATTACHMENT_BYTES) throw new HttpsError("invalid-argument", "Attachment must be 100 MB or smaller.");
+  const { db, bucket } = await import("./admin");
   const caller = (await db.doc(`users/${request.auth.uid}`).get()).data();
   if (caller?.enterprise_id !== enterpriseId) throw new HttpsError("permission-denied", "Wrong organization.");
-  const content = Buffer.from(encoded, "base64");
-  if (!content.length || content.length > 10 * 1024 * 1024) throw new HttpsError("invalid-argument", "Attachment must be 10 MB or smaller.");
   const safeName = originalName.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(-120) || "attachment";
   const docRef = db.collection("documents").doc();
   const storagePath = `documents/${enterpriseId}/${docRef.id}/${safeName}`;
-  await bucket().file(storagePath).save(content, { contentType, resumable: false });
+  const [uploadUrl] = await bucket().file(storagePath).getSignedUrl({
+    version: "v4",
+    action: "write",
+    expires: Date.now() + 15 * 60 * 1000,
+    contentType,
+  });
+  return { documentId: docRef.id, storagePath, fileName: originalName, contentType, size, uploadUrl };
+});
+
+/** Verify a direct upload and register it as an Ellipse document. */
+export const finalizeInboxAttachment = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const enterpriseId = request.data?.enterpriseId as string | undefined;
+  const documentId = request.data?.documentId as string | undefined;
+  const storagePath = request.data?.storagePath as string | undefined;
+  const originalName = (request.data?.fileName as string | undefined)?.trim();
+  const contentType = (request.data?.contentType as string | undefined)?.trim() || "application/octet-stream";
+  if (!enterpriseId || !documentId || !storagePath || !originalName) throw new HttpsError("invalid-argument", "Missing attachment data.");
+  if (storagePath !== `documents/${enterpriseId}/${documentId}/${storagePath.split("/").pop()}`) {
+    throw new HttpsError("permission-denied", "Invalid attachment location.");
+  }
+  const { db, bucket, FieldValue } = await import("./admin");
+  const caller = (await db.doc(`users/${request.auth.uid}`).get()).data();
+  if (caller?.enterprise_id !== enterpriseId) throw new HttpsError("permission-denied", "Wrong organization.");
+  const file = bucket().file(storagePath);
+  const [metadata] = await file.getMetadata();
+  const size = Number(metadata.size ?? 0);
+  if (!size || size > MAX_INBOX_ATTACHMENT_BYTES) {
+    await file.delete({ ignoreNotFound: true });
+    throw new HttpsError("invalid-argument", "Attachment must be 100 MB or smaller.");
+  }
+  const { randomUUID } = await import("crypto");
+  const token = randomUUID();
+  await file.setMetadata({ metadata: { firebaseStorageDownloadTokens: token } });
+  const url = `https://firebasestorage.googleapis.com/v0/b/${bucket().name}/o/${encodeURIComponent(storagePath)}?alt=media&token=${token}`;
+  const docRef = db.doc(`documents/${documentId}`);
   await docRef.set({
     enterprise_id: enterpriseId,
     name: originalName,
-    file: { name: originalName, size: content.length },
+    file: { name: originalName, size, url },
     content_type: contentType,
     storage_path: storagePath,
     type: "email_attachment",
@@ -927,7 +963,7 @@ export const uploadInboxAttachment = onCall(async (request) => {
     created_by_uid: request.auth.uid,
     created_at: FieldValue.serverTimestamp(),
   });
-  return { documentId: docRef.id, storagePath, fileName: originalName, contentType, size: content.length };
+  return { documentId, storagePath, fileName: originalName, contentType, size, url };
 });
 
 /** TEMPORARY — write a tiny file to Storage and return its download URL + bucket, to verify the pipeline. Remove before ship. */

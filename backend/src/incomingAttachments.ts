@@ -2,8 +2,8 @@ import { createHash, randomUUID } from "crypto";
 import * as logger from "firebase-functions/logger";
 import { bucket, db, FieldValue } from "./admin";
 
-export const MAX_INCOMING_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
+export const MAX_INCOMING_ATTACHMENT_BYTES = 100 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 250 * 1024 * 1024;
 const MAX_FILES = 10;
 const BLOCKED_EXTENSIONS = new Set(["exe", "dll", "bat", "cmd", "com", "msi", "scr", "ps1", "vbs", "jar", "sh"]);
 const BLOCKED_MIME = /(?:x-msdownload|x-dosexec|x-executable|x-sh|java-archive)/i;

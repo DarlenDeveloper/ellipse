@@ -63,6 +63,14 @@ function htmlToText(input: string): string {
   s = s.replace(/<script[\s\S]*?<\/script>/gi, "");
   s = s.replace(/<head[\s\S]*?<\/head>/gi, "");
   s = s.replace(/<!--[\s\S]*?-->/g, "");
+  // Preserve HTML anchor destinations before stripping markup. Email templates
+  // commonly render only "Click here", which otherwise loses its URL.
+  s = s.replace(/<a\b[^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_match, href, label) => {
+    const cleanLabel = String(label).replace(/<[^>]+>/g, "").trim();
+    const cleanHref = String(href).replace(/&amp;/gi, "&").trim();
+    if (!/^(https?:\/\/|mailto:)/i.test(cleanHref)) return cleanLabel;
+    return cleanLabel && cleanLabel !== cleanHref ? `${cleanLabel} (${cleanHref})` : cleanHref;
+  });
   // Turn block-level tags into line breaks.
   s = s.replace(/<(br|\/p|\/div|\/tr|\/li|\/h[1-6]|\/table)\b[^>]*>/gi, "\n");
   // Remove all remaining tags.
@@ -92,12 +100,12 @@ function htmlToText(input: string): string {
 
 // Turn bare URLs into clickable links.
 function linkify(text: string) {
-  const parts = text.split(/(https?:\/\/[^\s]+)/g);
+  const parts = text.split(/((?:https?:\/\/|mailto:)[^\s)]+)/g);
   return parts.map((part, i) =>
-    /^https?:\/\//.test(part) ? (
+    /^(?:https?:\/\/|mailto:)/.test(part) ? (
       <a
         key={i}
-        href={part}
+        href={part.replace(/[.,;:]$/, "")}
         target="_blank"
         rel="noopener noreferrer"
         className="text-purple-600 underline break-all"
@@ -184,13 +192,6 @@ export function ReadingPane({
       .filter((value) => value && !excluded.has(value.toLowerCase()));
     setCc(Array.from(new Set(replyAll.map((value) => value.toLowerCase()))).join(", "));
   }, [conversation?.id, conversation?.account_email, isEmail, messages]);
-
-  const fileAsBase64 = (file: File) => new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
-    reader.onerror = () => reject(reader.error ?? new Error("Could not read the attachment."));
-    reader.readAsDataURL(file);
-  });
 
   const conversationContext = () => {
     if (!conversation) return "";
@@ -303,22 +304,41 @@ export function ReadingPane({
     setError(null);
     setSendNotice(null);
     try {
-      let uploadedAttachment: { storagePath: string; fileName: string; contentType: string; documentId?: string; size?: number } | undefined;
+      let uploadedAttachment: { storagePath: string; fileName: string; contentType: string; documentId: string; size: number; url: string } | undefined;
       if (attachment) {
-        const upload = await httpsCallable(functions, "uploadInboxAttachment")({
+        const prepared = await httpsCallable(functions, "prepareInboxAttachment")({
           enterpriseId,
           fileName: attachment.name,
           contentType: attachment.type || "application/octet-stream",
-          base64: await fileAsBase64(attachment),
+          size: attachment.size,
         });
-        uploadedAttachment = upload.data as typeof uploadedAttachment;
+        const upload = prepared.data as Omit<NonNullable<typeof uploadedAttachment>, "url"> & { uploadUrl: string };
+        const uploaded = await fetch(upload.uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": upload.contentType },
+          body: attachment,
+        });
+        if (!uploaded.ok) throw new Error("The attachment upload failed. Please try again.");
+        const finalized = await httpsCallable(functions, "finalizeInboxAttachment")({
+          enterpriseId,
+          documentId: upload.documentId,
+          storagePath: upload.storagePath,
+          fileName: upload.fileName,
+          contentType: upload.contentType,
+        });
+        uploadedAttachment = finalized.data as typeof uploadedAttachment;
       }
+      const nativeLimitMb = conversation.channel === "microsoft365" ? 3 : conversation.channel === "google-workspace" ? 20 : 25;
+      const sendAsLink = uploadedAttachment && uploadedAttachment.size > nativeLimitMb * 1024 * 1024;
+      const outgoingBody = sendAsLink && uploadedAttachment
+        ? `${reply.trim()}\n\nAttachment: ${uploadedAttachment.fileName}\n${uploadedAttachment.url}`
+        : reply.trim();
       const response = await httpsCallable(functions, "sendReply")({
         enterpriseId,
         conversationId: conversation.id,
-        body: reply.trim(),
+        body: outgoingBody,
         cc: isEmail ? cc.trim() || null : null,
-        attachment: uploadedAttachment,
+        attachment: sendAsLink ? null : uploadedAttachment,
       });
       const result = response.data as { status?: string };
       if (result.status === "pending") {
@@ -521,7 +541,11 @@ export function ReadingPane({
             <div className="flex min-w-0 items-center gap-2">
               <Paperclip2 size={16} variant="Linear" className="shrink-0 text-purple-600" />
               <span className="truncate text-xs font-semibold text-purple-800">{attachment.name}</span>
-              <span className="shrink-0 text-[11px] text-purple-500">{(attachment.size / 1024).toFixed(attachment.size < 1024 * 1024 ? 0 : 1)} {attachment.size < 1024 * 1024 ? "KB" : "MB"}</span>
+              <span className="shrink-0 text-[11px] text-purple-500">
+                {attachment.size < 1024 * 1024
+                  ? `${Math.ceil(attachment.size / 1024)} KB`
+                  : `${(attachment.size / 1024 / 1024).toFixed(1)} MB`}
+              </span>
             </div>
             <button type="button" onClick={() => setAttachment(null)} className="rounded-full p-1 text-purple-500 hover:bg-purple-100 hover:text-red-600" aria-label="Remove attachment"><Trash size={15} variant="Linear" /></button>
           </div>
@@ -533,9 +557,9 @@ export function ReadingPane({
                 const file = e.target.files?.[0] ?? null;
                 e.target.value = "";
                 if (!file) return;
-                const max = conversation.channel === "microsoft365" ? 3 : 10;
+                const max = 100;
                 if (file.size > max * 1024 * 1024) {
-                  setError(`Attachments for this channel must be ${max} MB or smaller.`);
+                  setError(`Attachments must be ${max} MB or smaller.`);
                   return;
                 }
                 setError(null);
