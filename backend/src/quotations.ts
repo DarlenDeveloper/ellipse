@@ -67,8 +67,10 @@ async function nextProformaNumber(enterpriseId: string, prefix: string): Promise
   return `${prefix}/${yy}/${mon}/${String(seq).padStart(5, "0")}`;
 }
 
-const money = (n: number) =>
-  n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const money = (n: number, currency: string) =>
+  n.toLocaleString("en-US", currency === "UGX"
+    ? { minimumFractionDigits: 0, maximumFractionDigits: 0 }
+    : { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 async function loadLogoBuffer(logoPath?: string): Promise<Buffer | null> {
   if (!logoPath) return null;
@@ -99,6 +101,34 @@ async function loadKnowledgeBankDetails(enterpriseId: string): Promise<string> {
   return String(entry?.content ?? "").trim();
 }
 
+async function applySampleQuotationFallbacks(
+  enterpriseId: string,
+  branding: QuotationBranding
+): Promise<QuotationBranding> {
+  const snap = await db.collection("knowledge_base").where("enterprise_id", "==", enterpriseId).get();
+  const sample = snap.docs
+    .map((doc) => doc.data() as { title?: string; content?: string })
+    .find((item) => /sample.*(quotation|proforma)|(quotation|proforma).*sample/i.test(String(item.title ?? "")));
+  const content = String(sample?.content ?? "").trim();
+  if (!content) return branding;
+
+  const header = content.split(/\bClient\s*:/i)[0] ?? content;
+  const email = header.match(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/)?.[0];
+  const website = header.match(/(?:https?:\/\/|www\.)[a-z0-9.-]+\.[a-z]{2,}(?:\/\S*)?/i)?.[0];
+  const tin = header.match(/TIN\s*(?:NO)?\s*[:.-]?\s*([A-Z0-9-]+)/i)?.[1];
+  const preparedBy = content.match(/Prepared\s+By\s*[:.-]?\s*([^\n]+)/i)?.[1]?.trim();
+  const terms = content.match(/Terms\s*(?:&|and)\s*Conditions\s*([\s\S]*?)(?:Bank\s+Details|$)/i)?.[1]?.trim();
+
+  return {
+    ...branding,
+    tin: branding.tin || tin,
+    email: branding.email || email,
+    website: branding.website || website,
+    prepared_by: branding.prepared_by || preparedBy,
+    terms: branding.terms || terms,
+  };
+}
+
 export async function createQuotationPdf(opts: {
   enterpriseId: string;
   agentId: string;
@@ -115,7 +145,10 @@ export async function createQuotationPdf(opts: {
   source?: Record<string, unknown>;
   bankDetails?: string;
 }): Promise<CreatedQuotation> {
-  const branding = await loadQuotationBranding(opts.enterpriseId);
+  const branding = await applySampleQuotationFallbacks(
+    opts.enterpriseId,
+    await loadQuotationBranding(opts.enterpriseId)
+  );
   const currency = opts.currency || "UGX";
   const vatRate = opts.vatExempt ? 0 : opts.vatRate ?? branding.vat_rate ?? 18;
 
@@ -218,7 +251,7 @@ export function renderQuotationPdf(p: {
     const GRAY = "#666666";
     const DARK = "#111111";
 
-    const cur = (n: number) => `${currency} ${money(n)}`;
+    const cur = (n: number) => `${currency} ${money(n, currency)}`;
 
     // ------------------------------------------------------------------ Header
     const headerTop = 42;
@@ -258,9 +291,17 @@ export function renderQuotationPdf(p: {
 
     // ------------------------------------------------------------ Client block
     const labeled = (label: string, value: string | undefined, x: number, yy: number, w: number) => {
-      doc.font("Helvetica-Bold").fontSize(10).fillColor(DARK).text(`${label} `, x, yy, { continued: true, width: w });
-      doc.font("Helvetica").fillColor("#333333").text(value || "");
-      return doc.y;
+      const labelWidth = Math.min(92, w * 0.42);
+      const valueX = x + labelWidth;
+      const valueWidth = w - labelWidth;
+      doc.font("Helvetica-Bold").fontSize(10).fillColor(DARK).text(label, x, yy, { width: labelWidth });
+      doc.font("Helvetica").fillColor("#333333").text(value || "-", valueX, yy, { width: valueWidth });
+      const rowHeight = Math.max(
+        doc.heightOfString(label, { width: labelWidth }),
+        doc.heightOfString(value || "-", { width: valueWidth }),
+        12
+      );
+      return yy + rowHeight;
     };
     const colLy = y;
     let ly = labeled("Client :", client.name, LEFT, colLy, 260);

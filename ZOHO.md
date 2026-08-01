@@ -85,7 +85,7 @@ Full read/create/update/delete on every module:
 ## Official quotation documents (hybrid workflow)
 
 - The compound workflow creates or reuses the Lead, Account, Contact and Deal in Zoho, then generates the customer-facing PDF with Ellipse's deterministic quotation template.
-- Product lines resolve to exact Zoho `Products` records and use the CRM `Unit_Price` unless an approved rate was supplied. Ambiguity or missing price stops the workflow instead of guessing.
+- Product lines use an authoritative supplied Mercury catalogue price. Mercury USD prices include VAT; the backend converts at 3,800 UGX/USD, rounds the VAT-inclusive unit price up to the next UGX 1,000, derives the pre-VAT line rate, and adds 18% VAT in the PDF totals.
 - The PDF is saved to Ellipse Data with Lead/Account/Contact/Deal/workflow provenance and can be attached to Gmail, SMTP or Outlook replies.
 - Zoho Writer/mail-merge scopes and a Zoho Quotes mail-merge template are no longer required for quotation generation.
 - Owner setup is limited to Settings → Quotation branding, numbering, VAT, prepared-by and terms.

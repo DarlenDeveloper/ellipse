@@ -282,7 +282,7 @@ const T = {
   create_zoho_quotation: {
     name: "create_zoho_quotation",
     description:
-      "Create or reuse the customer Lead, Account, Contact and Deal in Zoho, resolve real Zoho Products and prices, then generate a consistently formatted PDF with the approved Ellipse quotation template and save it to Data. The complete hybrid workflow goes through approval.",
+      "Immediately create or reuse the customer Lead, Account and Contact, create a fresh Deal, convert authoritative Mercury USD VAT-inclusive prices to UGX, generate a consistently formatted PDF with the Ellipse quotation template, save it to Data and return it in chat. The completed action is audited without waiting for approval.",
     parameters: {
       type: "object",
       properties: {
@@ -306,6 +306,8 @@ const T = {
               product: { type: "string", description: "Exact Zoho Product name or SKU." },
               quantity: { type: "number" },
               rate: { type: "number", description: "Required unit price from the user or authoritative knowledge base." },
+              rateCurrency: { type: "string", description: "Currency of the source price. Mercury catalogue prices are USD." },
+              rateIncludesVat: { type: "boolean", description: "Mercury catalogue prices include 18% VAT; defaults to true." },
               description: { type: "string", description: "Optional quotation-line description; defaults to the Zoho Product description." },
             },
             required: ["product", "quantity", "rate"],
@@ -1017,24 +1019,47 @@ async function toolCreateZohoQuotation(enterpriseId: string, agentId: string, ar
       question: `What unit price should I use for ${productName}? I won't guess a price.`,
     });
   }
+  const usdToUgx = 3800;
+  const normalizedItems: Record<string, unknown>[] = (items as Record<string, unknown>[]).map((item) => {
+    const sourceRate = Number(item.rate);
+    const sourceCurrency = String(item.rateCurrency ?? "USD").trim().toUpperCase();
+    const includesVat = item.rateIncludesVat !== false;
+    const grossUgx = sourceCurrency === "USD"
+      ? Math.ceil((sourceRate * usdToUgx) / 1000) * 1000
+      : sourceRate;
+    const netUgx = includesVat ? grossUgx / 1.18 : grossUgx;
+    return {
+      ...item,
+      rate: netUgx,
+      rateCurrency: "UGX",
+      rateIncludesVat: false,
+      sourceRate,
+      sourceCurrency,
+      sourceIncludesVat: includesVat,
+      convertedGrossUgx: grossUgx,
+      exchangeRate: sourceCurrency === "USD" ? usdToUgx : undefined,
+    };
+  });
   const workflowKey = randomUUID();
   const params: Record<string, unknown> = {
     workflowKey,
     agentId,
     customer: { ...customer, name, email },
-    items,
+    items: normalizedItems,
+    currency: "UGX",
+    pricing: { usd_to_ugx: usdToUgx, usd_prices_include_vat: true, ugx_rounding: "ceiling_to_1000" },
   };
   const subject = String(args.subject ?? "").trim();
   const quoteDate = String(args.quoteDate ?? "").trim();
   const dealName = String(args.dealName ?? "").trim();
-  const currency = String(args.currency ?? "").trim();
+  const currency = "UGX";
   const preparedBy = String(args.preparedBy ?? "").trim();
   const bankDetails = String(args.bankDetails ?? "").trim();
   const connectionOwnerUid = String(args.connectionOwnerUid ?? "").trim();
   if (subject) params.subject = subject;
   if (quoteDate) params.quoteDate = quoteDate;
   if (dealName) params.dealName = dealName;
-  if (currency) params.currency = currency;
+  params.currency = currency;
   if (preparedBy) params.preparedBy = preparedBy;
   if (bankDetails) params.bankDetails = bankDetails;
   if (args.vatExempt === true) params.vatExempt = true;
@@ -1060,9 +1085,9 @@ async function toolCreateZohoQuotation(enterpriseId: string, agentId: string, ar
         contact_no: String(customer.phone ?? ""),
         email,
       },
-      items: (items as Record<string, unknown>[]).map((item) => ({
-        description: String(item.description ?? item.product ?? ""),
-        qty: Math.max(1, Number(item.quantity) || 1),
+      items: normalizedItems.map((item) => ({
+        description: String(item["description"] ?? item["product"] ?? ""),
+        qty: Math.max(1, Number(item["quantity"]) || 1),
         rate: Number(item.rate),
       })),
       currency: currency || "UGX",
@@ -1566,7 +1591,7 @@ function buildSystem(
     : "";
 
   const quotationRule = connected.has("zoho")
-    ? `\n\nOFFICIAL QUOTATION RULE: Use create_zoho_quotation for every new quotation. It immediately captures or reuses the Lead, Account and Contact, creates a FRESH Deal, creates a fresh PDF using Ellipse's fixed template, saves it to Data and returns it in chat; it does not wait for approval. Require a real customer name, valid email, company/account name, exact product description, quantity and unit price. Use a unit price from the authoritative company knowledge base when present; otherwise ask the user for it before calling the tool. Never guess a price. Also collect phone, location, TIN and prepared-by when available, but do not invent them. Every completed quotation is still written to the approvals collection as an executed audit record. When the tool returns executed with a real documentId, the file is ready to share.`
+    ? `\n\nOFFICIAL QUOTATION RULE: Use create_zoho_quotation for every new quotation. It immediately captures or reuses the Lead, Account and Contact, creates a FRESH Deal, creates a fresh PDF using Ellipse's fixed template, saves it to Data and returns it in chat; it does not wait for approval. Require a real customer name, valid email, company/account name, exact product description, quantity and unit price. Mercury catalogue prices are USD and already include 18% VAT: pass that USD number as rate with rateCurrency:'USD' and rateIncludesVat:true. The backend converts at USD 1 = UGX 3,800, rounds the VAT-inclusive UGX unit price UP to the next 1,000, removes 18% for the line rate, and adds 18% back in the quotation totals. Never do that arithmetic yourself and never guess a price. Use a unit price from the authoritative company knowledge base when present; otherwise ask the user for it before calling the tool. Also collect phone, location, TIN and prepared-by when available, but do not invent them. Every completed quotation is still written to the approvals collection as an executed audit record. When the tool returns executed with a real documentId, the file is ready to share.`
     : "";
 
   const connectedNames = [...connected].map((t) => CONNECTION_LABEL[t]).filter(Boolean);
