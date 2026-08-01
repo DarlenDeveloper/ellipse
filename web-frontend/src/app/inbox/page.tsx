@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Image from "next/image";
-import { collection, query, where, onSnapshot, doc, getDoc } from "firebase/firestore";
+import { collection, query, where, onSnapshot, doc, getDoc, Timestamp } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { DirectInbox, RefreshCircle } from "iconsax-react";
 import { db, functions } from "@/lib/firebase";
@@ -67,6 +67,49 @@ export default function InboxPage() {
   const [syncing, setSyncing] = useState(false);
   const [search, setSearch] = useState("");
   const [requestedConversation, setRequestedConversation] = useState<string | null>(null);
+  const [readAt, setReadAt] = useState<Record<string, Timestamp>>({});
+
+  // Restore the last inbox paint immediately; live Firestore listeners below
+  // replace it with authoritative data as soon as they respond.
+  useEffect(() => {
+    if (!user) return;
+    try {
+      const cached = JSON.parse(localStorage.getItem(`ellipse_inbox_${user.uid}`) ?? "null") as {
+        conversations?: (Omit<Conversation, "last_message_at"> & { last_message_at?: number })[];
+        readAt?: Record<string, number>;
+      } | null;
+      if (cached?.conversations) {
+        setConversations(cached.conversations.map((conversation) => ({
+          ...conversation,
+          last_message_at: conversation.last_message_at ? Timestamp.fromMillis(conversation.last_message_at) : undefined,
+        })));
+      }
+      if (cached?.readAt) {
+        setReadAt(Object.fromEntries(Object.entries(cached.readAt).map(([id, millis]) => [id, Timestamp.fromMillis(millis)])));
+      }
+    } catch {
+      localStorage.removeItem(`ellipse_inbox_${user.uid}`);
+    }
+  }, [user]);
+
+  const cacheInbox = useCallback((nextConversations: Conversation[], nextReadAt: Record<string, Timestamp>) => {
+    if (!user) return;
+    try {
+      localStorage.setItem(`ellipse_inbox_${user.uid}`, JSON.stringify({
+        conversations: nextConversations.map((conversation) => ({
+          ...conversation,
+          last_message_at: conversation.last_message_at?.toDate().getTime(),
+        })),
+        readAt: Object.fromEntries(Object.entries(nextReadAt).map(([id, timestamp]) => [id, timestamp.toDate().getTime()])),
+      }));
+    } catch {
+      // Storage can be unavailable in private/restricted browser contexts.
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (conversations.length || Object.keys(readAt).length) cacheInbox(conversations, readAt);
+  }, [conversations, readAt, cacheInbox]);
 
   useEffect(() => {
     setRequestedConversation(new URLSearchParams(window.location.search).get("conversation"));
@@ -99,11 +142,45 @@ export default function InboxPage() {
     });
   }, [enterpriseId, allowsRecord, requestedConversation]);
 
+  // Read receipts are private to the signed-in user.
+  useEffect(() => {
+    if (!user || !enterpriseId) return;
+    const q = query(collection(db, "conversation_reads"), where("user_id", "==", user.uid));
+    return onSnapshot(q, (snap) => {
+      const next: Record<string, Timestamp> = {};
+      snap.docs.forEach((item) => {
+        const data = item.data();
+        if (data.enterprise_id === enterpriseId && data.conversation_id && data.read_at) {
+          next[data.conversation_id as string] = data.read_at as Timestamp;
+        }
+      });
+      setReadAt((current) => ({ ...current, ...next }));
+    });
+  }, [user, enterpriseId]);
+
+  // Opening a conversation marks its current latest message as read.
+  useEffect(() => {
+    if (!selectedId || !user) return;
+    setReadAt((current) => ({ ...current, [selectedId]: Timestamp.now() }));
+    httpsCallable(functions, "markConversationRead")({ conversationId: selectedId }).catch((error) => {
+      console.error("Could not mark conversation as read", error);
+    });
+  }, [selectedId, user]);
+
   // Live messages for selected conversation
   useEffect(() => {
-    setMessages([]);
     setMessagesError(null);
     if (!selectedId || !enterpriseId) return;
+    try {
+      const cached = JSON.parse(localStorage.getItem(`ellipse_messages_${user?.uid}_${selectedId}`) ?? "[]") as
+        (Omit<Message, "timestamp"> & { timestamp?: number })[];
+      setMessages(cached.map((message) => ({
+        ...message,
+        timestamp: message.timestamp ? Timestamp.fromMillis(message.timestamp) : undefined,
+      })));
+    } catch {
+      setMessages([]);
+    }
     setMessagesLoading(true);
     const q = query(
       collection(db, "messages"),
@@ -116,6 +193,14 @@ export default function InboxPage() {
         const msgs = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Message, "id">) }));
         msgs.sort((a, b) => (a.timestamp?.toDate().getTime() ?? 0) - (b.timestamp?.toDate().getTime() ?? 0));
         setMessages(msgs);
+        try {
+          localStorage.setItem(`ellipse_messages_${user?.uid}_${selectedId}`, JSON.stringify(msgs.map((message) => ({
+            ...message,
+            timestamp: message.timestamp?.toDate().getTime(),
+          }))));
+        } catch {
+          // Ignore unavailable browser storage.
+        }
         setMessagesLoading(false);
       },
       (error) => {
@@ -124,7 +209,7 @@ export default function InboxPage() {
         setMessagesLoading(false);
       }
     );
-  }, [selectedId, enterpriseId]);
+  }, [selectedId, enterpriseId, user]);
 
   const sync = useCallback(async () => {
     if (!enterpriseId || syncing) return;
@@ -192,6 +277,9 @@ export default function InboxPage() {
             )}
             {filteredConversations.map((conv) => {
               const active = conv.id === selectedId;
+              const lastMessageMs = conv.last_message_at?.toDate().getTime() ?? 0;
+              const readMs = readAt[conv.id]?.toDate().getTime() ?? 0;
+              const unread = readMs < lastMessageMs;
               const ch = channelInfo(conv.channel);
               return (
                 <button
@@ -212,10 +300,13 @@ export default function InboxPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-semibold truncate">{conv.customer_ref}</span>
+                        <span className={cn("text-sm truncate", unread ? "font-bold text-gray-950" : "font-normal text-gray-600")}>{conv.customer_ref}</span>
                         <span className="text-xs text-gray-400 shrink-0">{fmtTime(conv.last_message_at)}</span>
                       </div>
-                      <p className="text-sm font-medium text-gray-800 truncate mt-0.5">{conv.subject}</p>
+                      <div className="flex items-center gap-2">
+                        <p className={cn("text-sm truncate mt-0.5", unread ? "font-semibold text-gray-900" : "font-normal text-gray-500")}>{conv.subject}</p>
+                        {unread && <span className="h-2 w-2 shrink-0 rounded-full bg-blue-600" aria-label="Unread" />}
+                      </div>
                     </div>
                   </div>
                 </button>

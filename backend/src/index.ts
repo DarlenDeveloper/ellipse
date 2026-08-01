@@ -789,6 +789,13 @@ export const updateCalendarEvent = onCall(async (request) => {
   return updateCalendarEvent(request.auth.uid, request.data ?? {});
 });
 
+/** Mark a conversation as read for the signed-in user. */
+export const markConversationRead = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const { markConversationRead } = await import("./inbox");
+  return markConversationRead(request.auth.uid, request.data ?? {});
+});
+
 /** Human-composed Inbox reply. It uses the universal gate just like agent replies. */
 export const sendReply = onCall(
   {

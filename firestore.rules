@@ -130,6 +130,13 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Per-user inbox read receipts (written by the callable only).
+    match /conversation_reads/{id} {
+      allow read: if signedIn() && resource.data.user_id == request.auth.uid
+        && resource.data.enterprise_id == myEid();
+      allow write: if false;
+    }
+
     // ---- Analytics events (workspace_id == enterprise) ----
     match /analytics_events/{id} {
       allow read: if isMember(resource.data.workspace_id);
