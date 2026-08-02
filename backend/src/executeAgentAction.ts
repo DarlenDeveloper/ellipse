@@ -9,6 +9,18 @@ import {
 } from "./types";
 import { notificationRecipients, notifyUsers } from "./notifications";
 
+function firestoreSafe<T>(value: T): T {
+  if (Array.isArray(value)) return value.map((item) => firestoreSafe(item)) as T;
+  if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, child]) => child !== undefined)
+        .map(([key, child]) => [key, firestoreSafe(child)])
+    ) as T;
+  }
+  return value;
+}
+
 /**
  * The single choke point for every agent action.
  *
@@ -28,6 +40,7 @@ export async function executeAgentAction(
   input: ExecuteAgentActionInput
 ): Promise<ExecuteAgentActionResult> {
   const { enterpriseId, agentId, domain, actionType, params, targetSystem, reasoning } = input;
+  const storedParams = firestoreSafe(params);
 
   // 1. Load enterprise
   const entRef = db.doc(`enterprises/${enterpriseId}`);
@@ -94,7 +107,7 @@ export async function executeAgentAction(
       agent_id: agentId,
       domain,
       action_type: actionType,
-      params,
+      params: storedParams,
       target_system: targetSystem,
       status: "pending",
       action_summary: reasoning,
@@ -122,7 +135,7 @@ export async function executeAgentAction(
     agent_id: agentId,
     domain,
     action_type: actionType,
-    params,
+    params: storedParams,
     target_system: targetSystem,
     status: "executed",
     action_summary: reasoning,
