@@ -61,7 +61,14 @@ export function PendingApprovals() {
       </div>
 
       {loading ? (
-        <p className="text-sm text-gray-400">Loading…</p>
+        <div className="space-y-5" aria-label="Loading pending approvals">
+          {[0, 1, 2, 3].map((item) => (
+            <div key={item} className="flex animate-pulse items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3"><span className="h-10 w-10 rounded-full bg-gray-100" /><span><span className="block h-4 w-28 rounded bg-gray-100" /><span className="mt-2 block h-3 w-36 rounded bg-gray-100" /></span></div>
+              <span className="h-8 w-20 rounded-full bg-gray-100" />
+            </div>
+          ))}
+        </div>
       ) : items.length === 0 ? (
         <p className="text-sm text-gray-400">No actions waiting for approval.</p>
       ) : (

@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import { useDashboardData } from "./DashboardData";
 
 export function QuickStats() {
-  const { data } = useDashboardData();
+  const { data, loading } = useDashboardData();
   const counts = data.counts;
 
   const stats = [
@@ -41,7 +41,11 @@ export function QuickStats() {
             >
               <stat.icon size={20} variant="Bold" color={stat.highlight ? "#ffffff" : "#1a1a1a"} />
             </div>
-            <span className="text-xl font-bold">{stat.value.toLocaleString()}</span>
+            {loading ? (
+              <span className={cn("h-6 w-14 animate-pulse rounded-md", stat.highlight ? "bg-white/20" : "bg-gray-200")} />
+            ) : (
+              <span className="text-xl font-bold">{stat.value.toLocaleString()}</span>
+            )}
             <span
               className={cn(
                 "text-[11px] mt-1 leading-tight",

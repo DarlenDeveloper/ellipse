@@ -71,7 +71,13 @@ export function RecentThreads() {
       </div>
 
       {loading ? (
-        <p className="text-sm text-gray-400 px-3 py-6">Loading…</p>
+        <div className="space-y-2" aria-label="Loading recent threads">
+          {[0, 1, 2, 3].map((row) => (
+            <div key={row} className="grid animate-pulse grid-cols-[1.6fr_1fr_1.2fr_0.8fr_1fr] items-center gap-4 px-3 py-3.5">
+              <span className="h-4 w-4/5 rounded bg-gray-100" /><span className="h-4 w-20 rounded bg-gray-100" /><span className="h-4 w-3/4 rounded bg-gray-100" /><span className="h-7 w-16 rounded-full bg-gray-100" /><span className="h-4 w-20 rounded bg-gray-100" />
+            </div>
+          ))}
+        </div>
       ) : threads.length === 0 ? (
         <p className="text-sm text-gray-400 px-3 py-6">No threads yet. Connect a channel to get started.</p>
       ) : (

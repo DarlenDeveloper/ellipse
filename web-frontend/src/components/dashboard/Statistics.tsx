@@ -35,7 +35,7 @@ function bucketLabel(key: string, g: Granularity): string {
 }
 
 export function Statistics() {
-  const { data: dashboard } = useDashboardData();
+  const { data: dashboard, loading } = useDashboardData();
   const [metric, setMetric] = useState<"messages" | "agentActions">("messages");
   const [gran, setGran] = useState<Granularity>("daily");
 
@@ -92,7 +92,13 @@ export function Statistics() {
         ))}
       </div>
 
-      {data.length === 0 ? (
+      {loading ? (
+        <div className="flex h-[240px] items-end gap-5 border-b border-gray-100 px-7 pb-1 pt-8" aria-label="Loading statistics">
+          {[28, 48, 34, 70, 52, 82, 64, 90, 58, 76, 42, 60].map((height, index) => (
+            <span key={index} className="flex-1 animate-pulse rounded-t-md bg-gray-100" style={{ height: `${height}%` }} />
+          ))}
+        </div>
+      ) : data.length === 0 ? (
         <p className="text-sm text-gray-400 py-20 text-center">No activity yet.</p>
       ) : (
         <ResponsiveContainer width="100%" height={240}>
