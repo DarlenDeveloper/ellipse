@@ -314,7 +314,7 @@ export default function TeamChatPage() {
                       </div>
                     </div>
                   )}
-                  <button type="button" onClick={() => setEmojiOpen((open) => !open)} className="mb-0.5 flex h-9 w-9 items-center justify-center rounded-full text-gray-500 hover:bg-white hover:text-violet-600" aria-label="Choose an emoji" aria-expanded={emojiOpen}><EmojiHappy size={21} variant="Linear" /></button>
+                  <button type="button" onClick={() => setEmojiOpen((open) => !open)} className="mb-0.5 flex h-9 w-9 items-center justify-center rounded-full text-gray-600 hover:bg-white hover:text-violet-600" aria-label="Choose an emoji" aria-expanded={emojiOpen}><EmojiHappy size={22} variant="Bold" /></button>
                 </div>
                 <textarea ref={draftRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setEmojiOpen(false); if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} rows={1} maxLength={5000} placeholder={`Message ${selectedName}`} className="max-h-32 flex-1 resize-none bg-transparent py-1.5 text-sm outline-none" />
                 <button type="button" onClick={send} disabled={!draft.trim() || sending || !selectedIsReady} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40"><Send2 size={18} variant="Bold" /></button>
