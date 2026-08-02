@@ -2,10 +2,11 @@ import { QuickStats } from "@/components/dashboard/QuickStats";
 import { Statistics } from "@/components/dashboard/Statistics";
 import { PendingApprovals } from "@/components/dashboard/PendingApprovals";
 import { RecentThreads } from "@/components/dashboard/RecentThreads";
+import { DashboardDataProvider } from "@/components/dashboard/DashboardData";
 
 export default function DashboardPage() {
   return (
-    <main className="p-7 space-y-6">
+    <DashboardDataProvider><main className="p-7 space-y-6">
       {/* Quick Stats */}
       <QuickStats />
 
@@ -17,6 +18,6 @@ export default function DashboardPage() {
 
       {/* Manage Threads Table */}
       <RecentThreads />
-    </main>
+    </main></DashboardDataProvider>
   );
 }

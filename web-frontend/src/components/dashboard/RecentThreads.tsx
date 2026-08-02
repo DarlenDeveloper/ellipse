@@ -1,13 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { ArrowRight2, Sms } from "iconsax-react";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { cn } from "@/lib/utils";
-import { db } from "@/lib/firebase";
-import { useAccess } from "@/lib/use-access";
+import { useDashboardData } from "./DashboardData";
 
 type Conversation = {
   id: string;
@@ -15,9 +12,7 @@ type Conversation = {
   customer_ref?: string;
   channel?: string;
   status?: string;
-  last_message_at?: { toDate: () => Date };
-  connection_scope?: string;
-  owner_uid?: string;
+  last_message_at?: string | null;
 };
 
 const channelLogo: Record<string, string> = {
@@ -40,9 +35,9 @@ const statusStyles: Record<string, string> = {
   closed: "bg-gray-100 text-gray-500",
 };
 
-function fmtDate(ts?: { toDate: () => Date }): string {
-  if (!ts?.toDate) return "";
-  return ts.toDate().toLocaleString(undefined, {
+function fmtDate(value?: string | null): string {
+  if (!value) return "";
+  return new Date(value).toLocaleString(undefined, {
     month: "short",
     day: "numeric",
     hour: "2-digit",
@@ -51,32 +46,8 @@ function fmtDate(ts?: { toDate: () => Date }): string {
 }
 
 export function RecentThreads() {
-  const { enterpriseId, isManager, allowsRecord } = useAccess();
-  const accessKey = `${isManager}`;
-  const [threads, setThreads] = useState<Conversation[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (!enterpriseId) return;
-    const unsub = onSnapshot(
-      query(collection(db, "conversations"), where("enterprise_id", "==", enterpriseId)),
-      (snap) => {
-        const rows = snap.docs
-          .map((d) => ({ id: d.id, ...(d.data() as Omit<Conversation, "id">) }))
-          .filter((c) => allowsRecord(c.channel ?? "", c.connection_scope, c.owner_uid))
-          .sort(
-            (a, b) =>
-              (b.last_message_at?.toDate?.().getTime() ?? 0) -
-              (a.last_message_at?.toDate?.().getTime() ?? 0)
-          )
-          .slice(0, 6);
-        setThreads(rows);
-        setLoading(false);
-      }
-    );
-    return () => unsub();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enterpriseId, accessKey]);
+  const { data, loading } = useDashboardData();
+  const threads = data.recentThreads as Conversation[];
 
   return (
     <div className="bg-white rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">

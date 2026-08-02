@@ -755,6 +755,14 @@ export const askAgent = onCall(
   }
 );
 
+/** Cached, authenticated home-dashboard payload. */
+export const getDashboardData = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const enterpriseId = request.data?.enterpriseId as string | undefined;
+  if (!enterpriseId) throw new HttpsError("invalid-argument", "Missing enterpriseId.");
+  return (await import("./dashboard")).getDashboardData(enterpriseId, request.auth.uid);
+});
+
 /** Extract structured task proposals from an inbox conversation. */
 export const extractConversationTasks = onCall({ secrets: [geminiKey] }, async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   BarChart,
   Bar,
@@ -10,19 +10,8 @@ import {
   ResponsiveContainer,
   Tooltip,
 } from "recharts";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { cn } from "@/lib/utils";
-import { db } from "@/lib/firebase";
-import { useAccess } from "@/lib/use-access";
-
-type Ev = { source?: string; channel?: string; payload?: { channel?: string }; timestamp?: { toDate: () => Date } };
-type Action = { status?: string; agent_id?: string; target_system?: string; created_at?: { toDate: () => Date } };
-
-// Map an agent_id / target_system to its connection type.
-function toType(agentId?: string, targetSystem?: string): string {
-  const base = (agentId?.replace(/-agent$/, "") || targetSystem || "").toLowerCase();
-  return base === "gmail" ? "google-workspace" : base;
-}
+import { useDashboardData } from "./DashboardData";
 
 type Granularity = "hourly" | "daily" | "weekly" | "monthly";
 const GRANS: { id: Granularity; label: string; keep: number }[] = [
@@ -31,21 +20,6 @@ const GRANS: { id: Granularity; label: string; keep: number }[] = [
   { id: "weekly", label: "Weekly", keep: 8 },
   { id: "monthly", label: "Monthly", keep: 8 },
 ];
-
-const pad = (n: number) => String(n).padStart(2, "0");
-
-// Sortable bucket key for a date at a given granularity.
-function bucketKey(d: Date, g: Granularity): string {
-  const y = d.getFullYear();
-  if (g === "hourly") return `${y}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}`;
-  if (g === "daily") return `${y}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  if (g === "weekly") {
-    const s = new Date(d);
-    s.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // Monday start
-    return `${s.getFullYear()}-${pad(s.getMonth() + 1)}-${pad(s.getDate())}`;
-  }
-  return `${y}-${pad(d.getMonth() + 1)}`; // monthly
-}
 
 function bucketLabel(key: string, g: Granularity): string {
   if (g === "hourly") {
@@ -61,52 +35,18 @@ function bucketLabel(key: string, g: Granularity): string {
 }
 
 export function Statistics() {
-  const { enterpriseId, isManager, allowsChannel, allowsType } = useAccess();
-  const [events, setEvents] = useState<Ev[]>([]);
-  const [actions, setActions] = useState<Action[]>([]);
+  const { data: dashboard } = useDashboardData();
   const [metric, setMetric] = useState<"messages" | "agentActions">("messages");
   const [gran, setGran] = useState<Granularity>("daily");
 
-  useEffect(() => {
-    if (!enterpriseId) return;
-    const unsubs: (() => void)[] = [];
-    unsubs.push(
-      onSnapshot(
-        query(collection(db, "analytics_events"), where("workspace_id", "==", enterpriseId)),
-        (snap) => setEvents(snap.docs.map((d) => d.data() as Ev))
-      )
-    );
-    unsubs.push(
-      onSnapshot(
-        query(collection(db, "pending_actions"), where("enterprise_id", "==", enterpriseId)),
-        (snap) => setActions(snap.docs.map((d) => d.data() as Action))
-      )
-    );
-    return () => unsubs.forEach((u) => u());
-  }, [enterpriseId]);
-
   const data = useMemo(() => {
     const keep = GRANS.find((g) => g.id === gran)!.keep;
-    const buckets: Record<string, { messages: number; agentActions: number }> = {};
-    for (const e of events) {
-      if (e.source !== "message") continue;
-      const ch = e.payload?.channel ?? e.channel;
-      if (!(isManager || !ch || allowsChannel(ch))) continue;
-      const d = e.timestamp?.toDate?.();
-      if (!d) continue;
-      (buckets[bucketKey(d, gran)] ??= { messages: 0, agentActions: 0 }).messages++;
-    }
-    for (const a of actions) {
-      if (!(isManager || allowsType(toType(a.agent_id, a.target_system)))) continue;
-      const d = a.created_at?.toDate?.();
-      if (!d) continue;
-      (buckets[bucketKey(d, gran)] ??= { messages: 0, agentActions: 0 }).agentActions++;
-    }
+    const buckets = dashboard.charts[gran] ?? {};
     return Object.keys(buckets)
       .sort()
       .slice(-keep)
       .map((k) => ({ label: bucketLabel(k, gran), ...buckets[k] }));
-  }, [events, actions, gran, isManager, allowsChannel, allowsType]);
+  }, [dashboard.charts, gran]);
 
   return (
     <div className="bg-white rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">

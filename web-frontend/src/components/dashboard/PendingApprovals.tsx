@@ -1,12 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Cpu, ArrowRight2 } from "iconsax-react";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import { useAccess } from "@/lib/use-access";
+import { useDashboardData } from "./DashboardData";
 
 type PendingAction = {
   id: string;
@@ -14,14 +11,8 @@ type PendingAction = {
   target_system?: string;
   action_type?: string;
   status?: string;
-  created_at?: { toDate: () => Date };
-  params?: Record<string, unknown>;
+  created_at?: string | null;
 };
-
-function toType(agentId?: string, targetSystem?: string): string {
-  const base = ((agentId?.startsWith("human-") ? targetSystem : agentId?.replace(/-agent$/, "")) || targetSystem || "").toLowerCase();
-  return base === "gmail" ? "google-workspace" : base;
-}
 
 // agent_id → connection logo.
 const agentLogos: Record<string, string> = {
@@ -46,9 +37,9 @@ function actionLabel(actionType?: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-function formatDate(ts?: { toDate: () => Date }): string {
-  if (!ts?.toDate) return "";
-  return ts.toDate().toLocaleString(undefined, {
+function formatDate(value?: string | null): string {
+  if (!value) return "";
+  return new Date(value).toLocaleString(undefined, {
     month: "short",
     day: "numeric",
     hour: "2-digit",
@@ -57,28 +48,8 @@ function formatDate(ts?: { toDate: () => Date }): string {
 }
 
 export function PendingApprovals() {
-  const { enterpriseId, isManager, allowsRecord } = useAccess();
-  const accessKey = `${isManager}`;
-  const [items, setItems] = useState<PendingAction[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (!enterpriseId) return;
-    const q = query(collection(db, "pending_actions"), where("enterprise_id", "==", enterpriseId));
-    const unsub = onSnapshot(q, (snap) => {
-      const rows = snap.docs
-        .map((d) => ({ id: d.id, ...(d.data() as Omit<PendingAction, "id">) }))
-        .filter((r) => r.status === "pending")
-        .filter((r) => isManager || allowsRecord(toType(r.agent_id, r.target_system), r.params?.connectionOwnerUid ? "personal" : "org", r.params?.connectionOwnerUid as string | undefined))
-        .sort(
-          (a, b) => (b.created_at?.toDate?.().getTime() ?? 0) - (a.created_at?.toDate?.().getTime() ?? 0)
-        );
-      setItems(rows);
-      setLoading(false);
-    });
-    return () => unsub();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enterpriseId, accessKey]);
+  const { data, loading } = useDashboardData();
+  const items = data.pendingApprovals as PendingAction[];
 
   return (
     <div className="bg-white rounded-3xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">

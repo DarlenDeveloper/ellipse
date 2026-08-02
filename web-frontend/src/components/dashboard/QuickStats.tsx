@@ -1,96 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { Messages2, Hierarchy, Routing, Clock, Cpu, Data } from "iconsax-react";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
 import { cn } from "@/lib/utils";
-import { db } from "@/lib/firebase";
-import { useAccess } from "@/lib/use-access";
-
-// pending_actions.target_system uses "gmail"; connection/channel type is "google-workspace".
-const TARGET_TO_TYPE: Record<string, string> = { gmail: "google-workspace" };
-const asType = (t?: string) => (t ? TARGET_TO_TYPE[t] ?? t : "");
+import { useDashboardData } from "./DashboardData";
 
 export function QuickStats() {
-  const { enterpriseId, isManager, allowsType, allowsChannel, allowsRecord } = useAccess();
-  const accessKey = `${isManager}|${["google-workspace", "smtp", "microsoft365", "whatsapp", "zoho", "website", "mercury"]
-    .filter((t) => allowsType(t))
-    .join(",")}`;
-  const [counts, setCounts] = useState({
-    messages: 0,
-    channels: 0,
-    threads: 0,
-    pending: 0,
-    agents: 0,
-    records: 0,
-  });
-
-  useEffect(() => {
-    if (!enterpriseId) return;
-    const unsubs: (() => void)[] = [];
-
-    unsubs.push(
-      onSnapshot(
-        query(collection(db, "analytics_events"), where("workspace_id", "==", enterpriseId)),
-        (snap) => {
-          let messages = 0;
-          let records = 0;
-          snap.docs.forEach((d) => {
-            const data = d.data();
-            const s = data.source;
-            if (s === "message") {
-              const ch = (data.payload as { channel?: string } | undefined)?.channel ?? data.channel;
-              if (isManager || !ch || allowsChannel(ch as string)) messages++;
-            } else if (s === "zoho_record") {
-              if (allowsType("zoho")) records++;
-            }
-          });
-          setCounts((c) => ({ ...c, messages, records }));
-        }
-      )
-    );
-
-    unsubs.push(
-      onSnapshot(
-        query(collection(db, "connections"), where("enterprise_id", "==", enterpriseId)),
-        (snap) => {
-          const active = snap.docs.filter(
-            (d) => d.data().status === "active" && allowsType(d.data().type as string)
-          ).length;
-          setCounts((c) => ({ ...c, channels: active, agents: active }));
-        }
-      )
-    );
-
-    unsubs.push(
-      onSnapshot(
-        query(collection(db, "conversations"), where("enterprise_id", "==", enterpriseId)),
-        (snap) => {
-          const open = snap.docs.filter(
-            (d) => d.data().status === "open" && allowsRecord(d.data().channel as string, d.data().connection_scope, d.data().owner_uid)
-          ).length;
-          setCounts((c) => ({ ...c, threads: open }));
-        }
-      )
-    );
-
-    unsubs.push(
-      onSnapshot(
-        query(collection(db, "pending_actions"), where("enterprise_id", "==", enterpriseId)),
-        (snap) => {
-          const pending = snap.docs.filter((d) => {
-            const a = d.data();
-            if (a.status !== "pending") return false;
-            return isManager || allowsType(asType(a.target_system as string));
-          }).length;
-          setCounts((c) => ({ ...c, pending }));
-        }
-      )
-    );
-
-    return () => unsubs.forEach((u) => u());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enterpriseId, accessKey]);
+  const { data } = useDashboardData();
+  const counts = data.counts;
 
   const stats = [
     { icon: Messages2, value: counts.messages, label: "Messages" },
