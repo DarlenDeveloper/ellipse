@@ -79,6 +79,7 @@ export default function TeamChatPage() {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [pendingChat, setPendingChat] = useState<Chat | null>(null);
+  const [pendingChatReady, setPendingChatReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -139,10 +140,15 @@ export default function TeamChatPage() {
   }, [user, enterpriseId]);
 
   useEffect(() => {
-    if (pendingChat && directChats.some((chat) => chat.id === pendingChat.id)) setPendingChat(null);
+    if (pendingChat && directChats.some((chat) => chat.id === pendingChat.id)) {
+      setPendingChat(null);
+      setPendingChatReady(false);
+    }
   }, [directChats, pendingChat]);
 
-  const selectedIsReady = selectedId === groupChat?.id || directChats.some((chat) => chat.id === selectedId);
+  const selectedIsReady = selectedId === groupChat?.id
+    || directChats.some((chat) => chat.id === selectedId)
+    || (pendingChat?.id === selectedId && pendingChatReady);
 
   useEffect(() => {
     setMessages([]);
@@ -187,12 +193,15 @@ export default function TeamChatPage() {
       participant_names: { [user.uid]: user.displayName || user.email || "You", [member.id]: memberName(member) },
       participant_emails: { [user.uid]: user.email || "", [member.id]: member.email || "" },
     });
+    setPendingChatReady(false);
     setSelectedId(chatId);
     setError(null);
     try {
       await httpsCallable(functions, "startInternalChat")({ targetUid: member.id });
+      setPendingChatReady(true);
     } catch (cause) {
       setPendingChat(null);
+      setPendingChatReady(false);
       setSelectedId(null);
       setError((cause as Error).message || "The direct chat could not be opened.");
     }
