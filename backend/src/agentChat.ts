@@ -1629,7 +1629,7 @@ function buildSystem(
     : "";
 
   const quotationRule = connected.has("zoho")
-    ? `\n\nOFFICIAL QUOTATION RULE: FIRST, before any catalogue search or tool call, inspect the user's product wording. If it is broad (for example "Lenovo Core i5 laptop" or "MacBook Air") and does not identify one exact model, ask the user for the exact model/code and relevant RAM, storage and screen specification. Do not search, shortlist, select, recommend or assume a product on the user's behalf. Only after the user explicitly names an exact model, use create_zoho_quotation. It immediately captures or reuses the Lead, Account and Contact, creates a FRESH Deal, creates a fresh PDF using Ellipse's fixed template, saves it to Data and returns it in chat; it does not wait for approval. Require a real customer name, valid email, company/account name, exact product description, quantity and unit price. Mercury catalogue prices are USD and already include 18% VAT: pass that USD number as rate with rateCurrency:'USD' and rateIncludesVat:true. The backend converts at USD 1 = UGX 3,800, rounds the VAT-inclusive UGX unit price UP to the next 1,000, removes 18% for the line rate, and adds 18% back in the quotation totals. Never do that arithmetic yourself and never guess a price. Use a unit price from the authoritative company knowledge base when present; otherwise ask the user for it before calling the tool. Also collect phone, location, TIN and prepared-by when available, but do not invent them. Every completed quotation is written as an executed audit record. When the tool returns executed with a real documentId, the file is ready to share.`
+    ? `\n\nOFFICIAL QUOTATION RULE: For a broad product request, search the Mercury catalogue and present matching exact models with their USD prices, then WAIT for the user to select one. Never select, recommend, substitute or create a quotation from search results on the user's behalf. Only after the user explicitly selects or names one exact model may you use create_zoho_quotation. It immediately captures or reuses the Lead, Account and Contact, creates a FRESH Deal, creates a fresh PDF using Ellipse's fixed template, saves it to Data and returns it in chat; it does not wait for approval. Require a real customer name, valid email, company/account name, exact product description, quantity and unit price. Mercury catalogue prices are USD and already include 18% VAT: pass that USD number as rate with rateCurrency:'USD' and rateIncludesVat:true. The backend converts at USD 1 = UGX 3,800, rounds the VAT-inclusive UGX unit price UP to the next 1,000, removes 18% for the line rate, and adds 18% back in the quotation totals. Never do that arithmetic yourself and never guess a price. Also collect phone, location, TIN and prepared-by when available, but do not invent them. Every completed quotation is written as an executed audit record. When the tool returns executed with a real documentId, the file is ready to share.`
     : "";
 
   const connectedNames = [...connected].map((t) => CONNECTION_LABEL[t]).filter(Boolean);
@@ -1696,12 +1696,16 @@ function deterministicActionReply(actions: ChatAction[], files: { name: string; 
   return [...new Set(lines.filter(Boolean))].join(" ") || fallback;
 }
 
-function exactProductQuestion(message: string): string | null {
-  if (!/\b(quotation|quote|proforma)\b/i.test(message)) return null;
+function quotationProductSearchQuery(message: string, history: ChatTurn[]): string | null {
+  const quotationRequest = /\b(quotation|quote|proforma)\b/i.test(message);
+  const awaitingProduct = history.slice(-2).some((turn) =>
+    turn.role === "ivy" && /\b(which exact model|exact model|model name\/code)\b/i.test(turn.text)
+  );
+  if (!quotationRequest && !awaitingProduct) return null;
   if (!/\b(laptop|computer|macbook|iphone|phone|desktop|monitor|printer|tablet|server)\b/i.test(message)) return null;
 
   const hasExactModel =
-    /\bmacbook\s+(?:air|pro)\b[^\n]{0,45}\bm[1-9]\b/i.test(message) ||
+    /\bmacbook\s+(?:air|pro)\b[^\n]{0,70}\bm[1-9]\b[^\n]{0,70}\b\d+\s*gb\b/i.test(message) ||
     /\biphone\s+\d{2}\b/i.test(message) ||
     /\bgalaxy\s+[a-z]\d{2}\b/i.test(message) ||
     /\b(?:thinkpad|ideapad|yoga|legion|loq)\s+[a-z0-9][a-z0-9-]{1,}\b/i.test(message) ||
@@ -1710,9 +1714,14 @@ function exactProductQuestion(message: string): string | null {
     /\b[A-Z]{2,6}-?\d{3,}[A-Z0-9-]*\b/.test(message);
   if (hasExactModel) return null;
 
-  const productPhrase = message.match(/\b(?:for|of)\s+(.+?)(?:\s+for\s+\d+|\s+for\s+[A-Z]|[,.]|$)/i)?.[1]?.trim();
-  const subject = productPhrase || "that product";
-  return `Which exact model should I quote for ${subject}? Please provide or select the model name/code and key specification such as RAM, storage and screen size. I won't search and choose one for you.`;
+  const productPhrase = quotationRequest
+    ? message.match(/\b(?:for|of)\s+(.+?)(?:\s+for\s+\d+|\s+for\s+[A-Z]|[,.]|$)/i)?.[1]?.trim()
+    : message.trim();
+  return (productPhrase || message)
+    .replace(/^(?:the|a|an)\s+/i, "")
+    .replace(/\b(?:please|pls)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export async function chatWithAgent(
@@ -1722,8 +1731,7 @@ export async function chatWithAgent(
   history: ChatTurn[] = [],
   callerUid?: string
 ): Promise<{ reply: string; actions: unknown[]; files: { name: string; url: string; type: string }[] }> {
-  const productQuestion = exactProductQuestion(message);
-  if (productQuestion) return { reply: productQuestion, actions: [], files: [] };
+  const productSearchQuery = quotationProductSearchQuery(message, history);
 
   const entSnap = await db.doc(`enterprises/${enterpriseId}`).get();
   const orgName = (entSnap.data()?.name as string) || "your company";
@@ -1759,6 +1767,57 @@ export async function chatWithAgent(
       actions: [],
       files: [],
     };
+  }
+
+  if (productSearchQuery) {
+    if (!connected.has("mercury")) {
+      return {
+        reply: `Which exact ${productSearchQuery} model should I quote? Please provide the model/code, RAM, storage and screen size.`,
+        actions: [],
+        files: [],
+      };
+    }
+    try {
+      const { listAllResource } = await import("./connections/mercury");
+      const { items } = await listAllResource(enterpriseId, "products", { q: productSearchQuery }, 1000);
+      const queryTerms = productSearchQuery.toLowerCase().replace(/[^a-z0-9]+/g, " ").split(" ")
+        .filter((term) => term.length > 1 && !["laptop", "computer", "the", "with"].includes(term));
+      const matches = items
+        .map((item: any) => {
+          const name = String(item.name ?? item.productName ?? item.title ?? "").trim();
+          const normalizedName = name.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+          const score = queryTerms.filter((term) => normalizedName.includes(term)).length;
+          return { item, name, score };
+        })
+        .filter((match: any) => match.name && match.score === queryTerms.length)
+        .sort((a: any, b: any) => b.score - a.score || a.name.localeCompare(b.name))
+        .slice(0, 5);
+      if (!matches.length) {
+        return {
+          reply: `I couldn't find an exact catalogue match for ${productSearchQuery}. Please provide the precise model/code and specifications; I won't substitute another product.`,
+          actions: [],
+          files: [],
+        };
+      }
+      const options = matches.map((match: any, index: number) => {
+        const usd = Number(match.item.priceUsd);
+        const price = usd > 0
+          ? ` - USD ${usd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (VAT included)`
+          : "";
+        return `${index + 1}. ${match.name}${price}`;
+      });
+      return {
+        reply: `I found these matching models:\n\n${options.join("\n")}\n\nWhich exact model should I use? I will wait for your selection and won't choose one automatically.`,
+        actions: [],
+        files: [],
+      };
+    } catch {
+      return {
+        reply: `I couldn't search the product catalogue right now. Please provide the exact ${productSearchQuery} model/code and specifications; I won't choose a substitute.`,
+        actions: [],
+        files: [],
+      };
+    }
   }
 
   const kb = await loadKnowledgeBase(enterpriseId);
