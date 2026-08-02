@@ -532,12 +532,14 @@ async function runTool(
   allowedConnections: Set<string>,
   callerUid?: string,
   personalZohoOwnerUid?: string,
-  requiresEmailAttachment = false
+  requiresEmailAttachment = false,
+  currentUserMessage = "",
+  recentConversation = ""
 ): Promise<string> {
   if (personalZohoOwnerUid && ZOHO_TOOL_NAMES.has(name)) {
     const { withZohoConnectionOwner } = await import("./connections/zoho");
     return withZohoConnectionOwner(personalZohoOwnerUid, () =>
-      runTool(enterpriseId, agentId, name, { ...args, connectionOwnerUid: personalZohoOwnerUid }, isOwner, allowedConnections, callerUid, undefined, requiresEmailAttachment)
+      runTool(enterpriseId, agentId, name, { ...args, connectionOwnerUid: personalZohoOwnerUid }, isOwner, allowedConnections, callerUid, undefined, requiresEmailAttachment, currentUserMessage, recentConversation)
     );
   }
   switch (name) {
@@ -574,7 +576,7 @@ async function runTool(
     case "create_quotation":
       return toolCreateQuotation(enterpriseId, agentId, args);
     case "create_zoho_quotation":
-      return toolCreateZohoQuotation(enterpriseId, agentId, args);
+      return toolCreateZohoQuotation(enterpriseId, agentId, args, currentUserMessage, recentConversation);
     case "find_zoho_quotation":
       return toolFindZohoQuotation(enterpriseId, args);
     case "send_email":
@@ -994,7 +996,17 @@ async function toolCreateQuotation(enterpriseId: string, agentId: string, args: 
   }
 }
 
-async function toolCreateZohoQuotation(enterpriseId: string, agentId: string, args: Record<string, unknown>) {
+async function toolCreateZohoQuotation(
+  enterpriseId: string,
+  agentId: string,
+  args: Record<string, unknown>,
+  currentUserMessage: string,
+  recentConversation: string
+) {
+  const normalizeText = (value: unknown) => String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
   const customer = (args.customer as Record<string, unknown> | undefined) ?? {};
   const items = Array.isArray(args.items) ? args.items : [];
   const email = String(customer.email ?? "").trim().toLowerCase();
@@ -1002,7 +1014,11 @@ async function toolCreateZohoQuotation(enterpriseId: string, agentId: string, ar
   const placeholderName = /^(customer|client|unknown|n\/?a|test|user)$/i.test(name);
   const placeholderEmail = /@(example\.(com|org|net)|test\.com)$/i.test(email) || /^(customer|client|test)@/i.test(email);
   if (!name || placeholderName || !/.+@.+\..+/.test(email) || placeholderEmail) {
-    return JSON.stringify({ error: "A real customer name and email are required before an official quotation can be queued. No action was created." });
+    return JSON.stringify({
+      needsInput: true,
+      missingField: "customer_details",
+      question: "What are the customer's full name, company name and email address?",
+    });
   }
   if (!items.length) return JSON.stringify({ error: "At least one quotation item is required." });
   const invalidItem = (items as Record<string, unknown>[]).find((item) =>
@@ -1017,6 +1033,28 @@ async function toolCreateZohoQuotation(enterpriseId: string, agentId: string, ar
       missingField: "unit_price",
       product: productName,
       question: `What unit price should I use for ${productName}? I won't guess a price.`,
+    });
+  }
+  const normalizedCurrent = normalizeText(currentUserMessage);
+  const normalizedContext = normalizeText(recentConversation);
+  const selectedListedOption = /\b(first|second|third|fourth|fifth|option\s*[1-5]|number\s*[1-5])\b/i.test(currentUserMessage);
+  const unconfirmedItem = (items as Record<string, unknown>[]).find((item) => {
+    const product = String(item.product ?? item.description ?? "").trim();
+    const normalizedProduct = normalizeText(product);
+    const hasSpecificModelDetails = /\b\d+\s*(gb|tb)\b/i.test(product)
+      || /\b(?:m[1-9]|iphone\s*\d+|thinkpad\s+[a-z0-9-]+|ideapad\s+[a-z0-9-]+|latitude\s+\d+|probook\s+\d+|elitebook\s+\d+)\b/i.test(product)
+      || /\b[A-Z]{1,5}-?\d{2,}[A-Z0-9-]*\b/.test(product);
+    const explicitlyNamed = normalizedProduct.length > 0 && normalizedCurrent.includes(normalizedProduct);
+    const selectedFromListedOptions = selectedListedOption && normalizedProduct.length > 0 && normalizedContext.includes(normalizedProduct);
+    return !hasSpecificModelDetails || (!explicitlyNamed && !selectedFromListedOptions);
+  });
+  if (unconfirmedItem) {
+    const requested = String(unconfirmedItem.product ?? unconfirmedItem.description ?? "the requested product").trim();
+    return JSON.stringify({
+      needsInput: true,
+      missingField: "exact_product_confirmation",
+      product: requested,
+      question: `I found multiple possible products for ${requested}. Which exact model should I quote?`,
     });
   }
   const usdToUgx = 3800;
@@ -1591,7 +1629,7 @@ function buildSystem(
     : "";
 
   const quotationRule = connected.has("zoho")
-    ? `\n\nOFFICIAL QUOTATION RULE: Use create_zoho_quotation for every new quotation. It immediately captures or reuses the Lead, Account and Contact, creates a FRESH Deal, creates a fresh PDF using Ellipse's fixed template, saves it to Data and returns it in chat; it does not wait for approval. Require a real customer name, valid email, company/account name, exact product description, quantity and unit price. Mercury catalogue prices are USD and already include 18% VAT: pass that USD number as rate with rateCurrency:'USD' and rateIncludesVat:true. The backend converts at USD 1 = UGX 3,800, rounds the VAT-inclusive UGX unit price UP to the next 1,000, removes 18% for the line rate, and adds 18% back in the quotation totals. Never do that arithmetic yourself and never guess a price. Use a unit price from the authoritative company knowledge base when present; otherwise ask the user for it before calling the tool. Also collect phone, location, TIN and prepared-by when available, but do not invent them. Every completed quotation is still written to the approvals collection as an executed audit record. When the tool returns executed with a real documentId, the file is ready to share.`
+    ? `\n\nOFFICIAL QUOTATION RULE: FIRST, before any catalogue search or tool call, inspect the user's product wording. If it is broad (for example "Lenovo Core i5 laptop" or "MacBook Air") and does not identify one exact model, ask the user for the exact model/code and relevant RAM, storage and screen specification. Do not search, shortlist, select, recommend or assume a product on the user's behalf. Only after the user explicitly names an exact model, use create_zoho_quotation. It immediately captures or reuses the Lead, Account and Contact, creates a FRESH Deal, creates a fresh PDF using Ellipse's fixed template, saves it to Data and returns it in chat; it does not wait for approval. Require a real customer name, valid email, company/account name, exact product description, quantity and unit price. Mercury catalogue prices are USD and already include 18% VAT: pass that USD number as rate with rateCurrency:'USD' and rateIncludesVat:true. The backend converts at USD 1 = UGX 3,800, rounds the VAT-inclusive UGX unit price UP to the next 1,000, removes 18% for the line rate, and adds 18% back in the quotation totals. Never do that arithmetic yourself and never guess a price. Use a unit price from the authoritative company knowledge base when present; otherwise ask the user for it before calling the tool. Also collect phone, location, TIN and prepared-by when available, but do not invent them. Every completed quotation is written as an executed audit record. When the tool returns executed with a real documentId, the file is ready to share.`
     : "";
 
   const connectedNames = [...connected].map((t) => CONNECTION_LABEL[t]).filter(Boolean);
@@ -1641,7 +1679,7 @@ function deterministicActionReply(actions: ChatAction[], files: { name: string; 
       lines.push(`Created ${data.name || "the quotation PDF"} and saved it to Data.`);
     } else if (action.name === "create_zoho_quotation") {
       if (data.status === "pending") lines.push(`CRM capture and quotation creation are pending approval (action ${data.pendingActionId}). The PDF does not exist yet.`);
-      else if (data.status === "executed") lines.push("The Lead/Deal workflow completed and its quotation PDF was saved to Data.");
+      else if (data.status === "executed") lines.push("The quotation was created and saved to Data.");
       else lines.push(`CRM capture and quotation creation were not completed${data.reason ? `: ${data.reason}` : "."}`);
     } else if (action.name === "send_email") {
       const attachment = data.attached ? ` with ${data.attached} attached` : " without an attachment";
@@ -1658,6 +1696,25 @@ function deterministicActionReply(actions: ChatAction[], files: { name: string; 
   return [...new Set(lines.filter(Boolean))].join(" ") || fallback;
 }
 
+function exactProductQuestion(message: string): string | null {
+  if (!/\b(quotation|quote|proforma)\b/i.test(message)) return null;
+  if (!/\b(laptop|computer|macbook|iphone|phone|desktop|monitor|printer|tablet|server)\b/i.test(message)) return null;
+
+  const hasExactModel =
+    /\bmacbook\s+(?:air|pro)\b[^\n]{0,45}\bm[1-9]\b/i.test(message) ||
+    /\biphone\s+\d{2}\b/i.test(message) ||
+    /\bgalaxy\s+[a-z]\d{2}\b/i.test(message) ||
+    /\b(?:thinkpad|ideapad|yoga|legion|loq)\s+[a-z0-9][a-z0-9-]{1,}\b/i.test(message) ||
+    /\b(?:elitebook|probook|pavilion|omen)\s+\d{3,}\b/i.test(message) ||
+    /\b(?:latitude|inspiron|vostro|precision|xps)\s+\d{3,}\b/i.test(message) ||
+    /\b[A-Z]{2,6}-?\d{3,}[A-Z0-9-]*\b/.test(message);
+  if (hasExactModel) return null;
+
+  const productPhrase = message.match(/\b(?:for|of)\s+(.+?)(?:\s+for\s+\d+|\s+for\s+[A-Z]|[,.]|$)/i)?.[1]?.trim();
+  const subject = productPhrase || "that product";
+  return `Which exact model should I quote for ${subject}? Please provide or select the model name/code and key specification such as RAM, storage and screen size. I won't search and choose one for you.`;
+}
+
 export async function chatWithAgent(
   enterpriseId: string,
   agentId: string,
@@ -1665,6 +1722,9 @@ export async function chatWithAgent(
   history: ChatTurn[] = [],
   callerUid?: string
 ): Promise<{ reply: string; actions: unknown[]; files: { name: string; url: string; type: string }[] }> {
+  const productQuestion = exactProductQuestion(message);
+  if (productQuestion) return { reply: productQuestion, actions: [], files: [] };
+
   const entSnap = await db.doc(`enterprises/${enterpriseId}`).get();
   const orgName = (entSnap.data()?.name as string) || "your company";
 
@@ -1753,7 +1813,7 @@ export async function chatWithAgent(
         seenCalls.add(signature);
         if (MUTATING_TOOLS.has(call.name)) attemptedMutations.add(call.name);
         try {
-          out = await runTool(enterpriseId, agentId, call.name, call.args, isOwner, connected, callerUid, personalZohoOwnerUid, requiresEmailAttachment);
+          out = await runTool(enterpriseId, agentId, call.name, call.args, isOwner, connected, callerUid, personalZohoOwnerUid, requiresEmailAttachment, message, convo);
         } catch (e) {
           logger.error("chat tool failed", { enterpriseId, agentId, tool: call.name, error: (e as Error).message });
           out = JSON.stringify({ error: `The ${call.name.replace(/_/g, " ")} action could not be completed. Nothing was queued or sent.` });

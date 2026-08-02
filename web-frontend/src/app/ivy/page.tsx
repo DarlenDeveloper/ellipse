@@ -491,13 +491,16 @@ function ActionReceipt({ action }: { action: ChatAction }) {
     failed = true;
     status = "unverified";
   }
+  const actionLabel = action.name === "create_zoho_quotation"
+    ? "Create quotation"
+    : action.name.replace(/_/g, " ");
   return (
     <div className={cn(
       "flex items-center gap-2 rounded-xl border px-3 py-2 text-[11px] font-semibold",
       failed ? "border-red-100 bg-red-50 text-red-700" : status === "pending" ? "border-amber-100 bg-amber-50 text-amber-700" : "border-emerald-100 bg-emerald-50 text-emerald-700"
     )}>
       <TickCircle size={14} variant={failed ? "Linear" : "Bold"} color="currentColor" />
-      <span className="capitalize">{action.name.replace(/_/g, " ")} · {status}</span>
+      <span className="capitalize">{actionLabel} · {status}</span>
       {actionId && <span className="ml-auto max-w-28 truncate font-normal opacity-70" title={actionId}>{actionId}</span>}
     </div>
   );
