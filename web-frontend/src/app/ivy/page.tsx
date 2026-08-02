@@ -279,7 +279,7 @@ export default function IvyPage() {
         </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="mr-14 flex items-center gap-2">
           <button
             onClick={newChat}
             className="flex items-center gap-2 bg-black text-white text-sm font-semibold rounded-full px-4 py-2 hover:bg-gray-800"
