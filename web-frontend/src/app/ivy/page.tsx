@@ -26,7 +26,7 @@ import {
 import { httpsCallable } from "firebase/functions";
 import { db, functions } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
-import { useEnterpriseId } from "@/lib/use-enterprise";
+import { useAccess } from "@/lib/use-access";
 import { IvyOrb } from "@/components/ivy/IvyOrb";
 import { FileCard, stripFileUrls, type ChatFile } from "@/components/ivy/FileCard";
 import { cn } from "@/lib/utils";
@@ -89,7 +89,7 @@ function groupChats(chats: ChatSummary[]): { label: string; items: ChatSummary[]
 
 export default function IvyPage() {
   const { user } = useAuth();
-  const { enterpriseId } = useEnterpriseId();
+  const { enterpriseId, isManager, grantedTypes } = useAccess();
 
   const [connTypes, setConnTypes] = useState<string[]>([]);
   const [customAgents, setCustomAgents] = useState<{ id: string; name: string }[]>([]);
@@ -108,12 +108,16 @@ export default function IvyPage() {
     const unsubConn = onSnapshot(
       query(collection(db, "connections"), where("enterprise_id", "==", enterpriseId)),
       (snap) => {
-        setConnTypes(
+        const visibleTypes = new Set(
           snap.docs
-            .map((d) => d.data() as { type: string; status: string })
+            .map((d) => d.data() as { type: string; status: string; scope?: string; owner_uid?: string })
             .filter((c) => c.status === "active" && CONNECTION_AGENTS[c.type])
+            .filter((c) => c.scope === "personal"
+              ? !isManager && c.owner_uid === user?.uid
+              : isManager || grantedTypes.has(c.type))
             .map((c) => c.type)
         );
+        setConnTypes([...visibleTypes]);
       }
     );
     const unsubCustom = onSnapshot(
@@ -124,7 +128,7 @@ export default function IvyPage() {
       unsubConn();
       unsubCustom();
     };
-  }, [enterpriseId]);
+  }, [enterpriseId, grantedTypes, isManager, user?.uid]);
 
   const agents: AgentOption[] = useMemo(
     () => [
