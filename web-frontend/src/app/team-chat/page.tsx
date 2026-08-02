@@ -11,7 +11,7 @@ import {
   where,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
-import { People, SearchNormal1, Send2, User } from "iconsax-react";
+import { EmojiHappy, People, SearchNormal1, Send2, User } from "iconsax-react";
 import { db, functions } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 import { useAccess } from "@/lib/use-access";
@@ -48,6 +48,15 @@ type ChatMessage = {
 };
 
 const avatarClasses = ["bg-violet-100 text-violet-700", "bg-blue-100 text-blue-700", "bg-emerald-100 text-emerald-700", "bg-amber-100 text-amber-700", "bg-pink-100 text-pink-700"];
+const CHAT_EMOJIS = [
+  "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣",
+  "😊", "😇", "🙂", "🙃", "😉", "😍", "🥰", "😘",
+  "😋", "😎", "🤩", "🥳", "😏", "😢", "😭", "😤",
+  "😡", "🤔", "🤗", "🤭", "🫡", "😴", "🙏", "👏",
+  "👍", "👎", "👌", "✌️", "🤝", "💪", "🙌", "👀",
+  "❤️", "🧡", "💛", "💚", "💙", "💜", "🤍", "💯",
+  "🔥", "✨", "🎉", "🎊", "✅", "⭐", "🚀", "💡",
+];
 
 function memberName(member?: Member | null) {
   return member?.display_name || member?.email || "Member";
@@ -80,12 +89,23 @@ export default function TeamChatPage() {
   const [sending, setSending] = useState(false);
   const [pendingChat, setPendingChat] = useState<Chat | null>(null);
   const [pendingChatReady, setPendingChatReady] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const draftRef = useRef<HTMLTextAreaElement>(null);
+  const emojiRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("chat");
     if (requested) setSelectedId(requested);
+  }, []);
+
+  useEffect(() => {
+    const closePicker = (event: MouseEvent) => {
+      if (emojiRef.current && !emojiRef.current.contains(event.target as Node)) setEmojiOpen(false);
+    };
+    document.addEventListener("mousedown", closePicker);
+    return () => document.removeEventListener("mousedown", closePicker);
   }, []);
 
   useEffect(() => {
@@ -210,7 +230,7 @@ export default function TeamChatPage() {
   const send = async () => {
     const text = draft.trim();
     if (!selectedId || !text || sending || !selectedIsReady) return;
-    setSending(true); setError(null); setDraft("");
+    setSending(true); setError(null); setDraft(""); setEmojiOpen(false);
     try {
       await httpsCallable(functions, "sendInternalMessage")({ chatId: selectedId, text });
     } catch (cause) {
@@ -219,6 +239,18 @@ export default function TeamChatPage() {
     } finally {
       setSending(false);
     }
+  };
+
+  const insertEmoji = (emoji: string) => {
+    const input = draftRef.current;
+    const start = input?.selectionStart ?? draft.length;
+    const end = input?.selectionEnd ?? start;
+    setDraft(`${draft.slice(0, start)}${emoji}${draft.slice(end)}`);
+    requestAnimationFrame(() => {
+      input?.focus();
+      const cursor = start + emoji.length;
+      input?.setSelectionRange(cursor, cursor);
+    });
   };
 
   if (accessLoading) return <div className="flex h-screen items-center justify-center text-sm text-gray-400">Opening Team Chat…</div>;
@@ -272,8 +304,19 @@ export default function TeamChatPage() {
             </div>
             <div className="border-t border-gray-100 bg-white p-4">
               {error && <p className="mb-2 text-xs text-red-600">{error}</p>}
-              <div className="flex items-end gap-3 rounded-2xl bg-gray-50 px-4 py-2.5 ring-purple-100 focus-within:ring-4">
-                <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} rows={1} maxLength={5000} placeholder={`Message ${selectedName}`} className="max-h-32 flex-1 resize-none bg-transparent py-1.5 text-sm outline-none" />
+              <div className="relative flex items-end gap-2 rounded-2xl bg-gray-50 px-3 py-2.5 ring-purple-100 focus-within:ring-4">
+                <div ref={emojiRef} className="relative shrink-0">
+                  {emojiOpen && (
+                    <div className="absolute bottom-12 left-0 z-30 w-[320px] rounded-2xl border border-gray-100 bg-white p-3 shadow-[0_16px_45px_rgba(17,24,39,0.18)]">
+                      <p className="mb-2 px-1 text-xs font-semibold text-gray-500">Emojis</p>
+                      <div className="grid max-h-52 grid-cols-8 gap-1 overflow-y-auto">
+                        {CHAT_EMOJIS.map((emoji) => <button key={emoji} type="button" onClick={() => insertEmoji(emoji)} className="flex h-8 w-8 items-center justify-center rounded-lg text-xl hover:bg-gray-100" aria-label={`Insert ${emoji}`}>{emoji}</button>)}
+                      </div>
+                    </div>
+                  )}
+                  <button type="button" onClick={() => setEmojiOpen((open) => !open)} className="mb-0.5 flex h-9 w-9 items-center justify-center rounded-full text-gray-500 hover:bg-white hover:text-violet-600" aria-label="Choose an emoji" aria-expanded={emojiOpen}><EmojiHappy size={21} variant="Linear" /></button>
+                </div>
+                <textarea ref={draftRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setEmojiOpen(false); if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} rows={1} maxLength={5000} placeholder={`Message ${selectedName}`} className="max-h-32 flex-1 resize-none bg-transparent py-1.5 text-sm outline-none" />
                 <button type="button" onClick={send} disabled={!draft.trim() || sending || !selectedIsReady} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40"><Send2 size={18} variant="Bold" /></button>
               </div>
             </div>
