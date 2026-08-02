@@ -576,7 +576,7 @@ async function runTool(
     case "create_quotation":
       return toolCreateQuotation(enterpriseId, agentId, args);
     case "create_zoho_quotation":
-      return toolCreateZohoQuotation(enterpriseId, agentId, args, currentUserMessage, recentConversation);
+      return toolCreateZohoQuotation(enterpriseId, agentId, args, currentUserMessage, recentConversation, callerUid);
     case "find_zoho_quotation":
       return toolFindZohoQuotation(enterpriseId, args);
     case "send_email":
@@ -1001,7 +1001,8 @@ async function toolCreateZohoQuotation(
   agentId: string,
   args: Record<string, unknown>,
   currentUserMessage: string,
-  recentConversation: string
+  recentConversation: string,
+  callerUid?: string
 ) {
   const normalizeText = (value: unknown) => String(value ?? "")
     .toLowerCase()
@@ -1091,7 +1092,18 @@ async function toolCreateZohoQuotation(
   const quoteDate = String(args.quoteDate ?? "").trim();
   const dealName = String(args.dealName ?? "").trim();
   const currency = "UGX";
-  const preparedBy = String(args.preparedBy ?? "").trim();
+  let preparedBy = "";
+  if (callerUid) {
+    const requester = await db.collection("users").doc(callerUid).get();
+    const displayName = String(requester.data()?.display_name ?? "").trim();
+    const nameParts = displayName.split(/\s+/).filter(Boolean);
+    if (nameParts.length === 1) preparedBy = nameParts[0];
+    if (nameParts.length > 1) preparedBy = `${nameParts[0]} ${nameParts[nameParts.length - 1]}`;
+  }
+  // Older/system-created requests may not have an authenticated caller. Keep
+  // their explicit value as a fallback, but never let the model override the
+  // signed-in user's name.
+  if (!preparedBy) preparedBy = String(args.preparedBy ?? "").trim();
   const bankDetails = String(args.bankDetails ?? "").trim();
   const connectionOwnerUid = String(args.connectionOwnerUid ?? "").trim();
   if (subject) params.subject = subject;
