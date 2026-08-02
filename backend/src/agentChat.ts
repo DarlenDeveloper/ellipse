@@ -239,7 +239,7 @@ const T = {
     name: "create_quotation",
     description:
       "Generate a branded proforma-invoice / quotation PDF and save it to the workspace Data page. " +
-      "The company letterhead (logo, name, TIN, address, VAT rate, terms, prepared-by) comes from the org's saved quotation branding — do NOT invent those. " +
+      "The company letterhead (logo, name, TIN, address, VAT rate and terms) comes from the org's saved quotation branding — do NOT invent those. " +
       "You provide the client details and the line items. Amounts, subtotal, VAT and total are computed automatically — never state or pre-compute them yourself. " +
       "For each item pass its unit price as `rate` and quantity as `qty`. When items refer to store products, look up their real price first with store_list (q search). " +
       "Set vatExempt:true only if the user says the quote is VAT/withholding exempt.",
@@ -273,7 +273,6 @@ const T = {
         },
         currency: { type: "string", description: "Currency code, default UGX." },
         vatExempt: { type: "boolean", description: "True if VAT/withholding exempt (VAT becomes 0)." },
-        preparedBy: { type: "string", description: "Name of the preparer (defaults to the branding setting)." },
         title: { type: "string", description: "Optional document title." },
       },
       required: ["client", "items"],
@@ -318,7 +317,6 @@ const T = {
         dealName: { type: "string", description: "Optional Zoho Deal name; defaults to '<company> - Quotation'." },
         currency: { type: "string", description: "Currency code; defaults to UGX." },
         vatExempt: { type: "boolean", description: "Set only when the user confirms VAT exemption." },
-        preparedBy: { type: "string", description: "Person preparing the quotation; defaults to quotation settings." },
         bankDetails: { type: "string", description: "Optional bank details; normally loaded automatically from the 'Bank Details' knowledge-base entry." },
       },
       required: ["customer", "items"],
@@ -1100,10 +1098,6 @@ async function toolCreateZohoQuotation(
     if (nameParts.length === 1) preparedBy = nameParts[0];
     if (nameParts.length > 1) preparedBy = `${nameParts[0]} ${nameParts[nameParts.length - 1]}`;
   }
-  // Older/system-created requests may not have an authenticated caller. Keep
-  // their explicit value as a fallback, but never let the model override the
-  // signed-in user's name.
-  if (!preparedBy) preparedBy = String(args.preparedBy ?? "").trim();
   const bankDetails = String(args.bankDetails ?? "").trim();
   const connectionOwnerUid = String(args.connectionOwnerUid ?? "").trim();
   if (subject) params.subject = subject;
@@ -1641,7 +1635,7 @@ function buildSystem(
     : "";
 
   const quotationRule = connected.has("zoho")
-    ? `\n\nOFFICIAL QUOTATION RULE: For a broad product request, search the Mercury catalogue and present matching exact models with their USD prices, then WAIT for the user to select one. Never select, recommend, substitute or create a quotation from search results on the user's behalf. Only after the user explicitly selects or names one exact model may you use create_zoho_quotation. It immediately captures or reuses the Lead, Account and Contact, creates a FRESH Deal, creates a fresh PDF using Ellipse's fixed template, saves it to Data and returns it in chat; it does not wait for approval. Require a real customer name, valid email, company/account name, exact product description, quantity and unit price. Mercury catalogue prices are USD and already include 18% VAT: pass that USD number as rate with rateCurrency:'USD' and rateIncludesVat:true. The backend converts at USD 1 = UGX 3,800, rounds the VAT-inclusive UGX unit price UP to the next 1,000, removes 18% for the line rate, and adds 18% back in the quotation totals. Never do that arithmetic yourself and never guess a price. Also collect phone, location, TIN and prepared-by when available, but do not invent them. Every completed quotation is written as an executed audit record. When the tool returns executed with a real documentId, the file is ready to share.`
+    ? `\n\nOFFICIAL QUOTATION RULE: For a broad product request, search the Mercury catalogue and present matching exact models with their USD prices, then WAIT for the user to select one. Never select, recommend, substitute or create a quotation from search results on the user's behalf. Only after the user explicitly selects or names one exact model may you use create_zoho_quotation. It immediately captures or reuses the Lead, Account and Contact, creates a FRESH Deal, creates a fresh PDF using Ellipse's fixed template, saves it to Data and returns it in chat; it does not wait for approval. Require a real customer name, valid email, company/account name, exact product description, quantity and unit price. Mercury catalogue prices are USD and already include 18% VAT: pass that USD number as rate with rateCurrency:'USD' and rateIncludesVat:true. The backend converts at USD 1 = UGX 3,800, rounds the VAT-inclusive UGX unit price UP to the next 1,000, removes 18% for the line rate, and adds 18% back in the quotation totals. Never do that arithmetic yourself and never guess a price. Also collect phone, location and TIN when available, but do not invent them. Prepared By is always derived from the signed-in user. Every completed quotation is written as an executed audit record. When the tool returns executed with a real documentId, the file is ready to share.`
     : "";
 
   const connectedNames = [...connected].map((t) => CONNECTION_LABEL[t]).filter(Boolean);

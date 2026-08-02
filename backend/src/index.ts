@@ -1245,7 +1245,7 @@ export const ingestKnowledgeFile = onCall(
  * Save the org's quotation / proforma branding (letterhead). Owner-only.
  * Accepts company details + optional logo (base64). Used by the quotation PDF generator.
  * data: { enterpriseId, company_name, tin, address, phones, email, website,
- *         prepared_by, vat_rate, review_link, terms, proforma_prefix, proforma_start?,
+ *         vat_rate, review_link, terms, proforma_prefix, proforma_start?,
  *         logoBase64?, logoType?, logoName? }
  */
 export const saveQuotationBranding = onCall(async (request) => {
@@ -1275,7 +1275,6 @@ export const saveQuotationBranding = onCall(async (request) => {
     "phones",
     "email",
     "website",
-    "prepared_by",
     "review_link",
     "terms",
     "proforma_prefix",

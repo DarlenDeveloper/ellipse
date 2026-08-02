@@ -16,7 +16,6 @@ type Branding = {
   phones?: string;
   email?: string;
   website?: string;
-  prepared_by?: string;
   vat_rate?: number;
   review_link?: string;
   terms?: string;
@@ -93,7 +92,6 @@ export function QuotationSettings() {
         phones: form.phones ?? "",
         email: form.email ?? "",
         website: form.website ?? "",
-        prepared_by: form.prepared_by ?? "",
         vat_rate: form.vat_rate ?? 18,
         review_link: form.review_link ?? "",
         terms: form.terms ?? "",
@@ -207,10 +205,6 @@ export function QuotationSettings() {
           <div>
             <label className="text-xs font-medium text-gray-500 block mb-1">VAT rate (%)</label>
             <input value={form.vat_rate ?? ""} onChange={(e) => set("vat_rate", e.target.value)} disabled={disabled} className={inputClass} placeholder="18" inputMode="numeric" />
-          </div>
-          <div className="md:col-span-3">
-            <label className="text-xs font-medium text-gray-500 block mb-1">Prepared by (default)</label>
-            <input value={form.prepared_by ?? ""} onChange={(e) => set("prepared_by", e.target.value)} disabled={disabled} className={inputClass} placeholder="EVELYN .N MUGISHA" />
           </div>
           <div className="md:col-span-3">
             <label className="text-xs font-medium text-gray-500 block mb-1">Review link</label>

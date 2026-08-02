@@ -20,7 +20,6 @@ export type QuotationBranding = {
   phones?: string;
   email?: string;
   website?: string;
-  prepared_by?: string;
   vat_rate?: number; // percent, e.g. 18
   review_link?: string;
   terms?: string; // newline-separated
@@ -72,6 +71,41 @@ const money = (n: number, currency: string) =>
     ? { minimumFractionDigits: 0, maximumFractionDigits: 0 }
     : { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+export function normalizeQuotationTerms(value: string): string[] {
+  const lines = value.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const normalized: string[] = [];
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/^[-*]\s*/, "").trim();
+    const misplacedPayment = line.match(/^After\s+LPO\s*-\s*(Payment\s*:.*)$/i);
+    if (misplacedPayment && normalized.length && /Delivery\s+Period/i.test(normalized[normalized.length - 1])) {
+      normalized[normalized.length - 1] = `${normalized[normalized.length - 1]} - After LPO`;
+      normalized.push(misplacedPayment[1]);
+    } else {
+      normalized.push(line);
+    }
+  }
+  return normalized.map((line) => `- ${line}`);
+}
+
+export function splitBankDetails(value: string): { ugx: string[]; usd: string[] } {
+  const sections: { ugx: string[]; usd: string[] } = { ugx: [], usd: [] };
+  let currency: keyof typeof sections = "ugx";
+  for (const rawLine of value.split(/\n+/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (/bank\s+details.*usd|usd.*bank\s+details/i.test(line)) {
+      currency = "usd";
+      continue;
+    }
+    if (/bank\s+details.*ugx|ugx.*bank\s+details/i.test(line)) {
+      currency = "ugx";
+      continue;
+    }
+    sections[currency].push(line.replace(/^[-*]\s*/, ""));
+  }
+  return sections;
+}
+
 async function loadLogoBuffer(logoPath?: string): Promise<Buffer | null> {
   if (!logoPath) return null;
   try {
@@ -116,7 +150,6 @@ async function applySampleQuotationFallbacks(
   const email = header.match(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/)?.[0];
   const website = header.match(/(?:https?:\/\/|www\.)[a-z0-9.-]+\.[a-z]{2,}(?:\/\S*)?/i)?.[0];
   const tin = header.match(/TIN\s*(?:NO)?\s*[:.-]?\s*([A-Z0-9-]+)/i)?.[1];
-  const preparedBy = content.match(/Prepared\s+By\s*[:.-]?\s*([^\n]+)/i)?.[1]?.trim();
   const terms = content.match(/Terms\s*(?:&|and)\s*Conditions\s*([\s\S]*?)(?:Bank\s+Details|$)/i)?.[1]?.trim();
 
   return {
@@ -124,7 +157,6 @@ async function applySampleQuotationFallbacks(
     tin: branding.tin || tin,
     email: branding.email || email,
     website: branding.website || website,
-    prepared_by: branding.prepared_by || preparedBy,
     terms: branding.terms || terms,
   };
 }
@@ -179,7 +211,7 @@ export async function createQuotationPdf(opts: {
     total,
     proformaNo,
     dateStr,
-    preparedBy: opts.preparedBy || branding.prepared_by || "",
+    preparedBy: opts.preparedBy || "",
     logoBuf,
     vatExempt: !!opts.vatExempt || vatRate === 0,
     bankDetails,
@@ -365,37 +397,57 @@ export function renderQuotationPdf(p: {
     y += 34;
 
     // --------------------------------------------------------------- Footer
+    // Keep this block together. If the item table is long, place the complete
+    // review/terms/banking section on a fresh page instead of splitting it.
+    if (y > 555) {
+      doc.addPage();
+      y = 48;
+    }
     if (branding.review_link) {
       doc.font("Helvetica").fontSize(10).fillColor("#333333").text("Please leave a rating/review on", LEFT, y, { width: 300 });
-      doc.fillColor("#1a56db").fontSize(9).text(branding.review_link, LEFT, doc.y + 4, { width: 300, link: branding.review_link, underline: true });
+      doc.fillColor("#1a56db").fontSize(9).text(branding.review_link, LEFT, y + 28, { width: 300, link: branding.review_link, underline: true });
     }
     if (p.preparedBy) {
-      doc.font("Helvetica-Bold").fontSize(11).fillColor(DARK).text("Prepared By:", rX, y, { width: RIGHT - rX });
-      doc.font("Helvetica").fontSize(10).fillColor("#333333").text(p.preparedBy, rX, doc.y + 2, { width: RIGHT - rX });
+      doc.font("Helvetica-Bold").fontSize(13).fillColor(DARK).text("Prepared By:", rX, y, { width: RIGHT - rX, align: "center" });
+      doc.font("Helvetica").fontSize(10).fillColor("#333333").text(p.preparedBy, rX, y + 20, { width: RIGHT - rX, align: "center" });
     }
 
     // Terms & Conditions
-    const termsY = Math.max(doc.y, y) + 24;
+    const termsY = y + (branding.review_link ? 62 : 10);
+    let termsBottom = termsY;
     if (branding.terms) {
       doc.font("Helvetica-Bold").fontSize(13).fillColor(DARK).text("Terms & Conditions", LEFT, termsY);
       doc.font("Helvetica").fontSize(9).fillColor("#333333");
-      for (const line of branding.terms.split(/\n+/).filter(Boolean)) {
-        doc.text(line.startsWith("-") ? line : `- ${line}`, LEFT, doc.y + 3, { width: RIGHT - LEFT });
+      let lineY = termsY + 20;
+      for (const line of normalizeQuotationTerms(branding.terms)) {
+        doc.text(line, LEFT, lineY, { width: RIGHT - LEFT });
+        lineY += doc.heightOfString(line, { width: RIGHT - LEFT }) + 3;
       }
+      termsBottom = lineY;
     }
-    let footerY = doc.y + 18;
+
+    let footerY = Math.max(termsBottom, y + 48) + 22;
     if (p.bankDetails) {
-      if (footerY > 675) {
-        doc.addPage();
-        footerY = 48;
+      doc.moveTo(LEFT + 24, footerY).lineTo(RIGHT - 24, footerY).lineWidth(1).strokeColor("#777777").stroke();
+      footerY += 26;
+      const bank = splitBankDetails(p.bankDetails);
+      const bankColumns: Array<{ heading: string; lines: string[]; x: number }> = [
+        { heading: "BANK DETAILS (UGX)", lines: bank.ugx, x: LEFT },
+        { heading: "BANK DETAILS (USD)", lines: bank.usd, x: 320 },
+      ];
+      let bankBottom = footerY;
+      for (const column of bankColumns) {
+        if (!column.lines.length) continue;
+        doc.font("Helvetica-Bold").fontSize(11).fillColor(DARK).text(column.heading, column.x, footerY, { width: 235 });
+        let bankY = footerY + 20;
+        for (const line of column.lines) {
+          doc.font("Helvetica").fontSize(9).fillColor("#222222").text(line, column.x, bankY, { width: 235 });
+          bankY += doc.heightOfString(line, { width: 235 }) + 3;
+        }
+        bankBottom = Math.max(bankBottom, bankY);
       }
-      doc.font("Helvetica-Bold").fontSize(13).fillColor(DARK).text("Bank Details", LEFT, footerY);
-      doc.font("Helvetica").fontSize(9).fillColor("#333333");
-      for (const line of p.bankDetails.split(/\n+/).map((value) => value.trim()).filter(Boolean)) {
-        doc.text(line, LEFT, doc.y + 3, { width: RIGHT - LEFT });
-      }
+      doc.moveTo(LEFT + 24, bankBottom + 14).lineTo(RIGHT - 24, bankBottom + 14).lineWidth(1).strokeColor("#777777").stroke();
     }
-    doc.moveTo(LEFT, doc.y + 16).lineTo(RIGHT, doc.y + 16).lineWidth(1).strokeColor("#111111").stroke();
 
     doc.end();
   });
