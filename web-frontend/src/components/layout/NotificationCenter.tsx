@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { collection, doc, onSnapshot, query, serverTimestamp, updateDoc, where, type Timestamp } from "firebase/firestore";
+import { collection, doc, limit, onSnapshot, orderBy, query, serverTimestamp, updateDoc, where, type Timestamp } from "firebase/firestore";
 import { Notification, TickCircle } from "iconsax-react";
 import { useRouter } from "next/navigation";
 import { db } from "@/lib/firebase";
@@ -34,10 +34,9 @@ export function NotificationCenter() {
 
   useEffect(() => {
     if (!user) return;
-    return onSnapshot(query(collection(db, "notifications"), where("recipient_uid", "==", user.uid)), (snapshot) => {
+    return onSnapshot(query(collection(db, "notifications"), where("recipient_uid", "==", user.uid), orderBy("created_at", "desc"), limit(30)), (snapshot) => {
       setNotices(snapshot.docs.map((item) => ({ id: item.id, ...(item.data() as Omit<Notice, "id">) }))
-        .sort((a, b) => (b.created_at?.toMillis() ?? 0) - (a.created_at?.toMillis() ?? 0))
-        .slice(0, 30));
+        .sort((a, b) => (b.created_at?.toMillis() ?? 0) - (a.created_at?.toMillis() ?? 0)));
     });
   }, [user]);
 

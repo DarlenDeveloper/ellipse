@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Add, Flag, Calendar1, DirectInbox, CloseCircle } from "iconsax-react";
-import { collection, doc, getDoc, onSnapshot, query, where } from "firebase/firestore";
+import { collection, doc, getDoc, limit, onSnapshot, orderBy, query, where } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { db, functions } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
@@ -72,7 +72,7 @@ export default function TasksPage() {
       setMembers(snap.docs.map((item) => ({ id: item.id, name: item.data().display_name || item.data().email || "Member", email: item.data().email || "" })));
     });
     if (isManager) {
-      const unsub = onSnapshot(query(collection(db, "tasks"), where("enterprise_id", "==", enterpriseId)), (snap) => {
+      const unsub = onSnapshot(query(collection(db, "tasks"), where("enterprise_id", "==", enterpriseId), orderBy("created_at", "desc"), limit(100)), (snap) => {
         setTasks(mergeTasks(snap.docs.map((item) => ({ id: item.id, ...(item.data() as Omit<Task, "id">) }))));
       }, () => setError("Tasks could not be loaded."));
       return () => { unsub(); unsubMembers(); };
@@ -80,10 +80,10 @@ export default function TasksPage() {
     let assigned: Task[] = [];
     let created: Task[] = [];
     const refresh = () => setTasks(mergeTasks(assigned, created));
-    const unsubAssigned = onSnapshot(query(collection(db, "tasks"), where("enterprise_id", "==", enterpriseId), where("assignee_uid", "==", user.uid)), (snap) => {
+    const unsubAssigned = onSnapshot(query(collection(db, "tasks"), where("enterprise_id", "==", enterpriseId), where("assignee_uid", "==", user.uid), orderBy("created_at", "desc"), limit(100)), (snap) => {
       assigned = snap.docs.map((item) => ({ id: item.id, ...(item.data() as Omit<Task, "id">) })); refresh();
     });
-    const unsubCreated = onSnapshot(query(collection(db, "tasks"), where("enterprise_id", "==", enterpriseId), where("created_by_uid", "==", user.uid)), (snap) => {
+    const unsubCreated = onSnapshot(query(collection(db, "tasks"), where("enterprise_id", "==", enterpriseId), where("created_by_uid", "==", user.uid), orderBy("created_at", "desc"), limit(100)), (snap) => {
       created = snap.docs.map((item) => ({ id: item.id, ...(item.data() as Omit<Task, "id">) })); refresh();
     });
     return () => { unsubAssigned(); unsubCreated(); unsubMembers(); };

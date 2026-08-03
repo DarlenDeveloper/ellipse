@@ -147,7 +147,11 @@ function duePeriods(todayStart: Date, timeZone: string): Period[] {
 type Metrics = Record<string, number>;
 
 async function gatherMessaging(enterpriseId: string, channel: string, w: Window) {
-  const snap = await db.collection("messages").where("enterprise_id", "==", enterpriseId).get();
+  const snap = await db.collection("messages")
+    .where("enterprise_id", "==", enterpriseId)
+    .where("timestamp", ">=", w.start)
+    .where("timestamp", "<", w.end)
+    .get();
   const inWindow = snap.docs
     .map((d) => d.data() as Record<string, unknown>)
     .filter((m) => m.channel === channel)
@@ -173,7 +177,11 @@ async function gatherMessaging(enterpriseId: string, channel: string, w: Window)
 }
 
 async function gatherActions(enterpriseId: string, agentId: string, w: Window) {
-  const snap = await db.collection("pending_actions").where("enterprise_id", "==", enterpriseId).get();
+  const snap = await db.collection("pending_actions")
+    .where("enterprise_id", "==", enterpriseId)
+    .where("created_at", ">=", w.start)
+    .where("created_at", "<", w.end)
+    .get();
   const rows = snap.docs
     .map((d) => d.data() as Record<string, unknown>)
     .filter((a) => a.agent_id === agentId || a.target_system === agentId)
@@ -189,7 +197,11 @@ async function gatherActions(enterpriseId: string, agentId: string, w: Window) {
 }
 
 async function gatherLeads(enterpriseId: string, w: Window, channel?: string): Promise<LeadRow[]> {
-  const snap = await db.collection("conversations").where("enterprise_id", "==", enterpriseId).get();
+  const snap = await db.collection("conversations")
+    .where("enterprise_id", "==", enterpriseId)
+    .where("last_message_at", ">=", w.start)
+    .where("last_message_at", "<", w.end)
+    .get();
   return snap.docs
     .map((d) => d.data() as Record<string, unknown>)
     .filter((c) => (c.triage as { is_lead?: boolean } | undefined)?.is_lead === true)
@@ -212,7 +224,11 @@ function fmtCaptured(d?: Date): string {
 }
 
 async function gatherWeb(enterpriseId: string, w: Window) {
-  const snap = await db.collection("analytics_events").where("workspace_id", "==", enterpriseId).get();
+  const snap = await db.collection("analytics_events")
+    .where("workspace_id", "==", enterpriseId)
+    .where("timestamp", ">=", w.start)
+    .where("timestamp", "<", w.end)
+    .get();
   const events = snap.docs
     .map((d) => d.data() as Record<string, unknown>)
     .filter((e) => e.source === "web")

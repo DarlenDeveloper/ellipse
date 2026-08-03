@@ -8,6 +8,8 @@ import {
   query,
   where,
   onSnapshot,
+  orderBy,
+  limit,
   doc,
   getDoc,
   deleteDoc,
@@ -93,7 +95,7 @@ export default function AgentsPage() {
       );
 
       unsubAct = onSnapshot(
-        query(collection(db, "pending_actions"), where("enterprise_id", "==", eid)),
+        query(collection(db, "pending_actions"), where("enterprise_id", "==", eid), orderBy("created_at", "desc"), limit(200)),
         (snap) => setActions(snap.docs.map((d) => d.data() as Action))
       );
 

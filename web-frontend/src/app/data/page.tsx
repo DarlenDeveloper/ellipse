@@ -11,7 +11,7 @@ import {
   CloseCircle,
   DocumentDownload,
 } from "iconsax-react";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { collection, query, where, onSnapshot, orderBy, limit } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { db, functions } from "@/lib/firebase";
 import { useAccess } from "@/lib/use-access";
@@ -84,11 +84,12 @@ export default function DataPage() {
   const [period, setPeriod] = useState<Period | "all">("all");
   const [selected, setSelected] = useState<Report | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     if (!enterpriseId) return;
     const unsubReports = onSnapshot(
-      query(collection(db, "reports"), where("enterprise_id", "==", enterpriseId)),
+      query(collection(db, "reports"), where("enterprise_id", "==", enterpriseId), orderBy("period_start", "desc"), limit(60)),
       (snap) => {
         const rows = snap.docs
           .map((d) => ({ id: d.id, ...(d.data() as Omit<Report, "id">) }))
@@ -106,7 +107,7 @@ export default function DataPage() {
     );
     // Agent-created documents surface here too, as their own "document" entries.
     const unsubDocs = onSnapshot(
-      query(collection(db, "documents"), where("enterprise_id", "==", enterpriseId)),
+      query(collection(db, "documents"), where("enterprise_id", "==", enterpriseId), orderBy("created_at", "desc"), limit(60)),
       (snap) => {
         const rows: Report[] = snap.docs
           .filter((d) => isManager || allowsRecord(agentToType(d.data().agent as string), d.data().connection_scope, d.data().owner_uid))
@@ -170,6 +171,14 @@ export default function DataPage() {
       return true;
     });
   }, [allItems, activeFolder, period, search]);
+  const pageSize = 12;
+  const pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
+  const pagedVisible = visible.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => setPage(1), [activeFolder, period, search]);
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount);
+  }, [page, pageCount]);
 
   const generateNow = async () => {
     if (!enterpriseId || generating) return;
@@ -327,7 +336,7 @@ export default function DataPage() {
                 <div>Covers</div>
                 <div>Agent</div>
               </div>
-              {visible.map((r) => (
+              {pagedVisible.map((r) => (
                 <button
                   key={r.id}
                   onClick={() => setSelected(r)}
@@ -357,6 +366,15 @@ export default function DataPage() {
                   </div>
                 </button>
               ))}
+              {pageCount > 1 && (
+                <div className="flex items-center justify-between border-t border-gray-100 px-5 py-4">
+                  <span className="text-xs text-gray-400">Page {page} of {pageCount} · 12 per page</span>
+                  <div className="flex gap-2">
+                    <button onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page === 1} className="rounded-full border border-gray-200 px-4 py-2 text-xs font-semibold disabled:opacity-35">Previous</button>
+                    <button onClick={() => setPage((value) => Math.min(pageCount, value + 1))} disabled={page === pageCount} className="rounded-full bg-black px-4 py-2 text-xs font-semibold text-white disabled:opacity-35">Next</button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

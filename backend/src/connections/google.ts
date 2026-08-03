@@ -276,15 +276,28 @@ export async function ingestRecentGmail(enterpriseId: string, max = 15, ownerUid
   const { client, accountEmail } = await authedClientFor(enterpriseId, ownerUid);
   const gmail = google.gmail({ version: "v1", auth: client });
 
+  const connectionId = `${enterpriseId}_google-workspace${ownerUid ? `_personal_${ownerUid}` : ""}`;
+  const connectionRef = db.doc(`connections/${connectionId}`);
+  const connection = (await connectionRef.get()).data();
+  const previousIds = new Set<string>((connection?.sync_recent_message_ids as string[] | undefined) ?? []);
+
   const list = await gmail.users.messages.list({ userId: "me", maxResults: max, q: "in:inbox" });
   const ids = list.data.messages ?? [];
+  const currentIds = ids.map((message) => message.id).filter((id): id is string => !!id);
   let count = 0;
 
   for (const { id } of ids) {
     if (!id) continue;
+    // The provider list is newest-first. Once a connection has a cursor, old
+    // messages need no Firestore read, provider fetch, or metadata rewrite.
+    if (previousIds.has(id)) continue;
     const scopedId = ownerUid ? `${ownerUid}_${id}` : id;
     const msgDocRef = db.doc(`messages/${scopedId}`);
     const alreadyIngested = (await msgDocRef.get()).exists;
+
+    // One transitional check protects messages created before cursors existed.
+    // Existing records are never rewritten during normal synchronization.
+    if (alreadyIngested) continue;
 
     const full = await gmail.users.messages.get({ userId: "me", id, format: "full" });
     const payload = full.data.payload;
@@ -318,13 +331,6 @@ export async function ingestRecentGmail(enterpriseId: string, max = 15, ownerUid
       },
       { merge: true }
     );
-
-    // Older records predate recipient capture. Hydrate them during normal sync
-    // without duplicating attachments, analytics, or notifications.
-    if (alreadyIngested) {
-      await msgDocRef.set({ to, cc: cc || null }, { merge: true });
-      continue;
-    }
 
     const incoming: IncomingAttachment[] = [];
     for (const part of gmailAttachmentParts(payload)) {
@@ -383,6 +389,10 @@ export async function ingestRecentGmail(enterpriseId: string, max = 15, ownerUid
     });
 
     count++;
+  }
+
+  if (currentIds.join("|") !== [...previousIds].join("|")) {
+    await connectionRef.set({ sync_recent_message_ids: currentIds, last_synced_at: FieldValue.serverTimestamp() }, { merge: true });
   }
 
   return count;

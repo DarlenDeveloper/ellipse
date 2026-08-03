@@ -189,12 +189,12 @@ export const syncGmail = onCall(
 );
 
 /**
- * Auto-sync — pulls new Gmail for every connected account every 5 minutes so
+ * Auto-sync — pulls new Gmail for every connected account every 10 minutes so
  * users don't have to press the Sync button. The inbox updates live via
  * onSnapshot, so new messages just appear.
  */
 export const scheduledGmailSync = onSchedule(
-  { schedule: "every 5 minutes", secrets: [googleClientId, googleClientSecret] },
+  { schedule: "every 10 minutes", secrets: [googleClientId, googleClientSecret] },
   async () => {
     const { syncAllConnectedGmail } = await import("./connections/google");
     const ingested = await syncAllConnectedGmail();
@@ -202,8 +202,8 @@ export const scheduledGmailSync = onSchedule(
   }
 );
 
-/** Auto-sync all connected SMTP/IMAP mailboxes every 5 minutes. */
-export const scheduledImapSync = onSchedule({ schedule: "every 5 minutes" }, async () => {
+/** Auto-sync all connected SMTP/IMAP mailboxes every 10 minutes. */
+export const scheduledImapSync = onSchedule({ schedule: "every 10 minutes" }, async () => {
   const { syncAllConnectedImap } = await import("./connections/smtp");
   const ingested = await syncAllConnectedImap();
   logger.info("scheduledImapSync complete", { ingested });
@@ -218,9 +218,9 @@ export const syncOutlook = onCall({ secrets: [msClientId, msClientSecret] }, asy
   return { ingested: await ingestRecentOutlook(enterpriseId) };
 });
 
-/** Auto-sync all connected Outlook accounts every 5 minutes. */
+/** Auto-sync all connected Outlook accounts every 10 minutes. */
 export const scheduledOutlookSync = onSchedule(
-  { schedule: "every 5 minutes", secrets: [msClientId, msClientSecret] },
+  { schedule: "every 10 minutes", secrets: [msClientId, msClientSecret] },
   async () => {
     const { syncAllConnectedOutlook } = await import("./connections/microsoft365");
     const ingested = await syncAllConnectedOutlook();

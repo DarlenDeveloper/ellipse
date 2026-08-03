@@ -17,7 +17,7 @@ import {
   Legend,
 } from "recharts";
 import { Messages2, Data, TickCircle, Clock } from "iconsax-react";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { collection, query, where, onSnapshot, orderBy, limit, Timestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAccess } from "@/lib/use-access";
 
@@ -78,7 +78,13 @@ export default function AnalyticsPage() {
   useEffect(() => {
     if (!enterpriseId) return;
     const unsubE = onSnapshot(
-      query(collection(db, "analytics_events"), where("workspace_id", "==", enterpriseId)),
+      query(
+        collection(db, "analytics_events"),
+        where("workspace_id", "==", enterpriseId),
+        where("timestamp", ">=", Timestamp.fromMillis(Date.now() - 366 * 86400_000)),
+        orderBy("timestamp", "desc"),
+        limit(2000)
+      ),
       (snap) => {
         const rows = snap.docs.map((d) => d.data() as Ev).filter((e) => {
           if (isManager) return true;
@@ -91,7 +97,7 @@ export default function AnalyticsPage() {
       }
     );
     const unsubA = onSnapshot(
-      query(collection(db, "pending_actions"), where("enterprise_id", "==", enterpriseId)),
+      query(collection(db, "pending_actions"), where("enterprise_id", "==", enterpriseId), orderBy("created_at", "desc"), limit(2000)),
       (snap) =>
         setActions(
           snap.docs

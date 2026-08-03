@@ -6,6 +6,7 @@ import {
   doc,
   onSnapshot,
   orderBy,
+  limit,
   query,
   Timestamp,
   where,
@@ -173,9 +174,9 @@ export default function TeamChatPage() {
   useEffect(() => {
     setMessages([]);
     if (!selectedId || !user || !selectedIsReady) return;
-    const messagesQuery = query(collection(db, "internal_chats", selectedId, "messages"), orderBy("created_at", "asc"));
+    const messagesQuery = query(collection(db, "internal_chats", selectedId, "messages"), orderBy("created_at", "desc"), limit(50));
     const unsubscribe = onSnapshot(messagesQuery, (snapshot) => {
-      setMessages(snapshot.docs.map((item) => ({ id: item.id, ...(item.data() as Omit<ChatMessage, "id">) })));
+      setMessages(snapshot.docs.map((item) => ({ id: item.id, ...(item.data() as Omit<ChatMessage, "id">) })).reverse());
       requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }));
     }, (cause) => setError(cause.message));
     setReadAt((current) => ({ ...current, [selectedId]: Timestamp.now() }));

@@ -160,8 +160,10 @@ function sanitizeId(id: string): string {
  */
 export async function ingestRecentOutlook(enterpriseId: string, max = 15): Promise<number> {
   const token = await authedTokenFor(enterpriseId);
-  const snap = await connDoc(enterpriseId).get();
+  const connectionRef = connDoc(enterpriseId);
+  const snap = await connectionRef.get();
   const account = (snap.data()?.account_email as string | undefined)?.toLowerCase() ?? "";
+  const previousIds = new Set<string>((snap.data()?.sync_recent_message_ids as string[] | undefined) ?? []);
 
   const url =
     `https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages` +
@@ -171,13 +173,16 @@ export async function ingestRecentOutlook(enterpriseId: string, max = 15): Promi
   if (data.error) throw new Error(data.error.message);
 
   const messages: any[] = data.value ?? [];
+  const currentIds = messages.map((message) => String(message.id ?? "")).filter(Boolean);
   let count = 0;
   const stamped = new Set<string>();
 
   for (const m of messages) {
+    if (previousIds.has(String(m.id))) continue;
     const docId = `ms_${sanitizeId(m.id)}`;
     const msgRef = db.doc(`messages/${docId}`);
     const alreadyIngested = (await msgRef.get()).exists;
+    if (alreadyIngested) continue;
 
     const fromEmail = (m.from?.emailAddress?.address ?? "").toLowerCase();
     const fromName = m.from?.emailAddress?.name ?? fromEmail;
@@ -206,11 +211,6 @@ export async function ingestRecentOutlook(enterpriseId: string, max = 15): Promi
       stamped.add(convId);
     }
     await db.doc(`conversations/${convId}`).set(convPatch, { merge: true });
-
-    if (alreadyIngested) {
-      await msgRef.set({ to, cc: cc || null }, { merge: true });
-      continue;
-    }
 
     const incoming: IncomingAttachment[] = [];
     if (m.hasAttachments) {
@@ -272,6 +272,9 @@ export async function ingestRecentOutlook(enterpriseId: string, max = 15): Promi
     });
 
     count++;
+  }
+  if (currentIds.join("|") !== [...previousIds].join("|")) {
+    await connectionRef.set({ sync_recent_message_ids: currentIds, last_synced_at: FieldValue.serverTimestamp() }, { merge: true });
   }
   return count;
 }

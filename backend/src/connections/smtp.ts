@@ -89,6 +89,10 @@ function parseEmailAddress(from: string): string {
 export async function ingestRecentImap(enterpriseId: string, max = 15): Promise<number> {
   const cfg = await loadConfig(enterpriseId);
   const account = (cfg.from_email || cfg.username).toLowerCase();
+  const connectionRef = db.doc(`connections/${enterpriseId}_smtp`);
+  const connection = (await connectionRef.get()).data();
+  const previousIds = new Set<string>((connection?.sync_recent_message_ids as string[] | undefined) ?? []);
+  const currentIds: string[] = [];
 
   const client = new ImapFlow({
     host: cfg.imap_host,
@@ -114,9 +118,12 @@ export async function ingestRecentImap(enterpriseId: string, max = 15): Promise<
     })) {
       const env = msg.envelope;
       const messageId = env?.messageId || `smtp_${msg.uid}`;
+      currentIds.push(messageId);
+      if (previousIds.has(messageId)) continue;
       const docId = `smtp_${enterpriseId}_${Buffer.from(messageId).toString("base64").replace(/[^a-zA-Z0-9]/g, "").slice(0, 60)}`;
       const msgDocRef = db.doc(`messages/${docId}`);
       const alreadyIngested = (await msgDocRef.get()).exists;
+      if (alreadyIngested) continue;
 
       const fromAddr = env?.from?.[0];
       const from = fromAddr ? `${fromAddr.name ?? ""} <${fromAddr.address ?? ""}>`.trim() : "";
@@ -166,11 +173,6 @@ export async function ingestRecentImap(enterpriseId: string, max = 15): Promise<
         { merge: true }
       );
 
-      if (alreadyIngested) {
-        await msgDocRef.set({ to, cc: cc || null }, { merge: true });
-        continue;
-      }
-
       const attachments = await saveIncomingAttachments({
         enterpriseId,
         channel: "smtp",
@@ -207,6 +209,9 @@ export async function ingestRecentImap(enterpriseId: string, max = 15): Promise<
       });
 
       count++;
+    }
+    if (currentIds.join("|") !== [...previousIds].join("|")) {
+      await connectionRef.set({ sync_recent_message_ids: currentIds, last_synced_at: FieldValue.serverTimestamp() }, { merge: true });
     }
   } finally {
     lock.release();

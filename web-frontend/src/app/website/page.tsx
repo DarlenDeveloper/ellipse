@@ -11,7 +11,7 @@ import {
   CartesianGrid,
 } from "recharts";
 import { Eye, Profile2User, ArrowSwapHorizontal, Global, Location } from "iconsax-react";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { collection, query, where, onSnapshot, orderBy, limit, Timestamp } from "firebase/firestore";
 import { Lock1 } from "iconsax-react";
 import { db } from "@/lib/firebase";
 import { useAccess } from "@/lib/use-access";
@@ -104,7 +104,13 @@ export default function WebsitePage() {
 
   useEffect(() => {
     if (!enterpriseId || !canView) return;
-    const q = query(collection(db, "analytics_events"), where("workspace_id", "==", enterpriseId));
+    const q = query(
+      collection(db, "analytics_events"),
+      where("workspace_id", "==", enterpriseId),
+      where("timestamp", ">=", Timestamp.fromMillis(Date.now() - 31 * 86400_000)),
+      orderBy("timestamp", "desc"),
+      limit(2000)
+    );
     return onSnapshot(q, (snap) => {
       setEvents(snap.docs.map((d) => d.data() as WebEvent).filter((e) => e.source === "web"));
       setLoading(false);

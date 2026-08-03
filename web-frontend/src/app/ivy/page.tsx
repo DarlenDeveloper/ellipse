@@ -18,6 +18,8 @@ import {
   query,
   where,
   onSnapshot,
+  orderBy,
+  limit,
   addDoc,
   updateDoc,
   doc,
@@ -143,7 +145,7 @@ export default function IvyPage() {
   // Live list of this user's past chats (sorted client-side to avoid a composite index).
   useEffect(() => {
     if (!user) return;
-    return onSnapshot(query(collection(db, "ivy_chats"), where("user_id", "==", user.uid)), (snap) => {
+    return onSnapshot(query(collection(db, "ivy_chats"), where("user_id", "==", user.uid), orderBy("updated_at", "desc"), limit(30)), (snap) => {
       const rows = snap.docs
         .map((d) => ({ id: d.id, ...(d.data() as Omit<ChatSummary, "id">) }))
         .filter((c) => !enterpriseId || (c as unknown as { enterprise_id?: string }).enterprise_id === enterpriseId)
