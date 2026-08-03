@@ -13,7 +13,8 @@ import { FileCard, stripFileUrls, type ChatFile } from "./FileCard";
 import { cn } from "@/lib/utils";
 import { MarkdownText } from "@/components/MarkdownText";
 
-type Msg = { role: "ivy" | "user"; text: string; files?: ChatFile[] };
+type ChatAction = { name: string; args?: Record<string, unknown>; result?: string };
+type Msg = { role: "ivy" | "user"; text: string; files?: ChatFile[]; actions?: ChatAction[] };
 
 const SUGGESTIONS = [
   "How did we do this week?",
@@ -44,7 +45,7 @@ export function IvyBubble() {
   const send = async (text?: string) => {
     const q = (text ?? input).trim();
     if (!q || thinking) return;
-    const history = messages.map((m) => ({ role: m.role, text: m.text }));
+    const history = messages.map((m) => ({ role: m.role, text: m.text, actions: m.actions }));
     const withUser: Msg[] = [...messages, { role: "user", text: q }];
     setMessages(withUser);
     setInput("");
@@ -69,9 +70,10 @@ export function IvyBubble() {
 
       const fn = httpsCallable(functions, "askAgent");
       const res = await fn({ enterpriseId, agentId: "ivy", message: q, history });
-      const data = res.data as { reply?: string; files?: ChatFile[] };
+      const data = res.data as { reply?: string; files?: ChatFile[]; actions?: ChatAction[] };
       const msg: Msg = { role: "ivy", text: data.reply ?? "…" };
       if (data.files && data.files.length) msg.files = data.files;
+      if (data.actions && data.actions.length) msg.actions = data.actions;
       const full = [...withUser, msg];
       setMessages(full);
       if (cid) await updateDoc(doc(db, "ivy_chats", cid), { messages: full, updated_at: serverTimestamp() });

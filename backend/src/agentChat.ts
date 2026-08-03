@@ -1024,7 +1024,13 @@ async function toolCreateZohoQuotation(
     .trim();
   const customer = (args.customer as Record<string, unknown> | undefined) ?? {};
   const items = Array.isArray(args.items) ? args.items : [];
-  const email = String(customer.email ?? "").trim().toLowerCase();
+  let email = String(customer.email ?? "").trim().toLowerCase();
+  if (!email) {
+    const knownEmails = `${recentConversation}\n${currentUserMessage}`
+      .match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi);
+    email = knownEmails?.at(-1)?.trim().toLowerCase() ?? "";
+    if (email) customer.email = email;
+  }
   const name = String(customer.name ?? "").trim();
   const placeholderName = /^(customer|client|unknown|n\/?a|test|user)$/i.test(name);
   const placeholderEmail = /@(example\.(com|org|net)|test\.com)$/i.test(email) || /^(customer|client|test)@/i.test(email);
@@ -1054,6 +1060,7 @@ async function toolCreateZohoQuotation(
   const currentDigits = currentUserMessage.replace(/\D/g, "");
   const normalizedContext = normalizeText(recentConversation);
   const selectedListedOption = /\b(first|second|third|fourth|fifth|option\s*[1-5]|number\s*[1-5])\b/i.test(currentUserMessage);
+  const confirmedPriorSuggestion = /\b(?:yes|confirmed?|proceed|go ahead|that exact one|that one|this one)\b/i.test(currentUserMessage);
   const unconfirmedItem = (items as Record<string, unknown>[]).find((item) => {
     const product = String(item.product ?? item.description ?? "").trim();
     const normalizedProduct = normalizeText(product);
@@ -1070,7 +1077,9 @@ async function toolCreateZohoQuotation(
     const explicitlyConfirmedCatalogueItem = explicitlyNamed
       && suppliedRate
       && (hasSpecificModelDetails || normalizedProduct.split(" ").length >= 5);
-    const selectedFromListedOptions = selectedListedOption && normalizedProduct.length > 0 && normalizedContext.includes(normalizedProduct);
+    const selectedFromListedOptions = (selectedListedOption || confirmedPriorSuggestion)
+      && normalizedProduct.length > 0
+      && normalizedContext.includes(normalizedProduct);
     return !selectedFromListedOptions && !explicitlyConfirmedCatalogueItem;
   });
   if (unconfirmedItem) {
@@ -1685,6 +1694,34 @@ function renderHistory(history: ChatTurn[]): string {
     .join("\n");
 }
 
+function renderDurableChatFacts(history: ChatTurn[]): string {
+  const emails = [...new Set(
+    history.flatMap((turn) => turn.text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? [])
+      .map((email) => email.toLowerCase())
+  )].slice(-5);
+  let latestCustomer: Record<string, unknown> | undefined;
+  let latestDocument: { documentId?: string; fileName?: string } | undefined;
+  for (const turn of history) {
+    for (const action of turn.actions ?? []) {
+      if (action.name === "create_zoho_quotation") {
+        const customer = action.args?.customer;
+        if (customer && typeof customer === "object") latestCustomer = customer as Record<string, unknown>;
+        const result = parseToolResult(action.result ?? "");
+        if (result?.documentId) latestDocument = {
+          documentId: String(result.documentId),
+          fileName: result.fileName ? String(result.fileName) : undefined,
+        };
+      }
+    }
+  }
+  const facts = [
+    emails.length ? `Known email addresses: ${emails.join(", ")}.` : "",
+    latestCustomer ? `Latest quotation customer: ${JSON.stringify(latestCustomer)}.` : "",
+    latestDocument ? `Latest created quotation document: ${JSON.stringify(latestDocument)}.` : "",
+  ].filter(Boolean);
+  return facts.length ? `Durable facts extracted from the full chat:\n${facts.join("\n")}` : "";
+}
+
 const MUTATING_TOOLS = new Set([
   "create_crm_lead", "reply_to_conversation", "create_document", "generate_report",
   "generate_owner_analysis", "store_create", "store_update", "create_quotation",
@@ -1735,6 +1772,11 @@ function quotationProductSearchQuery(message: string, history: ChatTurn[]): stri
   );
   if (!quotationRequest && !awaitingProduct) return null;
   if (!/\b(laptop|computer|macbook|iphone|phone|desktop|monitor|printer|tablet|server)\b/i.test(message)) return null;
+
+  // A list of explicitly priced products is already a selection, not one broad
+  // product query. Let the agent create one quotation with all supplied lines.
+  const pricedItems = message.match(/(?:USD\s*|\$)\s*\d[\d,]*(?:\.\d+)?/gi) ?? [];
+  if (pricedItems.length >= 2) return null;
 
   // When the user copies an exact model from Ivy's immediately preceding
   // catalogue options, that is the selection. Do not turn it into another
@@ -1890,7 +1932,8 @@ export async function chatWithAgent(
   }
 
   const convo = renderHistory(history);
-  const prompt = [convo ? `Conversation so far:\n${convo}\n` : "", `User: ${message}`].filter(Boolean).join("\n");
+  const durableFacts = renderDurableChatFacts(history);
+  const prompt = [durableFacts, convo ? `Conversation so far:\n${convo}\n` : "", `User: ${message}`].filter(Boolean).join("\n");
 
   const attachmentIntentText = [...history.slice(-4).map((turn) => turn.text), message].join(" ").toLowerCase();
   const requiresEmailAttachment = /\b(pdf|document|quotation|quote|attachment)\b/.test(attachmentIntentText)
@@ -1915,7 +1958,7 @@ export async function chatWithAgent(
       } else {
         seenCalls.add(signature);
         try {
-          out = await runTool(enterpriseId, agentId, call.name, call.args, isOwner, connected, callerUid, personalZohoOwnerUid, requiresEmailAttachment, message, convo);
+          out = await runTool(enterpriseId, agentId, call.name, call.args, isOwner, connected, callerUid, personalZohoOwnerUid, requiresEmailAttachment, message, [durableFacts, convo].filter(Boolean).join("\n"));
         } catch (e) {
           logger.error("chat tool failed", { enterpriseId, agentId, tool: call.name, error: (e as Error).message });
           out = JSON.stringify({ error: `The ${call.name.replace(/_/g, " ")} action could not be completed. Nothing was queued or sent.` });
