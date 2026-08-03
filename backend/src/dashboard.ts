@@ -6,7 +6,11 @@ import { grantedTypesFor } from "./access";
 type Role = "owner" | "admin" | "employee";
 type Granularity = "hourly" | "daily" | "weekly" | "monthly";
 
-const CACHE_MS = 5 * 60_000;
+const CACHE_MS = 15 * 60_000;
+const CHART_EVENT_LIMIT = 1_000;
+const CHART_ACTION_LIMIT = 500;
+const RECENT_THREAD_SCAN_LIMIT = 60;
+const RECENT_PENDING_SCAN_LIMIT = 24;
 const TARGET_TO_TYPE: Record<string, string> = { gmail: "google-workspace" };
 const typeOf = (value?: string) => TARGET_TO_TYPE[String(value ?? "").replace(/-agent$/, "").toLowerCase()] ?? String(value ?? "").replace(/-agent$/, "").toLowerCase();
 const pad = (value: number) => String(value).padStart(2, "0");
@@ -52,11 +56,41 @@ export async function getDashboardData(enterpriseId: string, uid: string) {
     return { ...(cachedData.payload as Record<string, unknown>), cached: true };
   }
 
-  const [eventSnap, actionSnap, conversationSnap, connectionSnap] = await Promise.all([
-    db.collection("analytics_events").where("workspace_id", "==", enterpriseId).get(),
-    db.collection("pending_actions").where("enterprise_id", "==", enterpriseId).get(),
-    db.collection("conversations").where("enterprise_id", "==", enterpriseId).get(),
-    db.collection("connections").where("enterprise_id", "==", enterpriseId).get(),
+  // Dashboard charts only render the latest eight months. Never load the full
+  // history to build them: a single manager cache miss previously returned
+  // ~15k documents. Totals use aggregation queries below.
+  const chartStart = new Date();
+  chartStart.setUTCMonth(chartStart.getUTCMonth() - 8);
+  chartStart.setUTCDate(1);
+  chartStart.setUTCHours(0, 0, 0, 0);
+
+  const eventsQuery = db.collection("analytics_events")
+    .where("workspace_id", "==", enterpriseId)
+    .where("timestamp", ">=", chartStart)
+    .orderBy("timestamp", "desc")
+    .limit(CHART_EVENT_LIMIT);
+  const actionsQuery = db.collection("pending_actions")
+    .where("enterprise_id", "==", enterpriseId)
+    .where("created_at", ">=", chartStart)
+    .orderBy("created_at", "desc")
+    .limit(CHART_ACTION_LIMIT);
+  const pendingQuery = db.collection("pending_actions")
+    .where("enterprise_id", "==", enterpriseId)
+    .where("status", "==", "pending")
+    .orderBy("created_at", "desc")
+    .limit(RECENT_PENDING_SCAN_LIMIT);
+  const conversationsQuery = db.collection("conversations")
+    .where("enterprise_id", "==", enterpriseId)
+    .orderBy("last_message_at", "desc")
+    .limit(RECENT_THREAD_SCAN_LIMIT);
+  const connectionsQuery = db.collection("connections").where("enterprise_id", "==", enterpriseId);
+
+  const [eventSnap, actionSnap, pendingSnap, conversationSnap, connectionSnap] = await Promise.all([
+    eventsQuery.get(),
+    actionsQuery.get(),
+    pendingQuery.get(),
+    conversationsQuery.get(),
+    connectionsQuery.get(),
   ]);
 
   const allowed = new Set(grantedTypes);
@@ -68,11 +102,12 @@ export async function getDashboardData(enterpriseId: string, uid: string) {
     const channel = String(payload.channel ?? event.channel ?? (event.source === "zoho_record" ? "zoho" : ""));
     return isManager || (!channel ? false : canSee(channel, String(payload.connection_scope ?? event.connection_scope ?? "org"), String(payload.owner_uid ?? event.owner_uid ?? "")));
   });
-  const actions = actionSnap.docs.map((item): Record<string, any> => ({ id: item.id, ...(item.data() as Record<string, any>) })).filter((action) => {
+  const filterAction = (action: Record<string, any>) => {
     const params = (action.params ?? {}) as Record<string, unknown>;
     const ownerUid = String(params.connectionOwnerUid ?? action.owner_uid ?? "");
     return canSee(typeOf(String(action.agent_id ?? action.target_system ?? "")), ownerUid ? "personal" : "org", ownerUid);
-  });
+  };
+  const actions = actionSnap.docs.map((item): Record<string, any> => ({ id: item.id, ...(item.data() as Record<string, any>) })).filter(filterAction);
   const conversations = conversationSnap.docs.map((item): Record<string, any> => ({ id: item.id, ...(item.data() as Record<string, any>) })).filter((conversation) =>
     canSee(String(conversation.channel ?? ""), String(conversation.connection_scope ?? "org"), String(conversation.owner_uid ?? ""))
   );
@@ -100,9 +135,9 @@ export async function getDashboardData(enterpriseId: string, uid: string) {
     if (date) addBucket(date, "agentActions");
   }
 
-  const pending = actions
-    .filter((action) => action.status === "pending")
-    .sort((a, b) => (asDate(b.created_at)?.getTime() ?? 0) - (asDate(a.created_at)?.getTime() ?? 0));
+  const pending = pendingSnap.docs
+    .map((item): Record<string, any> => ({ id: item.id, ...(item.data() as Record<string, any>) }))
+    .filter(filterAction);
   const recentThreads = conversations
     .sort((a, b) => (asDate(b.last_message_at)?.getTime() ?? 0) - (asDate(a.last_message_at)?.getTime() ?? 0))
     .slice(0, 6)
@@ -115,15 +150,39 @@ export async function getDashboardData(enterpriseId: string, uid: string) {
       last_message_at: dateIso(conversation.last_message_at),
     }));
 
-  const payload = {
-    counts: {
+  // Aggregation queries return only counts (roughly one billed index read per
+  // 1,000 entries) instead of downloading every historical document.
+  let counts: { messages: number; channels: number; threads: number; pending: number; agents: number; records: number };
+  if (isManager) {
+    const [messageCount, openThreadCount, pendingCount, recordCount] = await Promise.all([
+      db.collection("analytics_events").where("workspace_id", "==", enterpriseId).where("source", "==", "message").count().get(),
+      db.collection("conversations").where("enterprise_id", "==", enterpriseId).where("status", "==", "open").count().get(),
+      db.collection("pending_actions").where("enterprise_id", "==", enterpriseId).where("status", "==", "pending").count().get(),
+      db.collection("analytics_events").where("workspace_id", "==", enterpriseId).where("source", "==", "zoho_record").count().get(),
+    ]);
+    counts = {
+      messages: messageCount.data().count,
+      channels: connections.length,
+      threads: openThreadCount.data().count,
+      pending: pendingCount.data().count,
+      agents: connections.length,
+      records: recordCount.data().count,
+    };
+  } else {
+    // Employees remain scoped to their grants. These totals are deliberately
+    // bounded to the dashboard window rather than leaking organization totals.
+    counts = {
       messages: events.filter((event) => event.source === "message").length,
       channels: connections.length,
       threads: conversations.filter((conversation) => conversation.status === "open").length,
       pending: pending.length,
       agents: connections.length,
       records: events.filter((event) => event.source === "zoho_record").length,
-    },
+    };
+  }
+
+  const payload = {
+    counts,
     charts,
     pendingApprovals: pending.slice(0, 4).map((action) => ({
       id: action.id,
