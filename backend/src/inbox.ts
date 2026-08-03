@@ -4,6 +4,7 @@ import { db, FieldValue } from "./admin";
 import { grantedTypesFor } from "./access";
 
 type InboxPeriod = "today" | "week" | "month" | "all";
+type InboxScope = "all" | "org" | "personal";
 type Role = "owner" | "admin" | "employee";
 const PAGE_SIZE = 12;
 
@@ -25,6 +26,7 @@ function periodStart(period: InboxPeriod): Date | null {
 /** Paginated, access-scoped conversation list for the Inbox. */
 export async function listInboxConversations(callerUid: string, args: {
   period?: InboxPeriod;
+  scope?: InboxScope;
   cursor?: { lastMessageAt?: number; id?: string } | null;
 }) {
   const userSnap = await db.doc(`users/${callerUid}`).get();
@@ -36,6 +38,10 @@ export async function listInboxConversations(callerUid: string, args: {
   const grants = await grantedTypesFor(enterpriseId, callerUid, role);
   const allowed = grants === "all" ? new Set<string>() : grants;
   const period: InboxPeriod = ["today", "week", "month", "all"].includes(String(args.period)) ? args.period! : "today";
+  const requestedScope: InboxScope = ["all", "org", "personal"].includes(String(args.scope)) ? args.scope! : "all";
+  // Scope tabs are a manager view. Employees retain their existing grant and
+  // personal-ownership filtering regardless of crafted callable arguments.
+  const scope: InboxScope = isManager ? requestedScope : "all";
   const start = periodStart(period);
 
   let q: FirebaseFirestore.Query = db.collection("conversations")
@@ -56,6 +62,8 @@ export async function listInboxConversations(callerUid: string, args: {
     for (const item of snapshot.docs) {
       lastScanned = item;
       const data = item.data();
+      const connectionScope = data.connection_scope === "personal" ? "personal" : "org";
+      if (scope !== "all" && connectionScope !== scope) continue;
       const canSee = isManager || (data.connection_scope === "personal"
         ? data.owner_uid === callerUid
         : allowed.has(String(data.channel ?? "")));
@@ -83,6 +91,7 @@ export async function listInboxConversations(callerUid: string, args: {
   const last = page[page.length - 1];
   return {
     period,
+    scope,
     conversations: page,
     hasNext,
     nextCursor: hasNext && last ? { lastMessageAt: last.last_message_at, id: last.id } : null,

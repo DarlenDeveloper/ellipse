@@ -46,12 +46,18 @@ type Message = {
 };
 
 type InboxPeriod = "today" | "week" | "month" | "all";
+type InboxScope = "all" | "org" | "personal";
 type InboxCursor = { lastMessageAt: number; id: string };
 const PERIODS: { id: InboxPeriod; label: string }[] = [
   { id: "today", label: "Today" },
   { id: "week", label: "This week" },
   { id: "month", label: "This month" },
   { id: "all", label: "All time" },
+];
+const SCOPES: { id: InboxScope; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "org", label: "Organization" },
+  { id: "personal", label: "Personal" },
 ];
 
 function fmtTime(ts?: { toDate: () => Date }): string {
@@ -66,9 +72,10 @@ function fmtTime(ts?: { toDate: () => Date }): string {
 
 export default function InboxPage() {
   const { user } = useAuth();
-  const { enterpriseId } = useAccess();
+  const { enterpriseId, isManager } = useAccess();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [period, setPeriod] = useState<InboxPeriod>("today");
+  const [scope, setScope] = useState<InboxScope>("all");
   const [page, setPage] = useState(1);
   const [pageCursors, setPageCursors] = useState<Array<InboxCursor | null>>([null]);
   const [nextCursor, setNextCursor] = useState<InboxCursor | null>(null);
@@ -92,7 +99,7 @@ export default function InboxPage() {
   useEffect(() => {
     if (!enterpriseId || !user) return;
     const cursor = pageCursors[page - 1] ?? null;
-    const cacheKey = `ellipse_inbox_${user.uid}_${period}_${page}_${cursor?.id ?? "start"}`;
+    const cacheKey = `ellipse_inbox_${user.uid}_${scope}_${period}_${page}_${cursor?.id ?? "start"}`;
     let active = true;
     setConversationsLoading(true);
     const applyPage = (payload: { conversations: Array<Omit<Conversation, "last_message_at"> & { last_message_at?: number | null }>; hasNext: boolean; nextCursor?: InboxCursor | null }) => {
@@ -117,7 +124,7 @@ export default function InboxPage() {
         return () => { active = false; };
       }
     } catch { localStorage.removeItem(cacheKey); }
-    httpsCallable(functions, "listInboxConversations")({ period, cursor }).then((result) => {
+    httpsCallable(functions, "listInboxConversations")({ period, scope, cursor }).then((result) => {
       const payload = result.data as Parameters<typeof applyPage>[0];
       applyPage(payload);
       try { localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), payload })); } catch { /* storage unavailable */ }
@@ -127,7 +134,7 @@ export default function InboxPage() {
       if (active) { setConversations([]); setHasNext(false); setConversationsLoading(false); }
     });
     return () => { active = false; };
-  }, [enterpriseId, page, pageCursors, period, refreshNonce, requestedConversation, user]);
+  }, [enterpriseId, page, pageCursors, period, refreshNonce, requestedConversation, scope, user]);
 
   // Read receipts are private to the signed-in user.
   useEffect(() => {
@@ -219,6 +226,14 @@ export default function InboxPage() {
     setHasNext(false);
   };
 
+  const changeScope = (next: InboxScope) => {
+    setScope(next);
+    setPage(1);
+    setPageCursors([null]);
+    setNextCursor(null);
+    setHasNext(false);
+  };
+
   const nextPage = () => {
     if (!hasNext || !nextCursor || conversationsLoading) return;
     setPageCursors((current) => {
@@ -270,6 +285,14 @@ export default function InboxPage() {
               <RefreshCircle size={18} variant="Linear" className={syncing ? "animate-spin" : ""} />
             </button>
           </div>
+
+          {isManager && (
+            <div className="flex gap-1 border-b border-gray-100 px-3 pt-3">
+              {SCOPES.map((item) => (
+                <button key={item.id} type="button" onClick={() => changeScope(item.id)} className={cn("flex-1 rounded-t-xl px-2 py-2 text-xs font-semibold transition", scope === item.id ? "bg-black text-white" : "bg-gray-50 text-gray-500 hover:bg-gray-100")}>{item.label}</button>
+              ))}
+            </div>
+          )}
 
           <div className="flex gap-1 overflow-x-auto border-b border-gray-100 px-3 py-3">
             {PERIODS.map((item) => (
