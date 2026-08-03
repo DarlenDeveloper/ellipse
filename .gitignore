@@ -16,6 +16,7 @@ firebase-adminsdk*.json
 
 # ---------- Next.js / Web Frontend ----------
 web-frontend/.next/
+web-frontend/.next-dev/
 web-frontend/out/
 web-frontend/build/
 web-frontend/.vercel

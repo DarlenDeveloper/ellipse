@@ -763,6 +763,16 @@ export const getDashboardData = onCall(async (request) => {
   return (await import("./dashboard")).getDashboardData(enterpriseId, request.auth.uid);
 });
 
+/**
+ * Returns a short-lived URL after authorizing the caller against the owning
+ * organization, personal scope, role, connection grant, and exact file record.
+ */
+export const getSecureDownload = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const { createSecureDownload } = await import("./secureDownloads");
+  return createSecureDownload(request.auth.uid, request.data ?? {});
+});
+
 export const listApprovals = onCall(async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
   return (await import("./approvals")).listApprovals(request.auth.uid, request.data ?? {});
