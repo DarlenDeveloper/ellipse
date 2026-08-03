@@ -3,23 +3,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Image from "next/image";
 import { SearchNormal1, TickCircle, CloseCircle, ClipboardTick, Cpu, Edit2, Eye } from "iconsax-react";
-import {
-  collection,
-  query,
-  where,
-  onSnapshot,
-  doc,
-  updateDoc,
-  serverTimestamp,
-} from "firebase/firestore";
+import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { httpsCallable } from "firebase/functions";
 import { cn } from "@/lib/utils";
-import { db } from "@/lib/firebase";
+import { db, functions } from "@/lib/firebase";
 import { useAccess } from "@/lib/use-access";
-
-function toType(agentId?: string, targetSystem?: string): string {
-  const base = ((agentId?.startsWith("human-") ? targetSystem : agentId?.replace(/-agent$/, "")) || targetSystem || "").toLowerCase();
-  return base === "gmail" ? "google-workspace" : base;
-}
+import { useAuth } from "@/lib/auth-context";
 
 type PendingAction = {
   id: string;
@@ -30,7 +19,7 @@ type PendingAction = {
   target_system?: string;
   params?: Record<string, unknown>;
   status?: string;
-  created_at?: { toDate: () => Date };
+  created_at?: number | null;
 };
 
 // target_system → connection logo (falls back to a generic chip icon).
@@ -75,9 +64,9 @@ function statusLabel(status?: string): string {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
-function formatDate(ts?: { toDate: () => Date }): string {
-  if (!ts?.toDate) return "";
-  return ts.toDate().toLocaleString(undefined, {
+function formatDate(value?: number | null): string {
+  if (!value) return "";
+  return new Date(value).toLocaleString(undefined, {
     month: "short",
     day: "numeric",
     hour: "2-digit",
@@ -127,38 +116,69 @@ function summarizeParams(params?: Record<string, unknown>): string {
 }
 
 export default function ApprovalsPage() {
-  const { enterpriseId, isManager, allowsRecord } = useAccess();
-  const accessKey = `${isManager}`;
+  const { user } = useAuth();
+  const { enterpriseId, isManager } = useAccess();
   const [items, setItems] = useState<PendingAction[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("All");
   const [editItem, setEditItem] = useState<PendingAction | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageCursors, setPageCursors] = useState<Array<{ createdAt: number; id: string } | null>>([null]);
+  const [nextCursor, setNextCursor] = useState<{ createdAt: number; id: string } | null>(null);
+  const [hasNext, setHasNext] = useState(false);
+  const [pendingTotal, setPendingTotal] = useState<number | null>(null);
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const [rejectAllOpen, setRejectAllOpen] = useState(false);
+  const [rejectingAll, setRejectingAll] = useState(false);
+  const [pageError, setPageError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!enterpriseId) return;
-    const q = query(collection(db, "pending_actions"), where("enterprise_id", "==", enterpriseId));
-    const unsub = onSnapshot(q, (snap) => {
-      const rows = snap.docs
-        .map((d) => ({ id: d.id, ...(d.data() as Omit<PendingAction, "id">) }))
-        // Employees only see approvals for connections they've been granted.
-        .filter((r) => isManager || allowsRecord(toType(r.agent_id, r.target_system), r.params?.connectionOwnerUid ? "personal" : "org", r.params?.connectionOwnerUid as string | undefined))
-        .sort(
-          (a, b) => (b.created_at?.toDate?.().getTime() ?? 0) - (a.created_at?.toDate?.().getTime() ?? 0)
-        );
-      setItems(rows);
+    if (!enterpriseId || !user?.uid) return;
+    const cursor = pageCursors[page - 1] ?? null;
+    const cacheKey = `ellipse_approvals_${enterpriseId}_${user.uid}_${filter}_${page}_${cursor?.id ?? "start"}`;
+    let active = true;
+    setLoading(true);
+    setPageError(null);
+    const applyPage = (payload: { items: PendingAction[]; hasNext: boolean; nextCursor?: { createdAt: number; id: string } | null; pendingTotal?: number | null }) => {
+      if (!active) return;
+      setItems(payload.items);
+      setHasNext(payload.hasNext);
+      setNextCursor(payload.nextCursor ?? null);
+      setPendingTotal(payload.pendingTotal ?? null);
       setLoading(false);
+    };
+    try {
+      const cached = JSON.parse(localStorage.getItem(cacheKey) ?? "null") as { savedAt: number; payload: Parameters<typeof applyPage>[0] } | null;
+      if (cached && Date.now() - cached.savedAt < 2 * 60_000 && reloadNonce === 0) {
+        applyPage(cached.payload);
+        return () => { active = false; };
+      }
+    } catch { localStorage.removeItem(cacheKey); }
+    httpsCallable(functions, "listApprovals")({ filter: filter.toLowerCase(), cursor }).then((result) => {
+      const payload = result.data as Parameters<typeof applyPage>[0];
+      applyPage(payload);
+      try { localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), payload })); } catch { /* storage unavailable */ }
+      if (reloadNonce > 0) setReloadNonce(0);
+    }).catch((error) => {
+      console.error("Approval page failed", error);
+      if (active) {
+        setItems([]);
+        setHasNext(false);
+        setLoading(false);
+        setPageError("Approvals could not be loaded. Please try again.");
+      }
     });
-    return () => unsub();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enterpriseId, accessKey]);
+    return () => { active = false; };
+  }, [enterpriseId, user?.uid, filter, page, pageCursors, reloadNonce]);
 
   const decide = async (id: string, status: "approved" | "rejected") => {
     setBusyId(id);
     try {
       // Row stays visible — only its status changes (approved is then executed by the backend).
       await updateDoc(doc(db, "pending_actions", id), { status, decided_at: serverTimestamp() });
+      setReloadNonce((value) => value + 1);
     } finally {
       setBusyId(null);
     }
@@ -168,21 +188,53 @@ export default function ApprovalsPage() {
     const s = search.toLowerCase();
     return items.filter((it) => {
       // "Approved" filter includes executed (approved → executed downstream).
-      const matchFilter =
-        filter === "All" ||
-        (filter === "Approved" && (it.status === "approved" || it.status === "executed")) ||
-        it.status === filter.toLowerCase();
       const matchSearch =
         !s ||
         agentLabel(it.agent_id).toLowerCase().includes(s) ||
         actionLabel(it.action_type).toLowerCase().includes(s) ||
         summarizeParams(it.params).toLowerCase().includes(s);
-      return matchFilter && matchSearch;
+      return matchSearch;
     });
-  }, [items, search, filter]);
+  }, [items, search]);
 
-  const pendingCount = items.filter((i) => i.status === "pending").length;
+  const pendingCount = pendingTotal ?? items.filter((i) => i.status === "pending").length;
   const cols = "grid-cols-[1fr_1fr_2fr_0.9fr_0.8fr_180px]";
+
+  const changeFilter = (value: Filter) => {
+    setFilter(value);
+    setPage(1);
+    setPageCursors([null]);
+    setNextCursor(null);
+    setHasNext(false);
+  };
+
+  const goNext = () => {
+    if (!hasNext || !nextCursor) return;
+    setPageCursors((current) => {
+      const updated = [...current];
+      updated[page] = nextCursor;
+      return updated;
+    });
+    setPage((value) => value + 1);
+  };
+
+  const rejectAll = async () => {
+    setRejectingAll(true);
+    setPageError(null);
+    try {
+      await httpsCallable(functions, "rejectAllPendingApprovals")({});
+      setRejectAllOpen(false);
+      setPage(1);
+      setPageCursors([null]);
+      setReloadNonce((value) => value + 1);
+    } catch (error) {
+      console.error("Reject all failed", error);
+      setPageError("Pending approvals could not be rejected. Please try again.");
+      setRejectAllOpen(false);
+    } finally {
+      setRejectingAll(false);
+    }
+  };
 
   return (
     <main className="p-8 max-w-[1200px]">
@@ -201,7 +253,7 @@ export default function ApprovalsPage() {
       </div>
 
       {/* Search + filters */}
-      <div className="flex items-center gap-3 mb-6">
+      <div className="flex flex-wrap items-center gap-3 mb-6">
         <div className="relative flex-1 max-w-md">
           <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
             <SearchNormal1 size={18} variant="Linear" />
@@ -217,7 +269,7 @@ export default function ApprovalsPage() {
           {FILTERS.map((f) => (
             <button
               key={f}
-              onClick={() => setFilter(f)}
+              onClick={() => changeFilter(f)}
               className={cn(
                 "text-xs font-medium border rounded-full px-3 py-1.5",
                 filter === f
@@ -229,7 +281,17 @@ export default function ApprovalsPage() {
             </button>
           ))}
         </div>
+        {isManager && pendingCount > 0 && (
+          <button
+            onClick={() => setRejectAllOpen(true)}
+            className="ml-auto rounded-full border border-red-200 bg-red-50 px-4 py-2 text-xs font-semibold text-red-700 transition hover:bg-red-100"
+          >
+            Reject all pending
+          </button>
+        )}
       </div>
+
+      {pageError && <p className="mb-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">{pageError}</p>}
 
       {/* Table */}
       <div className="bg-white rounded-3xl shadow-[0_4px_20px_rgba(0,0,0,0.04)]">
@@ -243,7 +305,18 @@ export default function ApprovalsPage() {
         </div>
 
         {loading ? (
-          <p className="text-sm text-gray-400 px-6 py-8">Loading…</p>
+          <div className="divide-y divide-gray-50" aria-label="Loading approvals">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <div key={index} className={`grid ${cols} gap-4 px-6 py-5 items-center animate-pulse`}>
+                <div className="h-8 rounded-xl bg-gray-100" />
+                <div className="h-7 rounded-xl bg-gray-100" />
+                <div className="h-4 rounded bg-gray-100" />
+                <div className="h-4 rounded bg-gray-100" />
+                <div className="h-7 rounded-full bg-gray-100" />
+                <div className="h-8 rounded-full bg-gray-100" />
+              </div>
+            ))}
+          </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center text-center py-20">
             <div className="w-14 h-14 rounded-2xl bg-gray-50 flex items-center justify-center mb-4">
@@ -361,12 +434,34 @@ export default function ApprovalsPage() {
           </div>
         )}
       </div>
+      {!loading && (page > 1 || hasNext) && (
+        <div className="mt-5 flex items-center justify-between">
+          <p className="text-sm text-gray-400">Page {page} · up to 12 approvals</p>
+          <div className="flex gap-2">
+            <button onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page === 1} className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-600 disabled:opacity-35">Previous</button>
+            <button onClick={goNext} disabled={!hasNext} className="rounded-full bg-black px-5 py-2 text-sm font-semibold text-white disabled:opacity-35">Next</button>
+          </div>
+        </div>
+      )}
       {editItem && (
         <EmailApprovalEditor
           item={editItem}
           onClose={() => setEditItem(null)}
-          onSaved={() => setEditItem(null)}
+          onSaved={() => { setEditItem(null); setReloadNonce((value) => value + 1); }}
         />
+      )}
+      {rejectAllOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm" onMouseDown={() => !rejectingAll && setRejectAllOpen(false)}>
+          <div role="dialog" aria-modal="true" aria-labelledby="reject-all-title" className="w-full max-w-md rounded-[28px] bg-white p-7 shadow-[0_30px_100px_rgba(15,23,42,0.35)]" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-2xl bg-red-50 text-red-600"><CloseCircle size={26} variant="Bold" /></div>
+            <h2 id="reject-all-title" className="text-2xl font-bold tracking-tight">Reject all pending approvals?</h2>
+            <p className="mt-3 text-sm leading-6 text-gray-500">This will reject {pendingCount.toLocaleString()} pending action{pendingCount === 1 ? "" : "s"} across the organization. No rejected action will be executed.</p>
+            <div className="mt-7 flex justify-end gap-3">
+              <button onClick={() => setRejectAllOpen(false)} disabled={rejectingAll} className="rounded-full px-5 py-2.5 text-sm font-semibold text-gray-500 hover:bg-gray-100 disabled:opacity-50">Cancel</button>
+              <button onClick={rejectAll} disabled={rejectingAll} className="rounded-full bg-red-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50">{rejectingAll ? "Rejecting…" : "Reject all"}</button>
+            </div>
+          </div>
+        </div>
       )}
     </main>
   );

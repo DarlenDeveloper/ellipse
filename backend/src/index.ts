@@ -763,6 +763,16 @@ export const getDashboardData = onCall(async (request) => {
   return (await import("./dashboard")).getDashboardData(enterpriseId, request.auth.uid);
 });
 
+export const listApprovals = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  return (await import("./approvals")).listApprovals(request.auth.uid, request.data ?? {});
+});
+
+export const rejectAllPendingApprovals = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  return (await import("./approvals")).rejectAllPending(request.auth.uid);
+});
+
 /** Extract structured task proposals from an inbox conversation. */
 export const extractConversationTasks = onCall({ secrets: [geminiKey] }, async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
