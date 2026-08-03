@@ -921,12 +921,28 @@ async function toolStoreList(enterpriseId: string, args: Record<string, unknown>
     // miss matches beyond the first page (the catalog spans 300+ products).
     if (opts.q || opts.brand || opts.category || opts.categoryId || opts.status) {
       const { items, total } = await listAllResource(enterpriseId, resource, opts, 1000);
+      const queryTerms = String(opts.q ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").split(" ")
+        .filter((term) => term.length > 1 && !["the", "with", "for"].includes(term));
+      const relevantItems = resource === "products" && queryTerms.length
+        ? items
+          .map((item: any) => {
+            const name = String(item.name ?? item.productName ?? item.title ?? "").trim();
+            const searchable = `${name} ${String(item.sku ?? item.code ?? "")}`.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+            const score = queryTerms.filter((term) => searchable.includes(term)).length;
+            return { item, score };
+          })
+          .filter(({ score }) => score === queryTerms.length)
+          .sort((a, b) => b.score - a.score)
+          .map(({ item }) => item)
+        : items;
       return JSON.stringify({
         resource,
         query: opts.q,
-        count: items.length,
-        total: total ?? items.length,
-        items: items.slice(0, 200),
+        count: relevantItems.length,
+        total: resource === "products" && queryTerms.length
+          ? relevantItems.length
+          : (total ?? items.length),
+        items: relevantItems.slice(0, 20),
       });
     }
     const limit = Number(args.limit) || 50;
@@ -1035,17 +1051,27 @@ async function toolCreateZohoQuotation(
     });
   }
   const normalizedCurrent = normalizeText(currentUserMessage);
+  const currentDigits = currentUserMessage.replace(/\D/g, "");
   const normalizedContext = normalizeText(recentConversation);
   const selectedListedOption = /\b(first|second|third|fourth|fifth|option\s*[1-5]|number\s*[1-5])\b/i.test(currentUserMessage);
   const unconfirmedItem = (items as Record<string, unknown>[]).find((item) => {
     const product = String(item.product ?? item.description ?? "").trim();
     const normalizedProduct = normalizeText(product);
+    const rate = Number(item.rate);
     const hasSpecificModelDetails = /\b\d+\s*(gb|tb)\b/i.test(product)
       || /\b(?:m[1-9]|iphone\s*\d+|thinkpad\s+[a-z0-9-]+|ideapad\s+[a-z0-9-]+|latitude\s+\d+|probook\s+\d+|elitebook\s+\d+)\b/i.test(product)
       || /\b[A-Z]{1,5}-?\d{2,}[A-Z0-9-]*\b/.test(product);
     const explicitlyNamed = normalizedProduct.length > 0 && normalizedCurrent.includes(normalizedProduct);
+    const rateDigits = String(rate).replace(/\D/g, "");
+    const suppliedRate = Number.isFinite(rate) && rate > 0 && rateDigits.length > 0 && currentDigits.includes(rateDigits);
+    // Some exact catalogue names (for example AirPods) have no model number.
+    // A sufficiently descriptive name plus its stated price is still an explicit
+    // user confirmation and must not be treated as a broad product request.
+    const explicitlyConfirmedCatalogueItem = explicitlyNamed
+      && suppliedRate
+      && (hasSpecificModelDetails || normalizedProduct.split(" ").length >= 5);
     const selectedFromListedOptions = selectedListedOption && normalizedProduct.length > 0 && normalizedContext.includes(normalizedProduct);
-    return !hasSpecificModelDetails || (!explicitlyNamed && !selectedFromListedOptions);
+    return !selectedFromListedOptions && !explicitlyConfirmedCatalogueItem;
   });
   if (unconfirmedItem) {
     const requested = String(unconfirmedItem.product ?? unconfirmedItem.description ?? "the requested product").trim();
@@ -1710,6 +1736,18 @@ function quotationProductSearchQuery(message: string, history: ChatTurn[]): stri
   if (!quotationRequest && !awaitingProduct) return null;
   if (!/\b(laptop|computer|macbook|iphone|phone|desktop|monitor|printer|tablet|server)\b/i.test(message)) return null;
 
+  // When the user copies an exact model from Ivy's immediately preceding
+  // catalogue options, that is the selection. Do not turn it into another
+  // broad catalogue search merely because the model family contains words.
+  const selectedText = message
+    .replace(/^\s*(?:yes[, ]+)?(?:that|this|the)\s+(?:one|model)[,.:;-]*\s*/i, "")
+    .replace(/\s*[-–—]?\s*(?:USD\s*|\$)\s*[\d,.]+\s*$/i, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const copiedFromOptions = selectedText.split(" ").filter(Boolean).length >= 5
+    && history.slice(-4).some((turn) => turn.role === "ivy"
+      && turn.text.toLowerCase().replace(/[^a-z0-9]+/g, " ").includes(selectedText));
+  if (copiedFromOptions) return null;
+
   const hasExactModel =
     /\bmacbook\s+(?:air|pro)\b[^\n]{0,70}\bm[1-9]\b[^\n]{0,70}\b\d+\s*gb\b/i.test(message) ||
     /\biphone\s+\d{2}\b/i.test(message) ||
@@ -1876,7 +1914,6 @@ export async function chatWithAgent(
         out = JSON.stringify({ error: "That action was already attempted in this request. It was not attempted again." });
       } else {
         seenCalls.add(signature);
-        if (MUTATING_TOOLS.has(call.name)) attemptedMutations.add(call.name);
         try {
           out = await runTool(enterpriseId, agentId, call.name, call.args, isOwner, connected, callerUid, personalZohoOwnerUid, requiresEmailAttachment, message, convo);
         } catch (e) {
@@ -1887,7 +1924,13 @@ export async function chatWithAgent(
       logger.info("tool result", { agentId, tool: call.name, enterpriseId, out: out.slice(0, 500) });
       results.push(`${call.name} → ${out}`);
       const parsedToolOutput = parseToolResult(out);
-      if (MUTATING_TOOLS.has(call.name) && !repeatedMutation && !parsedToolOutput?.needsInput) {
+      // A clarification response did not mutate anything. Allow the model to
+      // make one corrected call with newly resolved product details in this
+      // request, while seenCalls still blocks an identical retry loop.
+      if (MUTATING_TOOLS.has(call.name) && !repeatedMutation && !parsedToolOutput?.needsInput && !parsedToolOutput?.error) {
+        attemptedMutations.add(call.name);
+      }
+      if (MUTATING_TOOLS.has(call.name) && !repeatedMutation && !parsedToolOutput?.needsInput && !parsedToolOutput?.error) {
         actions.push({ name: call.name, args: call.args, result: out });
       }
       if (["create_document", "generate_report", "generate_owner_analysis", "create_quotation", "get_action_status", "create_zoho_quotation"].includes(call.name)) {
