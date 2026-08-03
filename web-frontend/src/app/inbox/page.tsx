@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Image from "next/image";
-import { collection, query, where, onSnapshot, doc, getDoc, Timestamp } from "firebase/firestore";
+import { collection, query, where, onSnapshot, Timestamp } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { DirectInbox, RefreshCircle } from "iconsax-react";
 import { db, functions } from "@/lib/firebase";
@@ -45,6 +45,15 @@ type Message = {
   timestamp?: { toDate: () => Date };
 };
 
+type InboxPeriod = "today" | "week" | "month" | "all";
+type InboxCursor = { lastMessageAt: number; id: string };
+const PERIODS: { id: InboxPeriod; label: string }[] = [
+  { id: "today", label: "Today" },
+  { id: "week", label: "This week" },
+  { id: "month", label: "This month" },
+  { id: "all", label: "All time" },
+];
+
 function fmtTime(ts?: { toDate: () => Date }): string {
   if (!ts) return "";
   const d = ts.toDate();
@@ -57,9 +66,15 @@ function fmtTime(ts?: { toDate: () => Date }): string {
 
 export default function InboxPage() {
   const { user } = useAuth();
-  const { allowsRecord } = useAccess();
-  const [enterpriseId, setEnterpriseId] = useState<string | null>(null);
+  const { enterpriseId } = useAccess();
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [period, setPeriod] = useState<InboxPeriod>("today");
+  const [page, setPage] = useState(1);
+  const [pageCursors, setPageCursors] = useState<Array<InboxCursor | null>>([null]);
+  const [nextCursor, setNextCursor] = useState<InboxCursor | null>(null);
+  const [hasNext, setHasNext] = useState(false);
+  const [conversationsLoading, setConversationsLoading] = useState(true);
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
@@ -69,78 +84,50 @@ export default function InboxPage() {
   const [requestedConversation, setRequestedConversation] = useState<string | null>(null);
   const [readAt, setReadAt] = useState<Record<string, Timestamp>>({});
 
-  // Restore the last inbox paint immediately; live Firestore listeners below
-  // replace it with authoritative data as soon as they respond.
-  useEffect(() => {
-    if (!user) return;
-    try {
-      const cached = JSON.parse(localStorage.getItem(`ellipse_inbox_${user.uid}`) ?? "null") as {
-        conversations?: (Omit<Conversation, "last_message_at"> & { last_message_at?: number })[];
-        readAt?: Record<string, number>;
-      } | null;
-      if (cached?.conversations) {
-        setConversations(cached.conversations.map((conversation) => ({
-          ...conversation,
-          last_message_at: conversation.last_message_at ? Timestamp.fromMillis(conversation.last_message_at) : undefined,
-        })));
-      }
-      if (cached?.readAt) {
-        setReadAt(Object.fromEntries(Object.entries(cached.readAt).map(([id, millis]) => [id, Timestamp.fromMillis(millis)])));
-      }
-    } catch {
-      localStorage.removeItem(`ellipse_inbox_${user.uid}`);
-    }
-  }, [user]);
-
-  const cacheInbox = useCallback((nextConversations: Conversation[], nextReadAt: Record<string, Timestamp>) => {
-    if (!user) return;
-    try {
-      localStorage.setItem(`ellipse_inbox_${user.uid}`, JSON.stringify({
-        conversations: nextConversations.map((conversation) => ({
-          ...conversation,
-          last_message_at: conversation.last_message_at?.toDate().getTime(),
-        })),
-        readAt: Object.fromEntries(Object.entries(nextReadAt).map(([id, timestamp]) => [id, timestamp.toDate().getTime()])),
-      }));
-    } catch {
-      // Storage can be unavailable in private/restricted browser contexts.
-    }
-  }, [user]);
-
-  useEffect(() => {
-    if (conversations.length || Object.keys(readAt).length) cacheInbox(conversations, readAt);
-  }, [conversations, readAt, cacheInbox]);
-
   useEffect(() => {
     setRequestedConversation(new URLSearchParams(window.location.search).get("conversation"));
   }, []);
 
-  // Resolve enterprise
+  // Server-paginated, access-scoped conversations (12 per page).
   useEffect(() => {
-    if (!user) return;
-    getDoc(doc(db, "users", user.uid)).then((snap) => {
-      const id = snap.data()?.enterprise_id as string | undefined;
-      if (id) setEnterpriseId(id);
-    });
-  }, [user]);
-
-  // Live conversations
-  useEffect(() => {
-    if (!enterpriseId) return;
-    const q = query(collection(db, "conversations"), where("enterprise_id", "==", enterpriseId));
-    return onSnapshot(q, (snap) => {
-      const convs = snap.docs
-        .map((d) => ({ id: d.id, ...(d.data() as Omit<Conversation, "id">) }))
-        // Employees only see conversations from channels they've been granted.
-        .filter((c) => allowsRecord(c.channel, c.connection_scope, c.owner_uid));
-      convs.sort((a, b) => (b.last_message_at?.toDate().getTime() ?? 0) - (a.last_message_at?.toDate().getTime() ?? 0));
+    if (!enterpriseId || !user) return;
+    const cursor = pageCursors[page - 1] ?? null;
+    const cacheKey = `ellipse_inbox_${user.uid}_${period}_${page}_${cursor?.id ?? "start"}`;
+    let active = true;
+    setConversationsLoading(true);
+    const applyPage = (payload: { conversations: Array<Omit<Conversation, "last_message_at"> & { last_message_at?: number | null }>; hasNext: boolean; nextCursor?: InboxCursor | null }) => {
+      if (!active) return;
+      const convs = payload.conversations.map((conversation) => ({
+        ...conversation,
+        last_message_at: conversation.last_message_at ? Timestamp.fromMillis(conversation.last_message_at) : undefined,
+      }));
       setConversations(convs);
-      setSelectedId((cur) => {
-        if (requestedConversation && convs.some((c) => c.id === requestedConversation)) return requestedConversation;
-        return cur && convs.some((c) => c.id === cur) ? cur : convs[0]?.id ?? null;
+      setHasNext(payload.hasNext);
+      setNextCursor(payload.nextCursor ?? null);
+      setSelectedId((current) => {
+        if (requestedConversation && convs.some((conversation) => conversation.id === requestedConversation)) return requestedConversation;
+        return current && convs.some((conversation) => conversation.id === current) ? current : convs[0]?.id ?? null;
       });
+      setConversationsLoading(false);
+    };
+    try {
+      const cached = JSON.parse(localStorage.getItem(cacheKey) ?? "null") as { savedAt: number; payload: Parameters<typeof applyPage>[0] } | null;
+      if (cached && Date.now() - cached.savedAt < 2 * 60_000 && refreshNonce === 0) {
+        applyPage(cached.payload);
+        return () => { active = false; };
+      }
+    } catch { localStorage.removeItem(cacheKey); }
+    httpsCallable(functions, "listInboxConversations")({ period, cursor }).then((result) => {
+      const payload = result.data as Parameters<typeof applyPage>[0];
+      applyPage(payload);
+      try { localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), payload })); } catch { /* storage unavailable */ }
+      if (refreshNonce > 0) setRefreshNonce(0);
+    }).catch((error) => {
+      console.error("Conversation page failed", error);
+      if (active) { setConversations([]); setHasNext(false); setConversationsLoading(false); }
     });
-  }, [enterpriseId, allowsRecord, requestedConversation]);
+    return () => { active = false; };
+  }, [enterpriseId, page, pageCursors, period, refreshNonce, requestedConversation, user]);
 
   // Read receipts are private to the signed-in user.
   useEffect(() => {
@@ -221,7 +208,26 @@ export default function InboxPage() {
       httpsCallable(functions, "syncOutlook")({ enterpriseId }),
     ]);
     setSyncing(false);
+    setRefreshNonce((value) => value + 1);
   }, [enterpriseId, syncing]);
+
+  const changePeriod = (next: InboxPeriod) => {
+    setPeriod(next);
+    setPage(1);
+    setPageCursors([null]);
+    setNextCursor(null);
+    setHasNext(false);
+  };
+
+  const nextPage = () => {
+    if (!hasNext || !nextCursor || conversationsLoading) return;
+    setPageCursors((current) => {
+      const next = [...current];
+      next[page] = nextCursor;
+      return next;
+    });
+    setPage((current) => current + 1);
+  };
 
   const filteredConversations = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -265,8 +271,19 @@ export default function InboxPage() {
             </button>
           </div>
 
+          <div className="flex gap-1 overflow-x-auto border-b border-gray-100 px-3 py-3">
+            {PERIODS.map((item) => (
+              <button key={item.id} type="button" onClick={() => changePeriod(item.id)} className={cn("shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition", period === item.id ? "bg-black text-white" : "bg-gray-50 text-gray-500 hover:bg-gray-100")}>{item.label}</button>
+            ))}
+          </div>
+
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {filteredConversations.length === 0 && (
+            {conversationsLoading && conversations.length === 0 && (
+              <div className="space-y-2" aria-label="Loading conversations">
+                {[0, 1, 2, 3, 4, 5].map((item) => <div key={item} className="flex animate-pulse items-center gap-3 rounded-2xl p-4"><span className="h-9 w-9 rounded-full bg-gray-100" /><span className="flex-1"><span className="block h-4 w-2/3 rounded bg-gray-100" /><span className="mt-2 block h-3 w-5/6 rounded bg-gray-100" /></span></div>)}
+              </div>
+            )}
+            {!conversationsLoading && filteredConversations.length === 0 && (
               <div className="text-center text-sm text-gray-400 mt-10 px-6">
                 {syncing
                   ? "Syncing your mail…"
@@ -312,6 +329,11 @@ export default function InboxPage() {
                 </button>
               );
             })}
+          </div>
+          <div className="flex items-center justify-between border-t border-gray-100 px-4 py-3">
+            <button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1 || conversationsLoading} className="rounded-full border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 disabled:opacity-35">Previous</button>
+            <span className="text-xs font-medium text-gray-400">Page {page}</span>
+            <button type="button" onClick={nextPage} disabled={!hasNext || conversationsLoading} className="rounded-full bg-black px-4 py-1.5 text-xs font-medium text-white disabled:opacity-35">Next</button>
           </div>
         </div>
 

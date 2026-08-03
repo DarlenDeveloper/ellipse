@@ -804,6 +804,11 @@ export const markConversationRead = onCall(async (request) => {
   return markConversationRead(request.auth.uid, request.data ?? {});
 });
 
+export const listInboxConversations = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  return (await import("./inbox")).listInboxConversations(request.auth.uid, request.data ?? {});
+});
+
 export const ensureTeamChat = onCall(async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
   const chat = await import("./internalChat");
