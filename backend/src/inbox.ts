@@ -34,14 +34,17 @@ export async function listInboxConversations(callerUid: string, args: {
   const enterpriseId = user?.enterprise_id as string | undefined;
   if (!enterpriseId) throw new HttpsError("failed-precondition", "You are not part of an organization.");
   const role = (user?.role as Role | undefined) ?? "employee";
-  const isManager = role === "owner" || role === "admin";
+  const isOwner = role === "owner";
+  const isAdmin = role === "admin";
   const grants = await grantedTypesFor(enterpriseId, callerUid, role);
   const allowed = grants === "all" ? new Set<string>() : grants;
   const period: InboxPeriod = ["today", "week", "month", "all"].includes(String(args.period)) ? args.period! : "today";
   const requestedScope: InboxScope = ["all", "org", "personal"].includes(String(args.scope)) ? args.scope! : "all";
-  // Scope tabs are a manager view. Employees retain their existing grant and
-  // personal-ownership filtering regardless of crafted callable arguments.
-  const scope: InboxScope = isManager ? requestedScope : "all";
+  // Only the organization owner has the All / Organization / Personal view.
+  // "Personal" means the owner's own connected mailbox, never every personal
+  // mailbox in the organization. Admins are restricted to shared org mail;
+  // employees retain grant + ownership filtering below.
+  const scope: InboxScope = isOwner ? requestedScope : isAdmin ? "org" : "all";
   const start = periodStart(period);
 
   let q: FirebaseFirestore.Query = db.collection("conversations")
@@ -64,9 +67,13 @@ export async function listInboxConversations(callerUid: string, args: {
       const data = item.data();
       const connectionScope = data.connection_scope === "personal" ? "personal" : "org";
       if (scope !== "all" && connectionScope !== scope) continue;
-      const canSee = isManager || (data.connection_scope === "personal"
-        ? data.owner_uid === callerUid
-        : allowed.has(String(data.channel ?? "")));
+      const canSee = isOwner
+        ? (connectionScope === "org" || data.owner_uid === callerUid)
+        : isAdmin
+          ? connectionScope === "org"
+          : (connectionScope === "personal"
+            ? data.owner_uid === callerUid
+            : allowed.has(String(data.channel ?? "")));
       if (!canSee) continue;
       const timestamp = data.last_message_at as Timestamp | undefined;
       visible.push({

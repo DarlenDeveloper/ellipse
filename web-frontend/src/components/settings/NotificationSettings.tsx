@@ -8,6 +8,7 @@ import { disablePushNotifications, enablePushNotifications } from "@/lib/push-no
 
 const options = [
   { key: "newMessage", label: "New message in inbox", description: "Alerts when a new customer message is received." },
+  { key: "teamChat", label: "New team-chat message", description: "Alerts when an organization member sends you a direct or group message." },
   { key: "agentApproval", label: "Agent requires approval", description: "Alerts when an agent action is waiting for review." },
   { key: "actionResult", label: "Approved action result", description: "Alerts when an approved action completes or fails." },
   { key: "accessRequest", label: "Integration access", description: "Alerts for new requests and approval decisions." },

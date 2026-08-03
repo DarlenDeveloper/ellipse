@@ -23,7 +23,9 @@ const preferenceKey: Partial<Record<NotificationKind, string>> = {
   access_requested: "accessRequest",
   access_approved: "accessRequest",
   access_denied: "accessRequest",
-  internal_message: "newMessage",
+  // Team chat is independently configurable. Reusing newMessage meant users
+  // who disabled inbox alerts also lost internal messages without realizing it.
+  internal_message: "teamChat",
 };
 
 export async function notifyUsers(args: {

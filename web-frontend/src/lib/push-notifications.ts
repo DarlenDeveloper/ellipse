@@ -22,6 +22,17 @@ export async function enablePushNotifications() {
   return token;
 }
 
+/** Refresh the server-side device registration without prompting again. */
+export async function refreshPushRegistration() {
+  if (!("Notification" in window) || Notification.permission !== "granted") return null;
+  const { messaging, registration } = await messagingAndWorker();
+  const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
+  if (!token) return null;
+  await httpsCallable(functions, "registerPushToken")({ token });
+  localStorage.setItem("mercury_push_token", token);
+  return token;
+}
+
 export async function disablePushNotifications() {
   const token = localStorage.getItem("mercury_push_token");
   if (token) await httpsCallable(functions, "unregisterPushToken")({ token });

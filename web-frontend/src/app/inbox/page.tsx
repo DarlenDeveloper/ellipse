@@ -72,7 +72,7 @@ function fmtTime(ts?: { toDate: () => Date }): string {
 
 export default function InboxPage() {
   const { user } = useAuth();
-  const { enterpriseId, isManager } = useAccess();
+  const { enterpriseId, role } = useAccess();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [period, setPeriod] = useState<InboxPeriod>("today");
   const [scope, setScope] = useState<InboxScope>("all");
@@ -99,7 +99,9 @@ export default function InboxPage() {
   useEffect(() => {
     if (!enterpriseId || !user) return;
     const cursor = pageCursors[page - 1] ?? null;
-    const cacheKey = `ellipse_inbox_${user.uid}_${scope}_${period}_${page}_${cursor?.id ?? "start"}`;
+    // v2 reflects owner-only Personal scope; do not replay older aggregate
+    // personal-mailbox pages cached before that boundary was enforced.
+    const cacheKey = `ellipse_inbox_v2_${user.uid}_${scope}_${period}_${page}_${cursor?.id ?? "start"}`;
     let active = true;
     setConversationsLoading(true);
     const applyPage = (payload: { conversations: Array<Omit<Conversation, "last_message_at"> & { last_message_at?: number | null }>; hasNext: boolean; nextCursor?: InboxCursor | null }) => {
@@ -210,13 +212,15 @@ export default function InboxPage() {
     setSyncing(true);
     // Pull every connected channel; ignore ones that aren't connected.
     await Promise.allSettled([
-      httpsCallable(functions, "syncGmail")({ enterpriseId }),
+      // "All" keeps the historical organization refresh behavior. On the
+      // Personal tab, refresh the signed-in user's own personal connection.
+      httpsCallable(functions, "syncGmail")({ enterpriseId, scope: scope === "personal" ? "personal" : "org" }),
       httpsCallable(functions, "syncSmtp")({ enterpriseId }),
       httpsCallable(functions, "syncOutlook")({ enterpriseId }),
     ]);
     setSyncing(false);
     setRefreshNonce((value) => value + 1);
-  }, [enterpriseId, syncing]);
+  }, [enterpriseId, scope, syncing]);
 
   const changePeriod = (next: InboxPeriod) => {
     setPeriod(next);
@@ -286,7 +290,7 @@ export default function InboxPage() {
             </button>
           </div>
 
-          {isManager && (
+          {role === "owner" && (
             <div className="flex gap-1 border-b border-gray-100 px-3 pt-3">
               {SCOPES.map((item) => (
                 <button key={item.id} type="button" onClick={() => changeScope(item.id)} className={cn("flex-1 rounded-t-xl px-2 py-2 text-xs font-semibold transition", scope === item.id ? "bg-black text-white" : "bg-gray-50 text-gray-500 hover:bg-gray-100")}>{item.label}</button>

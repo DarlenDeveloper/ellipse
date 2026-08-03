@@ -180,7 +180,16 @@ export const syncGmail = onCall(
 
     const user = (await (await import("./admin")).db.doc(`users/${request.auth.uid}`).get()).data();
     if (user?.enterprise_id !== enterpriseId) throw new HttpsError("permission-denied", "Wrong organization.");
-    const ownerUid = user?.role === "employee" ? request.auth.uid : undefined;
+    // Connection scope is chosen when OAuth is connected; role does not define
+    // whether a mailbox is personal. Owners and admins can also connect a
+    // personal mailbox, so preserve the explicit inbox scope during refresh.
+    const requestedScope = request.data?.scope === "personal" ? "personal" : "org";
+    const ownerUid = requestedScope === "personal" ? request.auth.uid : undefined;
+    const connectionId = `${enterpriseId}_google-workspace${ownerUid ? `_personal_${ownerUid}` : ""}`;
+    const connection = await (await import("./admin")).db.doc(`connections/${connectionId}`).get();
+    if (!connection.exists || connection.data()?.status !== "active") {
+      throw new HttpsError("failed-precondition", `${requestedScope === "personal" ? "Personal" : "Organization"} Gmail is not connected.`);
+    }
 
     const { ingestRecentGmail } = await import("./connections/google");
     const count = await ingestRecentGmail(enterpriseId, 15, ownerUid);
