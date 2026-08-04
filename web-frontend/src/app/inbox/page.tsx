@@ -101,7 +101,7 @@ export default function InboxPage() {
     const cursor = pageCursors[page - 1] ?? null;
     // v2 reflects owner-only Personal scope; do not replay older aggregate
     // personal-mailbox pages cached before that boundary was enforced.
-    const cacheKey = `ellipse_inbox_v2_${user.uid}_${scope}_${period}_${page}_${cursor?.id ?? "start"}`;
+    const cacheKey = `ellipse_inbox_v3_${user.uid}_${scope}_${period}_${page}_${cursor?.id ?? "start"}`;
     let active = true;
     setConversationsLoading(true);
     const applyPage = (payload: { conversations: Array<Omit<Conversation, "last_message_at"> & { last_message_at?: number | null }>; hasNext: boolean; nextCursor?: InboxCursor | null }) => {

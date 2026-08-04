@@ -46,6 +46,27 @@ export async function listInboxConversations(callerUid: string, args: {
   // employees retain grant + ownership filtering below.
   const scope: InboxScope = isOwner ? requestedScope : isAdmin ? "org" : "all";
   const start = periodStart(period);
+  // Conversations created before owner-aware scoping may have been stored as
+  // org records. The personal connection metadata is the authoritative mailbox
+  // identity, so use its exact address to classify those legacy conversations.
+  let ownerPersonalEmail = "";
+  if (isOwner) {
+    const personalConnection = await db.doc(`connections/${enterpriseId}_google-workspace_personal_${callerUid}`).get();
+    if (personalConnection.exists && personalConnection.data()?.status === "active") {
+      ownerPersonalEmail = String(personalConnection.data()?.account_email ?? "").trim().toLowerCase();
+    } else {
+      // Older organizations connected the owner's mailbox before connection
+      // scopes existed. Mercury's owner mailbox is such a shared connection;
+      // treat it as the owner's Personal tab only when its account address
+      // exactly matches the signed-in owner's user email.
+      const sharedConnection = await db.doc(`connections/${enterpriseId}_google-workspace`).get();
+      const sharedEmail = String(sharedConnection.data()?.account_email ?? "").trim().toLowerCase();
+      const ownerEmail = String(user?.email ?? "").trim().toLowerCase();
+      if (sharedConnection.exists && sharedConnection.data()?.status === "active" && sharedEmail && sharedEmail === ownerEmail) {
+        ownerPersonalEmail = sharedEmail;
+      }
+    }
+  }
 
   let q: FirebaseFirestore.Query = db.collection("conversations")
     .where("enterprise_id", "==", enterpriseId);
@@ -66,9 +87,18 @@ export async function listInboxConversations(callerUid: string, args: {
       lastScanned = item;
       const data = item.data();
       const connectionScope = data.connection_scope === "personal" ? "personal" : "org";
-      if (scope !== "all" && connectionScope !== scope) continue;
+      const accountEmail = String(data.account_email ?? "").trim().toLowerCase();
+      const belongsToOwnerPersonal = data.owner_uid === callerUid
+        || Boolean(ownerPersonalEmail && accountEmail === ownerPersonalEmail);
+      // For the owner-facing tabs, Personal is the owner's mailbox and
+      // Organization is every other organization mailbox, regardless of the
+      // underlying employee connection's private/shared storage scope.
+      const effectiveScope: InboxScope = isOwner
+        ? (belongsToOwnerPersonal ? "personal" : "org")
+        : connectionScope;
+      if (scope !== "all" && effectiveScope !== scope) continue;
       const canSee = isOwner
-        ? (connectionScope === "org" || data.owner_uid === callerUid)
+        ? true
         : isAdmin
           ? connectionScope === "org"
           : (connectionScope === "personal"
@@ -82,8 +112,8 @@ export async function listInboxConversations(callerUid: string, args: {
         customer_ref: data.customer_ref ?? "",
         channel: data.channel ?? "",
         account_email: data.account_email ?? "",
-        connection_scope: data.connection_scope ?? "org",
-        owner_uid: data.owner_uid ?? null,
+        connection_scope: effectiveScope,
+        owner_uid: belongsToOwnerPersonal ? callerUid : data.owner_uid ?? null,
         last_message_at: timestamp?.toMillis() ?? null,
       });
       if (visible.length >= PAGE_SIZE + 1) break;
