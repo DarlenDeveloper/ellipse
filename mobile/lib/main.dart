@@ -596,16 +596,18 @@ class _AppShellState extends State<AppShell> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: Text(
-            _destinations[_selectedIndex].label,
-            style: Theme.of(
-              context,
-            ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w600),
-          ),
-        ),
-      ),
+      body: _selectedIndex == 0
+          ? const _HomeDashboard()
+          : SafeArea(
+              child: Center(
+                child: Text(
+                  _destinations[_selectedIndex].label,
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
       bottomNavigationBar: SafeArea(
         minimum: const EdgeInsets.fromLTRB(20, 8, 20, 16),
         child: Row(
@@ -628,6 +630,559 @@ class _AppShellState extends State<AppShell> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _HomeDashboard extends StatelessWidget {
+  const _HomeDashboard();
+
+  String get _greeting {
+    final hour = DateTime.now().hour;
+    if (hour < 12) return 'Good Morning';
+    if (hour < 17) return 'Good Afternoon';
+    return 'Good Evening';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      bottom: false,
+      child: CustomScrollView(
+        slivers: [
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(22, 22, 22, 112),
+            sliver: SliverList.list(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _greeting,
+                            style: GoogleFonts.poppins(
+                              color: const Color(0xFFAAA9A5),
+                              fontSize: 17,
+                              fontWeight: FontWeight.w500,
+                              height: 1.2,
+                            ),
+                          ),
+                          Text(
+                            'Tobechukwu!',
+                            style: GoogleFonts.poppins(
+                              color: const Color(0xFF111311),
+                              fontSize: 24,
+                              fontWeight: FontWeight.w700,
+                              height: 1.22,
+                              letterSpacing: -0.7,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      width: 54,
+                      height: 54,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF1D2825),
+                        shape: BoxShape.circle,
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        'TO',
+                        style: GoogleFonts.poppins(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 32),
+                Row(
+                  children: [
+                    Text(
+                      'Workspace overview',
+                      style: GoogleFonts.poppins(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.3,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      'Live',
+                      style: GoogleFonts.poppins(
+                        color: const Color(0xFF92928E),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    const DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Color(0xFF78A68A),
+                        shape: BoxShape.circle,
+                      ),
+                      child: SizedBox.square(dimension: 7),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                const Row(
+                  children: [
+                    Expanded(
+                      child: _MetricCard(
+                        label: 'Messages',
+                        value: '5,839',
+                        caption: 'all time',
+                        icon: Iconsax.message_2,
+                        visual: _MetricVisual.ring,
+                      ),
+                    ),
+                    SizedBox(width: 12),
+                    Expanded(
+                      child: _MetricCard(
+                        label: 'Open threads',
+                        value: '28',
+                        caption: 'active',
+                        icon: Iconsax.routing,
+                        visual: _MetricVisual.ringLow,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                const Row(
+                  children: [
+                    Expanded(
+                      child: _MetricCard(
+                        label: 'Pending',
+                        value: '12',
+                        caption: 'actions',
+                        icon: Iconsax.clock,
+                        visual: _MetricVisual.bars,
+                      ),
+                    ),
+                    SizedBox(width: 12),
+                    Expanded(
+                      child: _MetricCard(
+                        label: 'Active agents',
+                        value: '6',
+                        caption: 'connected',
+                        icon: Iconsax.cpu,
+                        visual: _MetricVisual.line,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 30),
+                _SectionHeader(title: 'Pending approvals', onTap: () {}),
+                const SizedBox(height: 12),
+                const _HomeListCard(
+                  children: [
+                    _ApprovalRow(
+                      asset: 'assets/images/integration-zoho.png',
+                      title: 'Send quotation',
+                      subtitle: 'Zoho Agent · 8 min ago',
+                    ),
+                    _ApprovalRow(
+                      asset: 'assets/images/integration-gmail.png',
+                      title: 'Reply to customer',
+                      subtitle: 'Gmail Agent · 24 min ago',
+                    ),
+                    _ApprovalRow(
+                      asset: 'assets/images/integration-mercury.png',
+                      title: 'Create sales order',
+                      subtitle: 'Mercury Agent · 1 hr ago',
+                      isLast: true,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 28),
+                _SectionHeader(title: 'Recent threads', onTap: () {}),
+                const SizedBox(height: 12),
+                const _HomeListCard(
+                  children: [
+                    _ThreadRow(
+                      asset: 'assets/images/integration-gmail.png',
+                      title: 'Updated printer quotation',
+                      subtitle: 'Akol Agencies · Gmail',
+                      time: '10:42',
+                    ),
+                    _ThreadRow(
+                      asset: 'assets/images/integration-whatsapp.png',
+                      title: 'Delivery confirmation',
+                      subtitle: 'James M. · WhatsApp',
+                      time: '09:18',
+                      isLast: true,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+enum _MetricVisual { ring, ringLow, bars, line }
+
+class _MetricCard extends StatelessWidget {
+  const _MetricCard({
+    required this.label,
+    required this.value,
+    required this.caption,
+    required this.icon,
+    required this.visual,
+  });
+
+  final String label;
+  final String value;
+  final String caption;
+  final IconData icon;
+  final _MetricVisual visual;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 166,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEEEDEA),
+        borderRadius: BorderRadius.circular(28),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 21, color: const Color(0xFF171917)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.poppins(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.25,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const Spacer(),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      value,
+                      style: GoogleFonts.poppins(
+                        fontSize: 28,
+                        height: 1,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -1,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      caption,
+                      style: GoogleFonts.poppins(
+                        color: const Color(0xFF8A8A86),
+                        fontSize: 12,
+                        height: 1,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox.square(
+                dimension: 54,
+                child: CustomPaint(painter: _MetricPainter(visual)),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MetricPainter extends CustomPainter {
+  const _MetricPainter(this.visual);
+
+  final _MetricVisual visual;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final dark = Paint()
+      ..color = const Color(0xFF171917)
+      ..strokeWidth = 6
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+    final light = Paint()
+      ..color = const Color(0xFFD3D2CF)
+      ..strokeWidth = 6
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+
+    if (visual == _MetricVisual.ring || visual == _MetricVisual.ringLow) {
+      final rect = Rect.fromLTWH(5, 5, size.width - 10, size.height - 10);
+      canvas.drawArc(rect, 0, math.pi * 2, false, light);
+      canvas.drawArc(
+        rect,
+        -math.pi / 2,
+        math.pi * (visual == _MetricVisual.ring ? 1.45 : 0.86),
+        false,
+        dark,
+      );
+      return;
+    }
+
+    if (visual == _MetricVisual.bars) {
+      final heights = [22.0, 34.0, 43.0, 29.0, 48.0, 38.0];
+      for (var index = 0; index < heights.length; index++) {
+        final paint = Paint()
+          ..color = index == 3
+              ? const Color(0xFF171917)
+              : const Color(0xFFD3D2CF)
+          ..strokeWidth = 6
+          ..strokeCap = StrokeCap.round;
+        final x = 5.0 + index * 9;
+        canvas.drawLine(
+          Offset(x, size.height - 3),
+          Offset(x, size.height - heights[index]),
+          paint,
+        );
+      }
+      return;
+    }
+
+    final path = Path()
+      ..moveTo(2, 46)
+      ..cubicTo(10, 44, 9, 27, 18, 29)
+      ..cubicTo(27, 32, 27, 11, 36, 12)
+      ..cubicTo(45, 13, 43, 29, 52, 25);
+    canvas.drawPath(path, dark..strokeWidth = 3.4);
+  }
+
+  @override
+  bool shouldRepaint(covariant _MetricPainter oldDelegate) =>
+      oldDelegate.visual != visual;
+}
+
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.title, required this.onTap});
+
+  final String title;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            title,
+            style: GoogleFonts.poppins(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              letterSpacing: -0.3,
+            ),
+          ),
+        ),
+        TextButton(
+          onPressed: onTap,
+          child: Text(
+            'View all',
+            style: GoogleFonts.poppins(
+              color: const Color(0xFF858580),
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _HomeListCard extends StatelessWidget {
+  const _HomeListCard({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(children: children);
+  }
+}
+
+class _ApprovalRow extends StatelessWidget {
+  const _ApprovalRow({
+    required this.asset,
+    required this.title,
+    required this.subtitle,
+    this.isLast = false,
+  });
+
+  final String asset;
+  final String title;
+  final String subtitle;
+  final bool isLast;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 15),
+      decoration: BoxDecoration(
+        border: isLast
+            ? null
+            : const Border(bottom: BorderSide(color: Color(0xFFF0F0ED))),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            alignment: Alignment.center,
+            child: Image.asset(
+              asset,
+              width: 32,
+              height: 32,
+              fit: BoxFit.contain,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: GoogleFonts.poppins(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  style: GoogleFonts.poppins(
+                    color: const Color(0xFF999994),
+                    fontSize: 10.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF1F1EE),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Text(
+              'Review',
+              style: GoogleFonts.poppins(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ThreadRow extends StatelessWidget {
+  const _ThreadRow({
+    required this.asset,
+    required this.title,
+    required this.subtitle,
+    required this.time,
+    this.isLast = false,
+  });
+
+  final String asset;
+  final String title;
+  final String subtitle;
+  final String time;
+  final bool isLast;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 15),
+      decoration: BoxDecoration(
+        border: isLast
+            ? null
+            : const Border(bottom: BorderSide(color: Color(0xFFF0F0ED))),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 42,
+            height: 42,
+            child: Center(
+              child: Image.asset(
+                asset,
+                width: 30,
+                height: 30,
+                fit: BoxFit.contain,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.poppins(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.poppins(
+                    color: const Color(0xFF999994),
+                    fontSize: 10.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            time,
+            style: GoogleFonts.poppins(
+              color: const Color(0xFFA5A5A0),
+              fontSize: 10,
+            ),
+          ),
+        ],
       ),
     );
   }
