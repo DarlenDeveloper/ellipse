@@ -716,6 +716,7 @@ class _ChatScreenState extends State<_ChatScreen> {
   _groupSubscription;
 
   List<Map<String, dynamic>> _directChats = [];
+  List<Map<String, dynamic>> _members = [];
   Map<String, dynamic>? _groupChat;
   Map<String, int> _readAt = {};
   String _tab = 'All';
@@ -754,6 +755,41 @@ class _ChatScreenState extends State<_ChatScreen> {
       final enterpriseId = profile.data()?['enterprise_id'] as String?;
       if (enterpriseId == null) throw StateError('No organisation found.');
 
+      _subscriptions.add(
+        FirebaseFirestore.instance
+            .collection('users')
+            .where('enterprise_id', isEqualTo: enterpriseId)
+            .snapshots()
+            .listen(
+              (snapshot) {
+                if (!mounted) return;
+                final members = snapshot.docs
+                    .map((doc) => {'id': doc.id, ...doc.data()})
+                    .where(
+                      (member) =>
+                          member['id'] != user.uid &&
+                          (member['status'] ?? 'active') == 'active',
+                    )
+                    .toList();
+                members.sort(
+                  (a, b) => _memberName(a).compareTo(_memberName(b)),
+                );
+                setState(() {
+                  _members = members;
+                  _loading = false;
+                });
+                _saveCache(user.uid);
+              },
+              onError: (Object _) {
+                if (mounted) {
+                  setState(
+                    () => _error = 'Organisation members could not be loaded.',
+                  );
+                }
+              },
+            ),
+      );
+
       final groupResult = await FirebaseFunctions.instanceFor(
         region: 'us-central1',
       ).httpsCallable('ensureTeamChat').call<Map<String, dynamic>>({});
@@ -775,52 +811,72 @@ class _ChatScreenState extends State<_ChatScreen> {
       _subscriptions.add(
         FirebaseFirestore.instance
             .collection('internal_chats')
+            .where('enterprise_id', isEqualTo: enterpriseId)
             .where('participant_uids', arrayContains: user.uid)
             .limit(30)
             .snapshots()
-            .listen((snapshot) {
-              if (!mounted) return;
-              final chats = snapshot.docs
-                  .map((doc) => {'id': doc.id, ...doc.data()})
-                  .where(
-                    (chat) =>
-                        chat['enterprise_id'] == enterpriseId &&
-                        chat['type'] == 'direct',
-                  )
-                  .toList();
-              chats.sort(
-                (a, b) => _millis(
-                  b['last_message_at'],
-                ).compareTo(_millis(a['last_message_at'])),
-              );
-              setState(() {
-                _directChats = chats;
-                _loading = false;
-              });
-              _updateUnreadBadge();
-              _saveCache(user.uid);
-            }),
+            .listen(
+              (snapshot) {
+                if (!mounted) return;
+                final chats = snapshot.docs
+                    .map((doc) => {'id': doc.id, ...doc.data()})
+                    .where(
+                      (chat) =>
+                          chat['enterprise_id'] == enterpriseId &&
+                          chat['type'] == 'direct',
+                    )
+                    .toList();
+                chats.sort(
+                  (a, b) => _millis(
+                    b['last_message_at'],
+                  ).compareTo(_millis(a['last_message_at'])),
+                );
+                setState(() {
+                  _directChats = chats;
+                  _loading = false;
+                });
+                _updateUnreadBadge();
+                _saveCache(user.uid);
+              },
+              onError: (Object _) {
+                if (mounted) {
+                  setState(
+                    () => _error = 'Direct conversations could not be loaded.',
+                  );
+                }
+              },
+            ),
       );
 
       _subscriptions.add(
         FirebaseFirestore.instance
             .collection('internal_chat_reads')
             .where('user_id', isEqualTo: user.uid)
+            .where('enterprise_id', isEqualTo: enterpriseId)
             .limit(60)
             .snapshots()
-            .listen((snapshot) {
-              if (!mounted) return;
-              final reads = <String, int>{};
-              for (final doc in snapshot.docs) {
-                final data = doc.data();
-                if (data['enterprise_id'] == enterpriseId) {
-                  reads['${data['chat_id']}'] = _millis(data['read_at']);
+            .listen(
+              (snapshot) {
+                if (!mounted) return;
+                final reads = <String, int>{};
+                for (final doc in snapshot.docs) {
+                  final data = doc.data();
+                  if (data['enterprise_id'] == enterpriseId) {
+                    reads['${data['chat_id']}'] = _millis(data['read_at']);
+                  }
                 }
-              }
-              setState(() => _readAt = reads);
-              _updateUnreadBadge();
-              _saveCache(user.uid);
-            }),
+                setState(() => _readAt = reads);
+                _updateUnreadBadge();
+                _saveCache(user.uid);
+              },
+              onError: (Object _) {
+                if (mounted) {
+                  setState(
+                    () => _error = 'Unread chat status could not be loaded.',
+                  );
+                }
+              },
+            ),
       );
     } catch (_) {
       if (!mounted) return;
@@ -867,6 +923,9 @@ class _ChatScreenState extends State<_ChatScreen> {
         _directChats = ((cached['direct'] as List?) ?? const [])
             .map((item) => Map<String, dynamic>.from(item as Map))
             .toList();
+        _members = ((cached['members'] as List?) ?? const [])
+            .map((item) => Map<String, dynamic>.from(item as Map))
+            .toList();
         _readAt = Map<String, dynamic>.from(
           cached['reads'] as Map? ?? const {},
         ).map((key, value) => MapEntry(key, (value as num).toInt()));
@@ -896,6 +955,7 @@ class _ChatScreenState extends State<_ChatScreen> {
         'savedAt': DateTime.now().millisecondsSinceEpoch,
         'group': serialise(_groupChat),
         'direct': _directChats.map(serialise).toList(),
+        'members': _members,
         'reads': _readAt,
       }),
     );
@@ -903,6 +963,7 @@ class _ChatScreenState extends State<_ChatScreen> {
 
   String _chatName(Map<String, dynamic> chat) {
     if (chat['type'] == 'group') return '${chat['name'] ?? 'Team Chat'}';
+    if (chat['member_name'] != null) return '${chat['member_name']}';
     final uid = FirebaseAuth.instance.currentUser?.uid;
     final names = Map<String, dynamic>.from(
       chat['participant_names'] as Map? ?? const {},
@@ -915,6 +976,17 @@ class _ChatScreenState extends State<_ChatScreen> {
         .where((value) => value != uid)
         .firstOrNull;
     return '${names[otherUid] ?? emails[otherUid] ?? 'Organisation member'}';
+  }
+
+  String _memberName(Map<String, dynamic> member) {
+    return '${member['display_name'] ?? member['email'] ?? 'Member'}';
+  }
+
+  Map<String, dynamic>? _chatForMember(String uid) {
+    return _directChats.cast<Map<String, dynamic>?>().firstWhere(
+      (chat) => (chat?['participant_uids'] as List?)?.contains(uid) == true,
+      orElse: () => null,
+    );
   }
 
   String _time(dynamic value) {
@@ -938,7 +1010,18 @@ class _ChatScreenState extends State<_ChatScreen> {
   }
 
   List<Map<String, dynamic>> get _visibleChats {
-    var chats = [?_groupChat, ..._directChats];
+    final memberRows = _members.map((member) {
+      final existing = _chatForMember(member['id'] as String);
+      return existing ??
+          <String, dynamic>{
+            'id': 'member_${member['id']}',
+            'type': 'direct',
+            'member_uid': member['id'],
+            'member_name': _memberName(member),
+            'member_email': member['email'],
+          };
+    });
+    var chats = [?_groupChat, ...memberRows];
     if (_tab == 'Unread') chats = chats.where(_isUnread).toList();
     if (_tab == 'Groups') {
       chats = chats.where((chat) => chat['type'] == 'group').toList();
@@ -980,7 +1063,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                     ),
                     IconButton(
                       onPressed: () {},
-                      icon: const Icon(Iconsax.message_add_1),
+                      icon: const Icon(Iconsax.add_circle, size: 27),
                       tooltip: 'New conversation',
                     ),
                   ],
@@ -1052,7 +1135,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                     return _ChatListRow(
                       name: _chatName(chat),
                       preview:
-                          '${chat['last_message'] ?? (chat['type'] == 'group' ? 'Organisation team chat' : 'Start a conversation')}',
+                          '${chat['last_message'] ?? chat['member_email'] ?? (chat['type'] == 'group' ? 'Organisation team chat' : 'Start a conversation')}',
                       time: _time(chat['last_message_at']),
                       unread: _isUnread(chat),
                       group: chat['type'] == 'group',
@@ -1102,14 +1185,6 @@ class _ChatListRow extends StatelessWidget {
     return colors[(name.codeUnitAt(0) + name.length) % colors.length];
   }
 
-  String get _initials => name
-      .trim()
-      .split(RegExp(r'\s+'))
-      .take(2)
-      .where((word) => word.isNotEmpty)
-      .map((word) => word[0].toUpperCase())
-      .join();
-
   @override
   Widget build(BuildContext context) {
     return InkWell(
@@ -1136,13 +1211,10 @@ class _ChatListRow extends StatelessWidget {
                           color: Colors.white,
                           size: 23,
                         )
-                      : Text(
-                          _initials,
-                          style: GoogleFonts.poppins(
-                            color: const Color(0xFF30322F),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                          ),
+                      : const Icon(
+                          Iconsax.user,
+                          color: Color(0xFF30322F),
+                          size: 22,
                         ),
                 ),
                 if (group)
