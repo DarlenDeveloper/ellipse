@@ -1114,6 +1114,10 @@ class _ApprovalsScreenState extends State<_ApprovalsScreen> {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      isDismissible: true,
+      enableDrag: true,
+      useSafeArea: true,
+      barrierColor: Colors.black.withValues(alpha: 0.56),
       backgroundColor: Colors.transparent,
       builder: (context) => _ApprovalReviewSheet(
         item: item,
