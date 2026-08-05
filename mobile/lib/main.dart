@@ -589,6 +589,7 @@ class _AppShellState extends State<AppShell> {
   static const _destinations = [
     _NavDestination(label: 'Home', icon: Iconsax.home_1),
     _NavDestination(label: 'Approvals', icon: Iconsax.clipboard_tick),
+    _NavDestination(label: 'Chat', icon: Iconsax.messages_3),
     _NavDestination(label: 'Inbox', icon: Iconsax.direct_inbox),
   ];
 
