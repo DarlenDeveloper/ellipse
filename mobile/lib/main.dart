@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -8,6 +9,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:iconsax_flutter/iconsax_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'firebase_options.dart';
 
@@ -619,6 +621,7 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   int _selectedIndex = 0;
+  int? _pendingApprovalCount;
 
   static const _destinations = [
     _NavDestination(label: 'Home', icon: Iconsax.home_1),
@@ -631,18 +634,32 @@ class _AppShellState extends State<AppShell> {
   Widget build(BuildContext context) {
     return Scaffold(
       extendBody: true,
-      body: _selectedIndex == 0
-          ? const _HomeDashboard()
-          : SafeArea(
-              child: Center(
-                child: Text(
-                  _destinations[_selectedIndex].label,
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
+      body: switch (_selectedIndex) {
+        0 => _HomeDashboard(
+          onPendingCountChanged: (pendingValue) {
+            if (_pendingApprovalCount != pendingValue) {
+              setState(() => _pendingApprovalCount = pendingValue);
+            }
+          },
+        ),
+        1 => _ApprovalsScreen(
+          onPendingCountChanged: (pendingValue) {
+            if (_pendingApprovalCount != pendingValue) {
+              setState(() => _pendingApprovalCount = pendingValue);
+            }
+          },
+        ),
+        _ => SafeArea(
+          child: Center(
+            child: Text(
+              _destinations[_selectedIndex].label,
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w600),
             ),
+          ),
+        ),
+      },
       bottomNavigationBar: SafeArea(
         minimum: const EdgeInsets.fromLTRB(20, 8, 20, 16),
         child: Row(
@@ -652,6 +669,7 @@ class _AppShellState extends State<AppShell> {
               child: _BottomNavBar(
                 destinations: _destinations,
                 selectedIndex: _selectedIndex,
+                approvalBadge: _pendingApprovalCount,
                 onSelected: (index) => setState(() => _selectedIndex = index),
               ),
             ),
@@ -670,14 +688,930 @@ class _AppShellState extends State<AppShell> {
   }
 }
 
+class _ApprovalsScreen extends StatefulWidget {
+  const _ApprovalsScreen({required this.onPendingCountChanged});
+
+  final ValueChanged<int> onPendingCountChanged;
+
+  @override
+  State<_ApprovalsScreen> createState() => _ApprovalsScreenState();
+}
+
+class _ApprovalsScreenState extends State<_ApprovalsScreen> {
+  static const _cacheDuration = Duration(minutes: 2);
+  static const _filters = [
+    'All',
+    'Pending',
+    'Approved',
+    'Executed',
+    'Rejected',
+  ];
+
+  final _searchController = TextEditingController();
+  List<Map<String, dynamic>> _items = [];
+  List<Map<String, dynamic>?> _pageCursors = [null];
+  Map<String, dynamic>? _nextCursor;
+  String _filter = 'All';
+  String _search = '';
+  String? _error;
+  String? _busyId;
+  int _page = 1;
+  int? _pendingTotal;
+  bool _hasNext = false;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPage();
+    _searchController.addListener(() {
+      setState(() => _search = _searchController.text.trim().toLowerCase());
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadPage({bool force = false}) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final cursor = _pageCursors[_page - 1];
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) throw StateError('Not signed in.');
+      final cursorId = cursor?['id'] ?? 'start';
+      final cacheKey = 'ellipse_approvals_${uid}_${_filter}_${_page}_$cursorId';
+      final preferences = await SharedPreferences.getInstance();
+      if (!force) {
+        final encoded = preferences.getString(cacheKey);
+        if (encoded != null) {
+          final cached = Map<String, dynamic>.from(jsonDecode(encoded) as Map);
+          final savedAt = cached['savedAt'] as int? ?? 0;
+          if (DateTime.now().millisecondsSinceEpoch - savedAt <
+              _cacheDuration.inMilliseconds) {
+            _applyApprovalPayload(
+              Map<String, dynamic>.from(cached['payload'] as Map),
+            );
+            return;
+          }
+          await preferences.remove(cacheKey);
+        }
+      }
+      final result = await FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('listApprovals')
+          .call<Map<String, dynamic>>({
+            'filter': _filter.toLowerCase(),
+            'cursor': cursor,
+          });
+      if (!mounted) return;
+      _applyApprovalPayload(result.data);
+      await preferences.setString(
+        cacheKey,
+        jsonEncode({
+          'savedAt': DateTime.now().millisecondsSinceEpoch,
+          'payload': result.data,
+        }),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'Approvals could not be loaded. Please try again.';
+      });
+    }
+  }
+
+  void _applyApprovalPayload(Map<String, dynamic> data) {
+    if (!mounted) return;
+    setState(() {
+      _items = ((data['items'] as List?) ?? const [])
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .toList();
+      _hasNext = data['hasNext'] == true;
+      _nextCursor = data['nextCursor'] == null
+          ? null
+          : Map<String, dynamic>.from(data['nextCursor'] as Map);
+      _pendingTotal = (data['pendingTotal'] as num?)?.toInt();
+      _loading = false;
+    });
+    widget.onPendingCountChanged(_pendingTotal ?? 0);
+  }
+
+  Future<void> _clearApprovalCache() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    final preferences = await SharedPreferences.getInstance();
+    final prefix = 'ellipse_approvals_${uid}_';
+    await Future.wait(
+      preferences
+          .getKeys()
+          .where((key) => key.startsWith(prefix))
+          .map(preferences.remove),
+    );
+  }
+
+  void _changeFilter(String filter) {
+    if (filter == _filter) return;
+    setState(() {
+      _filter = filter;
+      _page = 1;
+      _pageCursors = [null];
+      _nextCursor = null;
+      _hasNext = false;
+    });
+    _loadPage();
+  }
+
+  void _nextPage() {
+    if (!_hasNext || _nextCursor == null) return;
+    setState(() {
+      if (_pageCursors.length == _page) {
+        _pageCursors.add(_nextCursor);
+      } else {
+        _pageCursors[_page] = _nextCursor;
+      }
+      _page++;
+    });
+    _loadPage();
+  }
+
+  void _previousPage() {
+    if (_page == 1) return;
+    setState(() => _page--);
+    _loadPage();
+  }
+
+  Future<void> _decide(Map<String, dynamic> item, String status) async {
+    final id = item['id'] as String;
+    setState(() {
+      _busyId = id;
+      _error = null;
+    });
+    try {
+      await FirebaseFirestore.instance
+          .collection('pending_actions')
+          .doc(id)
+          .update({
+            'status': status,
+            'decided_at': FieldValue.serverTimestamp(),
+            'decided_by_uid': FirebaseAuth.instance.currentUser?.uid,
+          });
+      await _clearApprovalCache();
+      await _loadPage(force: true);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _error = 'The decision could not be saved. Try again.');
+    } finally {
+      if (mounted) setState(() => _busyId = null);
+    }
+  }
+
+  List<Map<String, dynamic>> get _visibleItems {
+    if (_search.isEmpty) return _items;
+    return _items.where((item) {
+      final text = [
+        item['agent_id'],
+        item['action_type'],
+        item['target_system'],
+        item['action_summary'],
+        item['params'],
+      ].join(' ').toLowerCase();
+      return text.contains(_search);
+    }).toList();
+  }
+
+  String _title(String? value) {
+    final text = (value ?? 'Action').replaceAll('_', ' ');
+    return '${text[0].toUpperCase()}${text.substring(1)}';
+  }
+
+  String _agent(String? value) {
+    return (value ?? 'Agent')
+        .replaceAll('-agent', '')
+        .split('-')
+        .where((word) => word.isNotEmpty)
+        .map((word) => '${word[0].toUpperCase()}${word.substring(1)}')
+        .join(' ');
+  }
+
+  String _asset(Map<String, dynamic> item) {
+    final value = '${item['target_system'] ?? ''} ${item['agent_id'] ?? ''}'
+        .toLowerCase();
+    if (value.contains('zoho')) return 'assets/images/integration-zoho.png';
+    if (value.contains('whatsapp')) {
+      return 'assets/images/integration-whatsapp.png';
+    }
+    if (value.contains('microsoft') || value.contains('outlook')) {
+      return 'assets/images/integration-outlook.png';
+    }
+    if (value.contains('smtp')) return 'assets/images/integration-smtp.png';
+    if (value.contains('mercury')) {
+      return 'assets/images/integration-mercury.png';
+    }
+    return 'assets/images/integration-gmail.png';
+  }
+
+  String _date(num? milliseconds) {
+    if (milliseconds == null) return '';
+    final date = DateTime.fromMillisecondsSinceEpoch(
+      milliseconds.toInt(),
+    ).toLocal();
+    return '${date.day}/${date.month} · ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = _visibleItems;
+    return SafeArea(
+      bottom: false,
+      child: RefreshIndicator(
+        onRefresh: () => _loadPage(force: true),
+        color: const Color(0xFF1D2825),
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(22, 24, 22, 118),
+              sliver: SliverList.list(
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Agent actions',
+                              style: GoogleFonts.poppins(
+                                color: const Color(0xFFAAA9A5),
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            Text(
+                              'Approvals',
+                              style: GoogleFonts.poppins(
+                                fontSize: 29,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: -0.9,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if ((_pendingTotal ?? 0) > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 7,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1D2825),
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                          child: Text(
+                            '${_pendingTotal ?? 0} pending',
+                            style: GoogleFonts.poppins(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  TextField(
+                    controller: _searchController,
+                    style: GoogleFonts.poppins(fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'Search this page',
+                      prefixIcon: const Icon(Iconsax.search_normal_1, size: 19),
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(26),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: _filters.map((filter) {
+                        final selected = filter == _filter;
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: ChoiceChip(
+                            label: Text(filter),
+                            selected: selected,
+                            onSelected: (_) => _changeFilter(filter),
+                            showCheckmark: false,
+                            selectedColor: const Color(0xFF1D2825),
+                            backgroundColor: const Color(0xFFEEEDEA),
+                            side: BorderSide.none,
+                            labelStyle: GoogleFonts.poppins(
+                              color: selected
+                                  ? Colors.white
+                                  : const Color(0xFF666762),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: 14),
+                    _DashboardError(message: _error!, onRetry: _loadPage),
+                  ],
+                  const SizedBox(height: 20),
+                  if (_loading)
+                    const _DashboardListSkeleton(rows: 6)
+                  else if (visible.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 70),
+                      child: Column(
+                        children: [
+                          Icon(
+                            Iconsax.clipboard_tick,
+                            size: 38,
+                            color: Color(0xFFAAA9A5),
+                          ),
+                          SizedBox(height: 12),
+                          Text('No actions match this view.'),
+                        ],
+                      ),
+                    )
+                  else
+                    ...List.generate(visible.length, (index) {
+                      final item = visible[index];
+                      return _MobileApprovalRow(
+                        item: item,
+                        asset: _asset(item),
+                        title: _title(item['action_type'] as String?),
+                        agent: _agent(item['agent_id'] as String?),
+                        requested: _date(item['created_at'] as num?),
+                        busy: _busyId == item['id'],
+                        isLast: index == visible.length - 1,
+                        onReview: () => _showReview(item),
+                        onApprove: () => _decide(item, 'approved'),
+                        onReject: () => _confirmReject(item),
+                      );
+                    }),
+                  if (!_loading && (_page > 1 || _hasNext)) ...[
+                    const SizedBox(height: 26),
+                    Row(
+                      children: [
+                        Text(
+                          'Page $_page · up to 12 approvals',
+                          style: GoogleFonts.poppins(
+                            color: const Color(0xFF999994),
+                            fontSize: 11,
+                          ),
+                        ),
+                        const Spacer(),
+                        IconButton.filledTonal(
+                          onPressed: _page > 1 ? _previousPage : null,
+                          icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton.filled(
+                          onPressed: _hasNext ? _nextPage : null,
+                          style: IconButton.styleFrom(
+                            backgroundColor: const Color(0xFF1D2825),
+                          ),
+                          icon: const Icon(
+                            Icons.arrow_forward_rounded,
+                            size: 18,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showReview(Map<String, dynamic> item) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _ApprovalReviewSheet(
+        item: item,
+        title: _title(item['action_type'] as String?),
+        agent: _agent(item['agent_id'] as String?),
+        asset: _asset(item),
+        onSaved: () async {
+          await _clearApprovalCache();
+          await _loadPage(force: true);
+        },
+      ),
+    );
+  }
+
+  Future<void> _confirmReject(Map<String, dynamic> item) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reject this action?'),
+        content: const Text('The agent will not execute this action.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+            child: const Text('Reject'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await _decide(item, 'rejected');
+  }
+}
+
+class _MobileApprovalRow extends StatelessWidget {
+  const _MobileApprovalRow({
+    required this.item,
+    required this.asset,
+    required this.title,
+    required this.agent,
+    required this.requested,
+    required this.busy,
+    required this.isLast,
+    required this.onReview,
+    required this.onApprove,
+    required this.onReject,
+  });
+
+  final Map<String, dynamic> item;
+  final String asset;
+  final String title;
+  final String agent;
+  final String requested;
+  final bool busy;
+  final bool isLast;
+  final VoidCallback onReview;
+  final VoidCallback onApprove;
+  final VoidCallback onReject;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = (item['status'] as String?) ?? 'pending';
+    final pending = status == 'pending';
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 17),
+      decoration: BoxDecoration(
+        border: isLast
+            ? null
+            : const Border(bottom: BorderSide(color: Color(0xFFE9E9E5))),
+      ),
+      child: Column(
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox.square(
+                dimension: 38,
+                child: Center(child: Image.asset(asset, width: 29, height: 29)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: GoogleFonts.poppins(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '$agent · $requested',
+                      style: GoogleFonts.poppins(
+                        color: const Color(0xFF999994),
+                        fontSize: 10.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _ApprovalStatus(status: status),
+            ],
+          ),
+          const SizedBox(height: 13),
+          Row(
+            children: [
+              TextButton.icon(
+                onPressed: onReview,
+                icon: const Icon(Iconsax.eye, size: 15),
+                label: const Text('Review'),
+              ),
+              const Spacer(),
+              if (pending) ...[
+                IconButton(
+                  onPressed: busy ? null : onReject,
+                  icon: const Icon(Iconsax.close_circle, size: 20),
+                  color: const Color(0xFF9A9A95),
+                  tooltip: 'Reject',
+                ),
+                FilledButton.icon(
+                  onPressed: busy ? null : onApprove,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF1D2825),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                  ),
+                  icon: busy
+                      ? const SizedBox.square(
+                          dimension: 13,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Iconsax.tick_circle, size: 16),
+                  label: const Text('Approve'),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ApprovalStatus extends StatelessWidget {
+  const _ApprovalStatus({required this.status});
+
+  final String status;
+
+  @override
+  Widget build(BuildContext context) {
+    final (background, foreground) = switch (status) {
+      'pending' => (const Color(0xFFFFF3D7), const Color(0xFF9B661C)),
+      'approved' => (const Color(0xFFEAF1FF), const Color(0xFF3D65A5)),
+      'executed' => (const Color(0xFFE5F5EA), const Color(0xFF377D50)),
+      'rejected' => (const Color(0xFFFFE8E5), const Color(0xFFB63830)),
+      _ => (const Color(0xFFFFE8E5), const Color(0xFFA33D34)),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Text(
+        '${status[0].toUpperCase()}${status.substring(1)}',
+        style: GoogleFonts.poppins(
+          color: foreground,
+          fontSize: 9.5,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+class _ApprovalReviewSheet extends StatefulWidget {
+  const _ApprovalReviewSheet({
+    required this.item,
+    required this.title,
+    required this.agent,
+    required this.asset,
+    required this.onSaved,
+  });
+
+  final Map<String, dynamic> item;
+  final String title;
+  final String agent;
+  final String asset;
+  final Future<void> Function() onSaved;
+
+  @override
+  State<_ApprovalReviewSheet> createState() => _ApprovalReviewSheetState();
+}
+
+class _ApprovalReviewSheetState extends State<_ApprovalReviewSheet> {
+  late final Map<String, dynamic> _params;
+  late final TextEditingController _toController;
+  late final TextEditingController _ccController;
+  late final TextEditingController _subjectController;
+  late final TextEditingController _bodyController;
+  bool _saving = false;
+  String? _error;
+
+  bool get _editable {
+    final action = widget.item['action_type'];
+    return widget.item['status'] == 'pending' &&
+        (action == 'send_email' || action == 'send_reply');
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _params = Map<String, dynamic>.from(
+      widget.item['params'] as Map? ?? const {},
+    );
+    _toController = TextEditingController(text: '${_params['to'] ?? ''}');
+    _ccController = TextEditingController(text: '${_params['cc'] ?? ''}');
+    _subjectController = TextEditingController(
+      text: '${_params['subject'] ?? ''}',
+    );
+    _bodyController = TextEditingController(text: '${_params['body'] ?? ''}');
+  }
+
+  @override
+  void dispose() {
+    _toController.dispose();
+    _ccController.dispose();
+    _subjectController.dispose();
+    _bodyController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_toController.text.trim().isEmpty ||
+        _bodyController.text.trim().isEmpty) {
+      setState(() => _error = 'Recipient and message are required.');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final isReply = widget.item['action_type'] == 'send_reply';
+      final updatedParams = {
+        ..._params,
+        'to': _toController.text.trim(),
+        'cc': _ccController.text.trim().isEmpty
+            ? null
+            : _ccController.text.trim(),
+        'subject': _subjectController.text.trim(),
+        'body': _bodyController.text.trim(),
+      };
+      await FirebaseFirestore.instance
+          .collection('pending_actions')
+          .doc(widget.item['id'] as String)
+          .update({
+            'params': updatedParams,
+            'action_summary':
+                '${isReply ? 'Reply' : 'Email'} “${_subjectController.text.trim().isEmpty ? '(no subject)' : _subjectController.text.trim()}” to ${_toController.text.trim()} — edited before approval.',
+            'updated_at': FieldValue.serverTimestamp(),
+          });
+      await widget.onSaved();
+      if (mounted) Navigator.pop(context);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _error = 'The edited draft could not be saved.');
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.78,
+      minChildSize: 0.45,
+      maxChildSize: 0.94,
+      builder: (context, controller) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+        ),
+        child: ListView(
+          controller: controller,
+          padding: const EdgeInsets.fromLTRB(22, 12, 22, 32),
+          children: [
+            Center(
+              child: Container(
+                width: 42,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFD3D3CF),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Image.asset(widget.asset, width: 34, height: 34),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.title,
+                        style: GoogleFonts.poppins(
+                          fontSize: 21,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Text(
+                        widget.agent,
+                        style: GoogleFonts.poppins(
+                          color: const Color(0xFF999994),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                _ApprovalStatus(
+                  status: widget.item['status'] as String? ?? 'pending',
+                ),
+              ],
+            ),
+            if ((widget.item['action_summary'] as String?)?.isNotEmpty ==
+                true) ...[
+              const SizedBox(height: 22),
+              Text(
+                'Agent summary',
+                style: GoogleFonts.poppins(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 7),
+              Text(
+                widget.item['action_summary'] as String,
+                style: GoogleFonts.poppins(
+                  color: const Color(0xFF666762),
+                  fontSize: 12,
+                  height: 1.55,
+                ),
+              ),
+            ],
+            const SizedBox(height: 24),
+            Text(
+              'Action details',
+              style: GoogleFonts.poppins(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 10),
+            if (_error != null) ...[
+              Text(
+                _error!,
+                style: GoogleFonts.poppins(
+                  color: const Color(0xFFB63830),
+                  fontSize: 11,
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+            if (_editable) ...[
+              _ApprovalEditField(
+                label: 'To',
+                controller: _toController,
+                readOnly: widget.item['action_type'] == 'send_reply',
+              ),
+              _ApprovalEditField(label: 'CC', controller: _ccController),
+              _ApprovalEditField(
+                label: 'Subject',
+                controller: _subjectController,
+              ),
+              _ApprovalEditField(
+                label: 'Message',
+                controller: _bodyController,
+                maxLines: 8,
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                height: 52,
+                child: FilledButton(
+                  onPressed: _saving ? null : _save,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF1D2825),
+                  ),
+                  child: _saving
+                      ? const SizedBox.square(
+                          dimension: 19,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('Save edited draft'),
+                ),
+              ),
+            ] else if (_params.isEmpty)
+              const Text('No additional action data.')
+            else
+              ..._params.entries.map(
+                (entry) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 9),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: 95,
+                        child: Text(
+                          entry.key.replaceAll('_', ' '),
+                          style: GoogleFonts.poppins(
+                            color: const Color(0xFF999994),
+                            fontSize: 10.5,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          entry.value.toString(),
+                          style: GoogleFonts.poppins(
+                            fontSize: 11.5,
+                            height: 1.45,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ApprovalEditField extends StatelessWidget {
+  const _ApprovalEditField({
+    required this.label,
+    required this.controller,
+    this.readOnly = false,
+    this.maxLines = 1,
+  });
+
+  final String label;
+  final TextEditingController controller;
+  final bool readOnly;
+  final int maxLines;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: TextField(
+        controller: controller,
+        readOnly: readOnly,
+        maxLines: maxLines,
+        style: GoogleFonts.poppins(fontSize: 12),
+        decoration: InputDecoration(
+          labelText: label,
+          filled: true,
+          fillColor: const Color(0xFFF4F4F1),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide.none,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _HomeDashboard extends StatefulWidget {
-  const _HomeDashboard();
+  const _HomeDashboard({required this.onPendingCountChanged});
+
+  final ValueChanged<int> onPendingCountChanged;
 
   @override
   State<_HomeDashboard> createState() => _HomeDashboardState();
 }
 
 class _HomeDashboardState extends State<_HomeDashboard> {
+  static const _cacheDuration = Duration(minutes: 2);
   Map<String, dynamic>? _dashboard;
   String? _error;
   String _displayName = '';
@@ -689,7 +1623,7 @@ class _HomeDashboardState extends State<_HomeDashboard> {
     _loadDashboard();
   }
 
-  Future<void> _loadDashboard() async {
+  Future<void> _loadDashboard({bool force = false}) async {
     setState(() {
       _loading = true;
       _error = null;
@@ -697,6 +1631,25 @@ class _HomeDashboardState extends State<_HomeDashboard> {
     try {
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) throw StateError('You are not signed in.');
+      final cacheKey = 'ellipse_dashboard_${user.uid}';
+      final preferences = await SharedPreferences.getInstance();
+      if (!force) {
+        final encoded = preferences.getString(cacheKey);
+        if (encoded != null) {
+          final cached = Map<String, dynamic>.from(jsonDecode(encoded) as Map);
+          final savedAt = cached['savedAt'] as int? ?? 0;
+          if (DateTime.now().millisecondsSinceEpoch - savedAt <
+              _cacheDuration.inMilliseconds) {
+            _applyDashboardPayload(
+              Map<String, dynamic>.from(cached['payload'] as Map),
+              cached['displayName'] as String? ?? '',
+              user,
+            );
+            return;
+          }
+          await preferences.remove(cacheKey);
+        }
+      }
       final userSnapshot = await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
@@ -710,17 +1663,16 @@ class _HomeDashboardState extends State<_HomeDashboard> {
           .httpsCallable('getDashboardData')
           .call<Map<String, dynamic>>({'enterpriseId': enterpriseId});
       if (!mounted) return;
-      setState(() {
-        _dashboard = result.data;
-        _displayName = (profile?['display_name'] as String?)?.trim() ?? '';
-        if (_displayName.isEmpty) {
-          _displayName = user.displayName?.trim() ?? '';
-        }
-        if (_displayName.isEmpty) {
-          _displayName = user.email?.split('@').first ?? 'there';
-        }
-        _loading = false;
-      });
+      final displayName = (profile?['display_name'] as String?)?.trim() ?? '';
+      _applyDashboardPayload(result.data, displayName, user);
+      await preferences.setString(
+        cacheKey,
+        jsonEncode({
+          'savedAt': DateTime.now().millisecondsSinceEpoch,
+          'displayName': displayName,
+          'payload': result.data,
+        }),
+      );
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -730,6 +1682,29 @@ class _HomeDashboardState extends State<_HomeDashboard> {
             : 'Your workspace could not be loaded. Pull to try again.';
       });
     }
+  }
+
+  void _applyDashboardPayload(
+    Map<String, dynamic> payload,
+    String displayName,
+    User user,
+  ) {
+    if (!mounted) return;
+    setState(() {
+      _dashboard = payload;
+      _displayName = displayName;
+      if (_displayName.isEmpty) {
+        _displayName = user.displayName?.trim() ?? '';
+      }
+      if (_displayName.isEmpty) {
+        _displayName = user.email?.split('@').first ?? 'there';
+      }
+      _loading = false;
+    });
+    final counts = Map<String, dynamic>.from(
+      payload['counts'] as Map? ?? const {},
+    );
+    widget.onPendingCountChanged((counts['pending'] as num?)?.toInt() ?? 0);
   }
 
   String get _greeting {
@@ -811,7 +1786,7 @@ class _HomeDashboardState extends State<_HomeDashboard> {
     return SafeArea(
       bottom: false,
       child: RefreshIndicator(
-        onRefresh: _loadDashboard,
+        onRefresh: () => _loadDashboard(force: true),
         color: const Color(0xFF1D2825),
         edgeOffset: 12,
         child: CustomScrollView(
@@ -1537,11 +2512,13 @@ class _BottomNavBar extends StatelessWidget {
   const _BottomNavBar({
     required this.destinations,
     required this.selectedIndex,
+    required this.approvalBadge,
     required this.onSelected,
   });
 
   final List<_NavDestination> destinations;
   final int selectedIndex;
+  final int? approvalBadge;
   final ValueChanged<int> onSelected;
 
   @override
@@ -1586,12 +2563,45 @@ class _BottomNavBar extends StatelessWidget {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(
-                        destination.icon,
-                        size: 24,
-                        color: selected
-                            ? Colors.black
-                            : const Color(0xFFAAA9A5),
+                      Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Icon(
+                            destination.icon,
+                            size: 24,
+                            color: selected
+                                ? Colors.black
+                                : const Color(0xFFAAA9A5),
+                          ),
+                          if (index == 1 && (approvalBadge ?? 0) > 0)
+                            Positioned(
+                              right: -10,
+                              top: -7,
+                              child: Container(
+                                constraints: const BoxConstraints(minWidth: 17),
+                                height: 17,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 4,
+                                ),
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
+                                  color: Color(0xFFE34B42),
+                                  borderRadius: BorderRadius.circular(9),
+                                ),
+                                child: Text(
+                                  (approvalBadge ?? 0) > 99
+                                      ? '99+'
+                                      : '${approvalBadge ?? 0}',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 8,
+                                    fontWeight: FontWeight.w700,
+                                    height: 1,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                       const SizedBox(height: 2),
                       Text(
