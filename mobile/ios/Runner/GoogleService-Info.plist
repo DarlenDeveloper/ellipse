@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CLIENT_ID</key>
+	<string>344223107303-kloc5nj18d3oqndidsqes6opq54j7io5.apps.googleusercontent.com</string>
+	<key>REVERSED_CLIENT_ID</key>
+	<string>com.googleusercontent.apps.344223107303-kloc5nj18d3oqndidsqes6opq54j7io5</string>
+	<key>API_KEY</key>
+	<string>AIzaSyDaw6iIaG05m5qSCoL2VnQcnmap3Bv70vQ</string>
+	<key>GCM_SENDER_ID</key>
+	<string>344223107303</string>
+	<key>PLIST_VERSION</key>
+	<string>1</string>
+	<key>BUNDLE_ID</key>
+	<string>com.ellipse.ellipseCompanion</string>
+	<key>PROJECT_ID</key>
+	<string>ellipse-desk</string>
+	<key>STORAGE_BUCKET</key>
+	<string>ellipse-desk.firebasestorage.app</string>
+	<key>IS_ADS_ENABLED</key>
+	<false></false>
+	<key>IS_ANALYTICS_ENABLED</key>
+	<false></false>
+	<key>IS_APPINVITE_ENABLED</key>
+	<true></true>
+	<key>IS_GCM_ENABLED</key>
+	<true></true>
+	<key>IS_SIGNIN_ENABLED</key>
+	<true></true>
+	<key>GOOGLE_APP_ID</key>
+	<string>1:344223107303:ios:04917a6ebbca3946b43a42</string>
+</dict>
+</plist>

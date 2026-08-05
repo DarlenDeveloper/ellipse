@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "344223107303",
+    "project_id": "ellipse-desk",
+    "storage_bucket": "ellipse-desk.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:344223107303:android:115dcbcdbef266c1b43a42",
+        "android_client_info": {
+          "package_name": "com.ellipse.ellipse_companion"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "344223107303-jqefm6ip4s4i20e7r7dga7vjcuhvp88p.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDDl_jJkasNGA43WdhpQz0letmyrIiJ3Yc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "344223107303-1cjcsl03hnqchcp7qaj543htitm9iemt.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "344223107303-kloc5nj18d3oqndidsqes6opq54j7io5.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.ellipse.ellipseCompanion"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
