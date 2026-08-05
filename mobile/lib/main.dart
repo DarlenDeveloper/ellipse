@@ -1,11 +1,21 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:iconsax_flutter/iconsax_flutter.dart';
 
-void main() => runApp(const EllipseDeskApp());
+import 'firebase_options.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  runApp(const EllipseDeskApp());
+}
 
 class EllipseDeskApp extends StatelessWidget {
   const EllipseDeskApp({super.key});
@@ -278,10 +288,33 @@ class _SignInScreenState extends State<SignInScreen> {
       return;
     }
 
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute<void>(builder: (context) => const AppShell()),
-      (route) => false,
-    );
+    setState(() => _loading = true);
+    try {
+      await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute<void>(builder: (context) => const AppShell()),
+        (route) => false,
+      );
+    } on FirebaseAuthException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = switch (error.code) {
+          'invalid-credential' ||
+          'wrong-password' ||
+          'user-not-found' => 'The email or password is incorrect.',
+          'too-many-requests' =>
+            'Too many attempts. Please wait and try again.',
+          'network-request-failed' => 'Check your connection and try again.',
+          _ => 'Sign in could not be completed. Please try again.',
+        };
+      });
+      _passwordFocus.requestFocus();
+    }
   }
 
   void _changeEmail() {
@@ -410,8 +443,9 @@ class _SignInScreenState extends State<SignInScreen> {
                                   ),
                                   icon: Icon(
                                     _obscurePassword
-                                        ? Icons.visibility_outlined
-                                        : Icons.visibility_off_outlined,
+                                        ? Iconsax.eye
+                                        : Iconsax.eye_slash,
+                                    size: 21,
                                   ),
                                   color: Colors.white.withValues(alpha: 0.6),
                                 ),
@@ -596,6 +630,7 @@ class _AppShellState extends State<AppShell> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      extendBody: true,
       body: _selectedIndex == 0
           ? const _HomeDashboard()
           : SafeArea(
@@ -635,8 +670,67 @@ class _AppShellState extends State<AppShell> {
   }
 }
 
-class _HomeDashboard extends StatelessWidget {
+class _HomeDashboard extends StatefulWidget {
   const _HomeDashboard();
+
+  @override
+  State<_HomeDashboard> createState() => _HomeDashboardState();
+}
+
+class _HomeDashboardState extends State<_HomeDashboard> {
+  Map<String, dynamic>? _dashboard;
+  String? _error;
+  String _displayName = '';
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDashboard();
+  }
+
+  Future<void> _loadDashboard() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw StateError('You are not signed in.');
+      final userSnapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      final profile = userSnapshot.data();
+      final enterpriseId = profile?['enterprise_id'] as String?;
+      if (enterpriseId == null || enterpriseId.isEmpty) {
+        throw StateError('Your account is not connected to an organisation.');
+      }
+      final result = await FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('getDashboardData')
+          .call<Map<String, dynamic>>({'enterpriseId': enterpriseId});
+      if (!mounted) return;
+      setState(() {
+        _dashboard = result.data;
+        _displayName = (profile?['display_name'] as String?)?.trim() ?? '';
+        if (_displayName.isEmpty) {
+          _displayName = user.displayName?.trim() ?? '';
+        }
+        if (_displayName.isEmpty) {
+          _displayName = user.email?.split('@').first ?? 'there';
+        }
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = error is StateError
+            ? error.message
+            : 'Your workspace could not be loaded. Pull to try again.';
+      });
+    }
+  }
 
   String get _greeting {
     final hour = DateTime.now().hour;
@@ -645,189 +739,388 @@ class _HomeDashboard extends StatelessWidget {
     return 'Good Evening';
   }
 
+  Map<String, dynamic> get _counts =>
+      Map<String, dynamic>.from(_dashboard?['counts'] as Map? ?? const {});
+
+  List<Map<String, dynamic>> get _approvals =>
+      ((_dashboard?['pendingApprovals'] as List?) ?? const [])
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .toList();
+
+  List<Map<String, dynamic>> get _threads =>
+      ((_dashboard?['recentThreads'] as List?) ?? const [])
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .toList();
+
+  String _count(String key) {
+    if (_loading) return '—';
+    final value = _counts[key];
+    return value is num ? value.toInt().toString() : '0';
+  }
+
+  String _actionLabel(String? value) {
+    final words = (value ?? 'Action').replaceAll('_', ' ');
+    return '${words[0].toUpperCase()}${words.substring(1)}';
+  }
+
+  String _agentLabel(String? value) {
+    return (value ?? 'Agent')
+        .replaceAll('-agent', '')
+        .split('-')
+        .map((word) => '${word[0].toUpperCase()}${word.substring(1)}')
+        .join(' ');
+  }
+
+  String _integrationAsset(String? value) {
+    final key = (value ?? '').toLowerCase();
+    if (key.contains('zoho')) return 'assets/images/integration-zoho.png';
+    if (key.contains('whatsapp')) {
+      return 'assets/images/integration-whatsapp.png';
+    }
+    if (key.contains('microsoft') || key.contains('outlook')) {
+      return 'assets/images/integration-outlook.png';
+    }
+    if (key.contains('smtp')) return 'assets/images/integration-smtp.png';
+    if (key.contains('mercury')) {
+      return 'assets/images/integration-mercury.png';
+    }
+    return 'assets/images/integration-gmail.png';
+  }
+
+  String _timeLabel(String? value) {
+    final date = DateTime.tryParse(value ?? '')?.toLocal();
+    if (date == null) return '';
+    final now = DateTime.now();
+    if (date.year == now.year &&
+        date.month == now.month &&
+        date.day == now.day) {
+      final hour = date.hour % 12 == 0 ? 12 : date.hour % 12;
+      return '$hour:${date.minute.toString().padLeft(2, '0')} ${date.hour >= 12 ? 'PM' : 'AM'}';
+    }
+    return '${date.day}/${date.month}';
+  }
+
+  String get _initials {
+    final parts = _displayName.trim().split(RegExp(r'\s+'));
+    if (parts.isEmpty || parts.first.isEmpty) return 'ED';
+    return parts.take(2).map((part) => part[0].toUpperCase()).join();
+  }
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
       bottom: false,
-      child: CustomScrollView(
-        slivers: [
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(22, 22, 22, 112),
-            sliver: SliverList.list(
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _greeting,
-                            style: GoogleFonts.poppins(
-                              color: const Color(0xFFAAA9A5),
-                              fontSize: 17,
-                              fontWeight: FontWeight.w500,
-                              height: 1.2,
+      child: RefreshIndicator(
+        onRefresh: _loadDashboard,
+        color: const Color(0xFF1D2825),
+        edgeOffset: 12,
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(22, 22, 22, 112),
+              sliver: SliverList.list(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _greeting,
+                              style: GoogleFonts.poppins(
+                                color: const Color(0xFFAAA9A5),
+                                fontSize: 17,
+                                fontWeight: FontWeight.w500,
+                                height: 1.2,
+                              ),
                             ),
-                          ),
-                          Text(
-                            'Tobechukwu!',
-                            style: GoogleFonts.poppins(
-                              color: const Color(0xFF111311),
-                              fontSize: 24,
-                              fontWeight: FontWeight.w700,
-                              height: 1.22,
-                              letterSpacing: -0.7,
+                            Text(
+                              '${_displayName.isEmpty ? 'Welcome' : _displayName}!',
+                              style: GoogleFonts.poppins(
+                                color: const Color(0xFF111311),
+                                fontSize: 24,
+                                fontWeight: FontWeight.w700,
+                                height: 1.22,
+                                letterSpacing: -0.7,
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Container(
-                      width: 54,
-                      height: 54,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF1D2825),
-                        shape: BoxShape.circle,
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        'TO',
-                        style: GoogleFonts.poppins(
-                          color: Colors.white,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0.5,
+                          ],
                         ),
                       ),
-                    ),
+                      Container(
+                        width: 54,
+                        height: 54,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF1D2825),
+                          shape: BoxShape.circle,
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          _initials,
+                          style: GoogleFonts.poppins(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 32),
+                  Row(
+                    children: [
+                      Text(
+                        'Workspace overview',
+                        style: GoogleFonts.poppins(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: -0.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _MetricCard(
+                          label: 'Messages',
+                          value: _count('messages'),
+                          caption: 'all time',
+                          icon: Iconsax.message_2,
+                          visual: _MetricVisual.ring,
+                          accent: Color(0xFF4E8D72),
+                          trend: '+12%',
+                          loading: _loading,
+                        ),
+                      ),
+                      SizedBox(width: 12),
+                      Expanded(
+                        child: _MetricCard(
+                          label: 'Open threads',
+                          value: _count('threads'),
+                          caption: 'active',
+                          icon: Iconsax.routing,
+                          visual: _MetricVisual.ringLow,
+                          accent: Color(0xFF527CA8),
+                          trend: '+8%',
+                          loading: _loading,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _MetricCard(
+                          label: 'Pending',
+                          value: _count('pending'),
+                          caption: 'actions',
+                          icon: Iconsax.clock,
+                          visual: _MetricVisual.bars,
+                          accent: Color(0xFFB47A35),
+                          trend: 'Today',
+                          loading: _loading,
+                        ),
+                      ),
+                      SizedBox(width: 12),
+                      Expanded(
+                        child: _MetricCard(
+                          label: 'Active agents',
+                          value: _count('agents'),
+                          caption: 'connected',
+                          icon: Iconsax.cpu,
+                          visual: _MetricVisual.line,
+                          accent: Color(0xFF8068A5),
+                          trend: '+3',
+                          loading: _loading,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: 18),
+                    _DashboardError(message: _error!, onRetry: _loadDashboard),
                   ],
-                ),
-                const SizedBox(height: 32),
-                Row(
-                  children: [
-                    Text(
-                      'Workspace overview',
-                      style: GoogleFonts.poppins(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: -0.3,
-                      ),
+                  const SizedBox(height: 30),
+                  _SectionHeader(title: 'Pending approvals', onTap: () {}),
+                  const SizedBox(height: 12),
+                  if (_loading)
+                    const _DashboardListSkeleton(rows: 3)
+                  else if (_approvals.isEmpty)
+                    const _DashboardEmpty(
+                      label: 'No actions waiting for approval.',
+                    )
+                  else
+                    _HomeListCard(
+                      children: List.generate(_approvals.length, (index) {
+                        final item = _approvals[index];
+                        final agent = item['agent_id'] as String?;
+                        final system = item['target_system'] as String?;
+                        return _ApprovalRow(
+                          asset: _integrationAsset(agent ?? system),
+                          title: _actionLabel(item['action_type'] as String?),
+                          subtitle:
+                              '${_agentLabel(agent)} Agent · ${_timeLabel(item['created_at'] as String?)}',
+                          isLast: index == _approvals.length - 1,
+                        );
+                      }),
                     ),
-                    const Spacer(),
-                    Text(
-                      'Live',
-                      style: GoogleFonts.poppins(
-                        color: const Color(0xFF92928E),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                      ),
+                  const SizedBox(height: 28),
+                  _SectionHeader(title: 'Recent threads', onTap: () {}),
+                  const SizedBox(height: 12),
+                  if (!_loading && _threads.isEmpty)
+                    const _DashboardEmpty(label: 'No recent customer threads.')
+                  else if (_loading)
+                    const _DashboardListSkeleton(rows: 2)
+                  else
+                    _HomeListCard(
+                      children: List.generate(_threads.length, (index) {
+                        final item = _threads[index];
+                        final channel = item['channel'] as String?;
+                        return _ThreadRow(
+                          asset: _integrationAsset(channel),
+                          title:
+                              (item['subject'] as String?)?.trim().isNotEmpty ==
+                                  true
+                              ? item['subject'] as String
+                              : '(no subject)',
+                          subtitle:
+                              '${item['customer_ref'] ?? 'Unknown customer'} · ${_agentLabel(channel)}',
+                          time: _timeLabel(item['last_message_at'] as String?),
+                          isLast: index == _threads.length - 1,
+                        );
+                      }),
                     ),
-                    const SizedBox(width: 6),
-                    const DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: Color(0xFF78A68A),
-                        shape: BoxShape.circle,
-                      ),
-                      child: SizedBox.square(dimension: 7),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                const Row(
-                  children: [
-                    Expanded(
-                      child: _MetricCard(
-                        label: 'Messages',
-                        value: '5,839',
-                        caption: 'all time',
-                        icon: Iconsax.message_2,
-                        visual: _MetricVisual.ring,
-                      ),
-                    ),
-                    SizedBox(width: 12),
-                    Expanded(
-                      child: _MetricCard(
-                        label: 'Open threads',
-                        value: '28',
-                        caption: 'active',
-                        icon: Iconsax.routing,
-                        visual: _MetricVisual.ringLow,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                const Row(
-                  children: [
-                    Expanded(
-                      child: _MetricCard(
-                        label: 'Pending',
-                        value: '12',
-                        caption: 'actions',
-                        icon: Iconsax.clock,
-                        visual: _MetricVisual.bars,
-                      ),
-                    ),
-                    SizedBox(width: 12),
-                    Expanded(
-                      child: _MetricCard(
-                        label: 'Active agents',
-                        value: '6',
-                        caption: 'connected',
-                        icon: Iconsax.cpu,
-                        visual: _MetricVisual.line,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 30),
-                _SectionHeader(title: 'Pending approvals', onTap: () {}),
-                const SizedBox(height: 12),
-                const _HomeListCard(
-                  children: [
-                    _ApprovalRow(
-                      asset: 'assets/images/integration-zoho.png',
-                      title: 'Send quotation',
-                      subtitle: 'Zoho Agent · 8 min ago',
-                    ),
-                    _ApprovalRow(
-                      asset: 'assets/images/integration-gmail.png',
-                      title: 'Reply to customer',
-                      subtitle: 'Gmail Agent · 24 min ago',
-                    ),
-                    _ApprovalRow(
-                      asset: 'assets/images/integration-mercury.png',
-                      title: 'Create sales order',
-                      subtitle: 'Mercury Agent · 1 hr ago',
-                      isLast: true,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 28),
-                _SectionHeader(title: 'Recent threads', onTap: () {}),
-                const SizedBox(height: 12),
-                const _HomeListCard(
-                  children: [
-                    _ThreadRow(
-                      asset: 'assets/images/integration-gmail.png',
-                      title: 'Updated printer quotation',
-                      subtitle: 'Akol Agencies · Gmail',
-                      time: '10:42',
-                    ),
-                    _ThreadRow(
-                      asset: 'assets/images/integration-whatsapp.png',
-                      title: 'Delivery confirmation',
-                      subtitle: 'James M. · WhatsApp',
-                      time: '09:18',
-                      isLast: true,
-                    ),
-                  ],
-                ),
-              ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DashboardError extends StatelessWidget {
+  const _DashboardError({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFEDEA),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              message,
+              style: GoogleFonts.poppins(
+                color: const Color(0xFF8C2F27),
+                fontSize: 11.5,
+              ),
             ),
           ),
+          TextButton(onPressed: onRetry, child: const Text('Retry')),
         ],
+      ),
+    );
+  }
+}
+
+class _DashboardEmpty extends StatelessWidget {
+  const _DashboardEmpty({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Text(
+          label,
+          style: GoogleFonts.poppins(
+            color: const Color(0xFF999994),
+            fontSize: 12,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DashboardListSkeleton extends StatelessWidget {
+  const _DashboardListSkeleton({required this.rows});
+
+  final int rows;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: List.generate(
+        rows,
+        (index) => Container(
+          padding: const EdgeInsets.symmetric(vertical: 15),
+          decoration: BoxDecoration(
+            border: index == rows - 1
+                ? null
+                : const Border(bottom: BorderSide(color: Color(0xFFF0F0ED))),
+          ),
+          child: const Row(
+            children: [
+              _SkeletonBlock(width: 32, height: 32, radius: 10),
+              SizedBox(width: 18),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _SkeletonBlock(width: 132, height: 13, radius: 7),
+                    SizedBox(height: 9),
+                    _SkeletonBlock(width: 178, height: 10, radius: 6),
+                  ],
+                ),
+              ),
+              SizedBox(width: 12),
+              _SkeletonBlock(width: 58, height: 28, radius: 14),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SkeletonBlock extends StatelessWidget {
+  const _SkeletonBlock({
+    required this.width,
+    required this.height,
+    required this.radius,
+  });
+
+  final double width;
+  final double height;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: const Color(0xFFE3E3DF),
+        borderRadius: BorderRadius.circular(radius),
       ),
     );
   }
@@ -842,6 +1135,9 @@ class _MetricCard extends StatelessWidget {
     required this.caption,
     required this.icon,
     required this.visual,
+    required this.accent,
+    required this.trend,
+    required this.loading,
   });
 
   final String label;
@@ -849,6 +1145,9 @@ class _MetricCard extends StatelessWidget {
   final String caption;
   final IconData icon;
   final _MetricVisual visual;
+  final Color accent;
+  final String trend;
+  final bool loading;
 
   @override
   Widget build(BuildContext context) {
@@ -888,15 +1187,18 @@ class _MetricCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      value,
-                      style: GoogleFonts.poppins(
-                        fontSize: 28,
-                        height: 1,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: -1,
+                    if (loading)
+                      const _SkeletonBlock(width: 64, height: 28, radius: 7)
+                    else
+                      Text(
+                        value,
+                        style: GoogleFonts.poppins(
+                          fontSize: 28,
+                          height: 1,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: -1,
+                        ),
                       ),
-                    ),
                     const SizedBox(height: 6),
                     Text(
                       caption,
@@ -909,9 +1211,40 @@ class _MetricCard extends StatelessWidget {
                   ],
                 ),
               ),
-              SizedBox.square(
-                dimension: 54,
-                child: CustomPaint(painter: _MetricPainter(visual)),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: accent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      loading ? '      ' : trend,
+                      style: GoogleFonts.poppins(
+                        color: accent,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox.square(
+                    dimension: 50,
+                    child: TweenAnimationBuilder<double>(
+                      tween: Tween(begin: 0, end: loading ? 0.15 : 1),
+                      duration: const Duration(milliseconds: 900),
+                      curve: Curves.easeOutCubic,
+                      builder: (context, progress, child) => CustomPaint(
+                        painter: _MetricPainter(visual, accent, progress),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -922,14 +1255,16 @@ class _MetricCard extends StatelessWidget {
 }
 
 class _MetricPainter extends CustomPainter {
-  const _MetricPainter(this.visual);
+  const _MetricPainter(this.visual, this.accent, this.progress);
 
   final _MetricVisual visual;
+  final Color accent;
+  final double progress;
 
   @override
   void paint(Canvas canvas, Size size) {
     final dark = Paint()
-      ..color = const Color(0xFF171917)
+      ..color = accent
       ..strokeWidth = 6
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
@@ -945,7 +1280,7 @@ class _MetricPainter extends CustomPainter {
       canvas.drawArc(
         rect,
         -math.pi / 2,
-        math.pi * (visual == _MetricVisual.ring ? 1.45 : 0.86),
+        math.pi * (visual == _MetricVisual.ring ? 1.45 : 0.86) * progress,
         false,
         dark,
       );
@@ -962,9 +1297,10 @@ class _MetricPainter extends CustomPainter {
           ..strokeWidth = 6
           ..strokeCap = StrokeCap.round;
         final x = 5.0 + index * 9;
+        final animatedHeight = heights[index] * progress;
         canvas.drawLine(
           Offset(x, size.height - 3),
-          Offset(x, size.height - heights[index]),
+          Offset(x, size.height - animatedHeight),
           paint,
         );
       }
@@ -976,12 +1312,21 @@ class _MetricPainter extends CustomPainter {
       ..cubicTo(10, 44, 9, 27, 18, 29)
       ..cubicTo(27, 32, 27, 11, 36, 12)
       ..cubicTo(45, 13, 43, 29, 52, 25);
-    canvas.drawPath(path, dark..strokeWidth = 3.4);
+    final metrics = path.computeMetrics().toList();
+    if (metrics.isNotEmpty) {
+      final metric = metrics.first;
+      canvas.drawPath(
+        metric.extractPath(0, metric.length * progress),
+        dark..strokeWidth = 3.4,
+      );
+    }
   }
 
   @override
   bool shouldRepaint(covariant _MetricPainter oldDelegate) =>
-      oldDelegate.visual != visual;
+      oldDelegate.visual != visual ||
+      oldDelegate.accent != accent ||
+      oldDelegate.progress != progress;
 }
 
 class _SectionHeader extends StatelessWidget {
