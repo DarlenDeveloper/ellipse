@@ -14,6 +14,63 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'firebase_options.dart';
 
+String _emailBodyToText(String input) {
+  var text = input.replaceAll(RegExp(r'\r\n?'), '\n');
+  for (final tag in ['style', 'script', 'head']) {
+    text = text.replaceAll(
+      RegExp('<$tag[\\s\\S]*?</$tag>', caseSensitive: false),
+      '',
+    );
+  }
+  text = text.replaceAll(RegExp(r'<!--[\s\S]*?-->'), '');
+  text = text.replaceAllMapped(
+    RegExp(
+      r'''<a\b[^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)</a>''',
+      caseSensitive: false,
+    ),
+    (match) {
+      final href = (match.group(1) ?? '').replaceAll('&amp;', '&').trim();
+      final label = (match.group(2) ?? '')
+          .replaceAll(RegExp(r'<[^>]+>'), '')
+          .trim();
+      if (!RegExp(
+        r'^(https?://|mailto:)',
+        caseSensitive: false,
+      ).hasMatch(href)) {
+        return label;
+      }
+      return label.isNotEmpty && label != href ? '$label ($href)' : href;
+    },
+  );
+  text = text.replaceAll(
+    RegExp(
+      r'<(br|/p|/div|/tr|/li|/h[1-6]|/table)\b[^>]*>',
+      caseSensitive: false,
+    ),
+    '\n',
+  );
+  text = text.replaceAll(RegExp(r'<[^>]+>'), '');
+  text = text.replaceAll(RegExp(r'[.#]?[\w-]+(?:::?[\w-]+)?\s*\{[^{}]*\}'), '');
+  text = text
+      .replaceAll(RegExp('&nbsp;', caseSensitive: false), ' ')
+      .replaceAll(RegExp('&amp;', caseSensitive: false), '&')
+      .replaceAll(RegExp('&lt;', caseSensitive: false), '<')
+      .replaceAll(RegExp('&gt;', caseSensitive: false), '>')
+      .replaceAll(RegExp('&quot;', caseSensitive: false), '"')
+      .replaceAll(RegExp(r'&#39;|&apos;', caseSensitive: false), "'");
+  text = text.replaceAllMapped(RegExp(r'&#(\d+);'), (match) {
+    final code = int.tryParse(match.group(1) ?? '');
+    return code == null ? '' : String.fromCharCode(code);
+  });
+  return text
+      .replaceAll(RegExp(r'[\u200B-\u200D\u2060\uFEFF]'), '')
+      .replaceAll(RegExp(r'[ \t]+\n'), '\n')
+      .replaceAll(RegExp(r'\n[ \t]+'), '\n')
+      .replaceAll(RegExp(r'[ \t]{2,}'), ' ')
+      .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+      .trim();
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
@@ -658,6 +715,7 @@ class _AppShellState extends State<AppShell> {
             }
           },
         ),
+        3 => const _InboxScreen(),
         _ => SafeArea(
           child: Center(
             child: Text(
@@ -1820,6 +1878,789 @@ class _ConversationEmpty extends StatelessWidget {
                 fontSize: 11,
                 height: 1.5,
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InboxScreen extends StatefulWidget {
+  const _InboxScreen();
+
+  @override
+  State<_InboxScreen> createState() => _InboxScreenState();
+}
+
+class _InboxScreenState extends State<_InboxScreen> {
+  static const _cacheDuration = Duration(minutes: 2);
+  final _searchController = TextEditingController();
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _readsSubscription;
+  List<Map<String, dynamic>> _conversations = [];
+  List<Map<String, dynamic>?> _pageCursors = [null];
+  Map<String, dynamic>? _nextCursor;
+  Map<String, int> _readAt = {};
+  String _period = 'today';
+  String _scope = 'all';
+  String _role = 'employee';
+  String _search = '';
+  String? _enterpriseId;
+  String? _error;
+  int _page = 1;
+  bool _hasNext = false;
+  bool _loading = true;
+  bool _syncing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController.addListener(() {
+      setState(() => _search = _searchController.text.trim().toLowerCase());
+    });
+    _initialise();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _readsSubscription?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _initialise() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    try {
+      final profile = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      final data = profile.data();
+      final enterpriseId = data?['enterprise_id'] as String?;
+      if (enterpriseId == null) throw StateError('No organisation found.');
+      _enterpriseId = enterpriseId;
+      _role = '${data?['role'] ?? 'employee'}';
+      if (_role != 'owner') _scope = _role == 'admin' ? 'org' : 'all';
+      _listenToReads(user.uid, enterpriseId);
+      await _loadPage();
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = 'Inbox could not be opened.';
+        });
+      }
+    }
+  }
+
+  void _listenToReads(String uid, String enterpriseId) {
+    _readsSubscription = FirebaseFirestore.instance
+        .collection('conversation_reads')
+        .where('user_id', isEqualTo: uid)
+        .where('enterprise_id', isEqualTo: enterpriseId)
+        .limit(60)
+        .snapshots()
+        .listen((snapshot) {
+          if (!mounted) return;
+          final reads = <String, int>{};
+          for (final doc in snapshot.docs) {
+            final data = doc.data();
+            reads['${data['conversation_id']}'] = _millis(data['read_at']);
+          }
+          setState(() => _readAt = reads);
+        }, onError: (_) {});
+  }
+
+  Future<void> _loadPage({bool force = false}) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || _enterpriseId == null) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final cursor = _pageCursors[_page - 1];
+      final cursorId = cursor?['id'] ?? 'start';
+      final cacheKey =
+          'ellipse_inbox_${user.uid}_${_scope}_${_period}_${_page}_$cursorId';
+      final preferences = await SharedPreferences.getInstance();
+      if (!force) {
+        final encoded = preferences.getString(cacheKey);
+        if (encoded != null) {
+          final cached = Map<String, dynamic>.from(jsonDecode(encoded) as Map);
+          if (DateTime.now().millisecondsSinceEpoch -
+                  (cached['savedAt'] as int) <
+              _cacheDuration.inMilliseconds) {
+            _applyPayload(Map<String, dynamic>.from(cached['payload'] as Map));
+            return;
+          }
+          await preferences.remove(cacheKey);
+        }
+      }
+      final result = await FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('listInboxConversations')
+          .call<Map<String, dynamic>>({
+            'period': _period,
+            'scope': _scope,
+            'cursor': cursor,
+          });
+      if (!mounted) return;
+      _applyPayload(result.data);
+      await preferences.setString(
+        cacheKey,
+        jsonEncode({
+          'savedAt': DateTime.now().millisecondsSinceEpoch,
+          'payload': result.data,
+        }),
+      );
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = 'Conversations could not be loaded.';
+        });
+      }
+    }
+  }
+
+  void _applyPayload(Map<String, dynamic> payload) {
+    if (!mounted) return;
+    setState(() {
+      _conversations = ((payload['conversations'] as List?) ?? const [])
+          .map((item) => Map<String, dynamic>.from(item as Map))
+          .toList();
+      _hasNext = payload['hasNext'] == true;
+      _nextCursor = payload['nextCursor'] == null
+          ? null
+          : Map<String, dynamic>.from(payload['nextCursor'] as Map);
+      _scope = '${payload['scope'] ?? _scope}';
+      _loading = false;
+    });
+  }
+
+  void _changePeriod(String value) {
+    if (_period == value) return;
+    setState(() {
+      _period = value;
+      _resetPagination();
+    });
+    _loadPage();
+  }
+
+  void _changeScope(String value) {
+    if (_scope == value) return;
+    setState(() {
+      _scope = value;
+      _resetPagination();
+    });
+    _loadPage();
+  }
+
+  void _resetPagination() {
+    _page = 1;
+    _pageCursors = [null];
+    _nextCursor = null;
+    _hasNext = false;
+  }
+
+  void _nextPage() {
+    if (!_hasNext || _nextCursor == null || _loading) return;
+    setState(() {
+      if (_pageCursors.length == _page) {
+        _pageCursors.add(_nextCursor);
+      } else {
+        _pageCursors[_page] = _nextCursor;
+      }
+      _page++;
+    });
+    _loadPage();
+  }
+
+  void _previousPage() {
+    if (_page == 1 || _loading) return;
+    setState(() => _page--);
+    _loadPage();
+  }
+
+  Future<void> _sync() async {
+    if (_enterpriseId == null || _syncing) return;
+    setState(() => _syncing = true);
+    final functions = FirebaseFunctions.instanceFor(region: 'us-central1');
+    try {
+      await Future.wait([
+        functions.httpsCallable('syncGmail').call<void>({
+          'enterpriseId': _enterpriseId,
+          'scope': _scope == 'personal' ? 'personal' : 'org',
+        }),
+        functions.httpsCallable('syncSmtp').call<void>({
+          'enterpriseId': _enterpriseId,
+        }),
+        functions.httpsCallable('syncOutlook').call<void>({
+          'enterpriseId': _enterpriseId,
+        }),
+      ]);
+    } catch (_) {
+      // Some channel types may not be connected; refresh those that succeeded.
+    }
+    if (!mounted) return;
+    setState(() => _syncing = false);
+    await _loadPage(force: true);
+  }
+
+  int _millis(dynamic value) {
+    if (value is Timestamp) return value.millisecondsSinceEpoch;
+    if (value is num) return value.toInt();
+    return 0;
+  }
+
+  bool _unread(Map<String, dynamic> conversation) {
+    return (_readAt[conversation['id']] ?? 0) <
+        _millis(conversation['last_message_at']);
+  }
+
+  String _asset(String channel) {
+    if (channel == 'whatsapp') return 'assets/images/integration-whatsapp.png';
+    if (channel == 'microsoft365') {
+      return 'assets/images/integration-outlook.png';
+    }
+    if (channel == 'smtp') return 'assets/images/integration-smtp.png';
+    if (channel == 'zoho') return 'assets/images/integration-zoho.png';
+    return 'assets/images/integration-gmail.png';
+  }
+
+  String _time(dynamic value) {
+    final milliseconds = _millis(value);
+    if (milliseconds == 0) return '';
+    final date = DateTime.fromMillisecondsSinceEpoch(milliseconds).toLocal();
+    final now = DateTime.now();
+    if (date.year == now.year &&
+        date.month == now.month &&
+        date.day == now.day) {
+      final hour = date.hour % 12 == 0 ? 12 : date.hour % 12;
+      return '$hour:${date.minute.toString().padLeft(2, '0')}';
+    }
+    return '${date.day}/${date.month}';
+  }
+
+  List<Map<String, dynamic>> get _visibleConversations {
+    if (_search.isEmpty) return _conversations;
+    return _conversations.where((conversation) {
+      return [
+        conversation['subject'],
+        conversation['customer_ref'],
+        conversation['channel'],
+      ].join(' ').toLowerCase().contains(_search);
+    }).toList();
+  }
+
+  Future<void> _openConversation(Map<String, dynamic> conversation) async {
+    final id = conversation['id'] as String;
+    setState(() {
+      _readAt[id] = _millis(conversation['last_message_at']);
+    });
+    FirebaseFunctions.instanceFor(region: 'us-central1')
+        .httpsCallable('markConversationRead')
+        .call<void>({'conversationId': id})
+        .ignore();
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => _InboxReadingScreen(
+          conversation: conversation,
+          enterpriseId: _enterpriseId!,
+          asset: _asset('${conversation['channel'] ?? ''}'),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final conversations = _visibleConversations;
+    return SafeArea(
+      bottom: false,
+      child: RefreshIndicator(
+        onRefresh: () => _loadPage(force: true),
+        color: const Color(0xFF1D2825),
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(22, 24, 22, 118),
+              sliver: SliverList.list(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Inbox',
+                          style: GoogleFonts.poppins(
+                            fontSize: 29,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.9,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: _syncing ? null : _sync,
+                        icon: AnimatedRotation(
+                          turns: _syncing ? 1 : 0,
+                          duration: const Duration(milliseconds: 700),
+                          child: const Icon(Iconsax.refresh_circle, size: 25),
+                        ),
+                        tooltip: 'Sync connected channels',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  TextField(
+                    controller: _searchController,
+                    style: GoogleFonts.poppins(fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'Search this page',
+                      prefixIcon: const Icon(Iconsax.search_normal_1, size: 19),
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(27),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                  if (_role == 'owner') ...[
+                    const SizedBox(height: 14),
+                    Row(
+                      children:
+                          {
+                            'all': 'All',
+                            'org': 'Organisation',
+                            'personal': 'Personal',
+                          }.entries.map((entry) {
+                            final selected = _scope == entry.key;
+                            return Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.only(right: 6),
+                                child: ChoiceChip(
+                                  label: Text(entry.value),
+                                  selected: selected,
+                                  onSelected: (_) => _changeScope(entry.key),
+                                  showCheckmark: false,
+                                  selectedColor: const Color(0xFF1D2825),
+                                  backgroundColor: const Color(0xFFEEEDEA),
+                                  side: BorderSide.none,
+                                  shape: const StadiumBorder(),
+                                  labelStyle: GoogleFonts.poppins(
+                                    color: selected
+                                        ? Colors.white
+                                        : const Color(0xFF777873),
+                                    fontSize: 9.5,
+                                  ),
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children:
+                          {
+                            'today': 'Today',
+                            'week': 'This week',
+                            'month': 'This month',
+                            'all': 'All time',
+                          }.entries.map((entry) {
+                            final selected = _period == entry.key;
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: ChoiceChip(
+                                label: Text(entry.value),
+                                selected: selected,
+                                onSelected: (_) => _changePeriod(entry.key),
+                                showCheckmark: false,
+                                selectedColor: const Color(0xFF1D2825),
+                                backgroundColor: const Color(0xFFEEEDEA),
+                                side: BorderSide.none,
+                                shape: const StadiumBorder(),
+                                labelStyle: GoogleFonts.poppins(
+                                  color: selected
+                                      ? Colors.white
+                                      : const Color(0xFF777873),
+                                  fontSize: 10,
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                    ),
+                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: 12),
+                    _DashboardError(message: _error!, onRetry: _loadPage),
+                  ],
+                  const SizedBox(height: 12),
+                  if (_loading)
+                    const _DashboardListSkeleton(rows: 6)
+                  else if (conversations.isEmpty)
+                    const _DashboardEmpty(
+                      label: 'No conversations in this view.',
+                    )
+                  else
+                    ...List.generate(conversations.length, (index) {
+                      final conversation = conversations[index];
+                      return _InboxConversationRow(
+                        asset: _asset('${conversation['channel'] ?? ''}'),
+                        customer:
+                            '${conversation['customer_ref'] ?? 'Unknown sender'}',
+                        subject: '${conversation['subject'] ?? '(no subject)'}',
+                        time: _time(conversation['last_message_at']),
+                        unread: _unread(conversation),
+                        isLast: index == conversations.length - 1,
+                        onTap: () => _openConversation(conversation),
+                      );
+                    }),
+                  if (!_loading && (_page > 1 || _hasNext)) ...[
+                    const SizedBox(height: 24),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        IconButton.filledTonal(
+                          onPressed: _page > 1 ? _previousPage : null,
+                          icon: const Icon(Icons.arrow_back_rounded),
+                        ),
+                        Text(
+                          'Page $_page · up to 12 messages',
+                          style: GoogleFonts.poppins(
+                            color: const Color(0xFF999994),
+                            fontSize: 10.5,
+                          ),
+                        ),
+                        IconButton.filled(
+                          onPressed: _hasNext ? _nextPage : null,
+                          style: IconButton.styleFrom(
+                            backgroundColor: const Color(0xFF1D2825),
+                          ),
+                          icon: const Icon(Icons.arrow_forward_rounded),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InboxConversationRow extends StatelessWidget {
+  const _InboxConversationRow({
+    required this.asset,
+    required this.customer,
+    required this.subject,
+    required this.time,
+    required this.unread,
+    required this.isLast,
+    required this.onTap,
+  });
+
+  final String asset;
+  final String customer;
+  final String subject;
+  final String time;
+  final bool unread;
+  final bool isLast;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 15),
+        decoration: BoxDecoration(
+          border: isLast
+              ? null
+              : const Border(bottom: BorderSide(color: Color(0xFFE9E9E5))),
+        ),
+        child: Row(
+          children: [
+            SizedBox.square(
+              dimension: 42,
+              child: Center(child: Image.asset(asset, width: 30, height: 30)),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          customer,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.poppins(
+                            fontSize: 13,
+                            fontWeight: unread
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        time,
+                        style: GoogleFonts.poppins(
+                          color: const Color(0xFFAAA9A5),
+                          fontSize: 9.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          subject,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.poppins(
+                            color: unread
+                                ? const Color(0xFF454743)
+                                : const Color(0xFF999994),
+                            fontSize: 10.5,
+                            fontWeight: unread
+                                ? FontWeight.w600
+                                : FontWeight.w400,
+                          ),
+                        ),
+                      ),
+                      if (unread)
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF527CA8),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InboxReadingScreen extends StatefulWidget {
+  const _InboxReadingScreen({
+    required this.conversation,
+    required this.enterpriseId,
+    required this.asset,
+  });
+
+  final Map<String, dynamic> conversation;
+  final String enterpriseId;
+  final String asset;
+
+  @override
+  State<_InboxReadingScreen> createState() => _InboxReadingScreenState();
+}
+
+class _InboxReadingScreenState extends State<_InboxReadingScreen> {
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _subscription;
+  List<Map<String, dynamic>> _messages = [];
+  String? _error;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _listen();
+  }
+
+  @override
+  void dispose() {
+    _subscription?.cancel();
+    super.dispose();
+  }
+
+  void _listen() {
+    _subscription = FirebaseFirestore.instance
+        .collection('messages')
+        .where('enterprise_id', isEqualTo: widget.enterpriseId)
+        .where('conversation_id', isEqualTo: widget.conversation['id'])
+        .limit(50)
+        .snapshots()
+        .listen(
+          (snapshot) {
+            if (!mounted) return;
+            final messages = snapshot.docs
+                .map((doc) => {'id': doc.id, ...doc.data()})
+                .toList();
+            messages.sort(
+              (a, b) =>
+                  _millis(a['timestamp']).compareTo(_millis(b['timestamp'])),
+            );
+            setState(() {
+              _messages = messages;
+              _loading = false;
+            });
+          },
+          onError: (_) {
+            if (mounted) {
+              setState(() {
+                _loading = false;
+                _error = 'This conversation could not be loaded.';
+              });
+            }
+          },
+        );
+  }
+
+  int _millis(dynamic value) {
+    if (value is Timestamp) return value.millisecondsSinceEpoch;
+    if (value is num) return value.toInt();
+    return 0;
+  }
+
+  String _date(dynamic value) {
+    final date = DateTime.fromMillisecondsSinceEpoch(_millis(value)).toLocal();
+    return '${date.day}/${date.month} · ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF9F9F7),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Container(
+              height: 70,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              color: Colors.white,
+              child: Row(
+                children: [
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(
+                      Icons.arrow_back_ios_new_rounded,
+                      size: 20,
+                    ),
+                  ),
+                  Image.asset(widget.asset, width: 30, height: 30),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${widget.conversation['customer_ref'] ?? 'Conversation'}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.poppins(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        Text(
+                          '${widget.conversation['subject'] ?? ''}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.poppins(
+                            color: const Color(0xFF999994),
+                            fontSize: 9.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text(_error!, style: const TextStyle(color: Colors.red)),
+              ),
+            Expanded(
+              child: _loading
+                  ? const Center(
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(18, 22, 18, 30),
+                      itemCount: _messages.length,
+                      itemBuilder: (context, index) {
+                        final message = _messages[index];
+                        final mine = message['sender_type'] == 'us';
+                        final body = _emailBodyToText(
+                          '${message['body'] ?? message['snippet'] ?? ''}',
+                        );
+                        return Align(
+                          alignment: mine
+                              ? Alignment.centerRight
+                              : Alignment.centerLeft,
+                          child: Container(
+                            constraints: const BoxConstraints(maxWidth: 330),
+                            margin: const EdgeInsets.only(bottom: 14),
+                            padding: const EdgeInsets.all(15),
+                            decoration: BoxDecoration(
+                              color: mine
+                                  ? const Color(0xFF1D2825)
+                                  : Colors.white,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (!mine)
+                                  Text(
+                                    '${message['from'] ?? message['from_email'] ?? 'Customer'}',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                const SizedBox(height: 5),
+                                Text(
+                                  body,
+                                  style: GoogleFonts.poppins(
+                                    color: mine
+                                        ? Colors.white
+                                        : const Color(0xFF454743),
+                                    fontSize: 11.5,
+                                    height: 1.55,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  _date(message['timestamp']),
+                                  style: GoogleFonts.poppins(
+                                    color: mine
+                                        ? Colors.white.withValues(alpha: 0.55)
+                                        : const Color(0xFFAAA9A5),
+                                    fontSize: 8.5,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
             ),
           ],
         ),
