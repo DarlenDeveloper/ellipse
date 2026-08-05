@@ -939,26 +939,25 @@ class _ChatScreenState extends State<_ChatScreen> {
 
   Future<void> _saveCache(String uid) async {
     final preferences = await SharedPreferences.getInstance();
-    Map<String, dynamic>? serialise(Map<String, dynamic>? chat) {
-      if (chat == null) return null;
-      return chat.map((key, value) {
-        if (value is Timestamp) {
-          return MapEntry(key, value.millisecondsSinceEpoch);
-        }
-        return MapEntry(key, value);
-      });
-    }
-
     await preferences.setString(
       'ellipse_chat_list_$uid',
       jsonEncode({
         'savedAt': DateTime.now().millisecondsSinceEpoch,
-        'group': serialise(_groupChat),
-        'direct': _directChats.map(serialise).toList(),
-        'members': _members,
+        'group': _jsonSafe(_groupChat),
+        'direct': _jsonSafe(_directChats),
+        'members': _jsonSafe(_members),
         'reads': _readAt,
       }),
     );
+  }
+
+  dynamic _jsonSafe(dynamic value) {
+    if (value is Timestamp) return value.millisecondsSinceEpoch;
+    if (value is Map) {
+      return value.map((key, item) => MapEntry('$key', _jsonSafe(item)));
+    }
+    if (value is Iterable) return value.map(_jsonSafe).toList();
+    return value;
   }
 
   String _chatName(Map<String, dynamic> chat) {
@@ -1036,6 +1035,34 @@ class _ChatScreenState extends State<_ChatScreen> {
           .toList();
     }
     return chats;
+  }
+
+  Future<void> _openConversation(Map<String, dynamic> chat) async {
+    var chatId = chat['id'] as String;
+    if (chat['member_uid'] != null) {
+      try {
+        final result =
+            await FirebaseFunctions.instanceFor(region: 'us-central1')
+                .httpsCallable('startInternalChat')
+                .call<Map<String, dynamic>>({'targetUid': chat['member_uid']});
+        chatId = result.data['chatId'] as String;
+      } catch (_) {
+        if (mounted) {
+          setState(() => _error = 'This conversation could not be opened.');
+        }
+        return;
+      }
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => _ConversationScreen(
+          chatId: chatId,
+          name: _chatName(chat),
+          group: chat['type'] == 'group',
+        ),
+      ),
+    );
   }
 
   @override
@@ -1139,13 +1166,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                       time: _time(chat['last_message_at']),
                       unread: _isUnread(chat),
                       group: chat['type'] == 'group',
-                      onTap: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Opening ${_chatName(chat)} next.'),
-                          ),
-                        );
-                      },
+                      onTap: () => _openConversation(chat),
                     );
                   }),
               ],
@@ -1297,6 +1318,508 @@ class _ChatListRow extends StatelessWidget {
                     ),
                   ),
               ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ConversationScreen extends StatefulWidget {
+  const _ConversationScreen({
+    required this.chatId,
+    required this.name,
+    required this.group,
+  });
+
+  final String chatId;
+  final String name;
+  final bool group;
+
+  @override
+  State<_ConversationScreen> createState() => _ConversationScreenState();
+}
+
+class _ConversationScreenState extends State<_ConversationScreen> {
+  static const _cacheDuration = Duration(minutes: 2);
+  final _draftController = TextEditingController();
+  final _scrollController = ScrollController();
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _subscription;
+  List<Map<String, dynamic>> _messages = [];
+  String? _error;
+  bool _loading = true;
+  bool _sending = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _openConversation();
+  }
+
+  @override
+  void dispose() {
+    _subscription?.cancel();
+    _draftController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _openConversation() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    await _restoreMessages(user.uid);
+    unawaited(_markRead());
+    _subscription = FirebaseFirestore.instance
+        .collection('internal_chats')
+        .doc(widget.chatId)
+        .collection('messages')
+        .orderBy('created_at', descending: true)
+        .limit(50)
+        .snapshots()
+        .listen(
+          (snapshot) {
+            if (!mounted) return;
+            final messages = snapshot.docs
+                .map((doc) => {'id': doc.id, ...doc.data()})
+                .toList()
+                .reversed
+                .toList();
+            setState(() {
+              _messages = messages;
+              _loading = false;
+              _error = null;
+            });
+            _saveMessages(user.uid);
+            _scrollToBottom();
+          },
+          onError: (Object _) {
+            if (mounted) {
+              setState(() {
+                _loading = false;
+                _error = 'Messages could not be loaded.';
+              });
+            }
+          },
+        );
+  }
+
+  Future<void> _markRead() async {
+    try {
+      await FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('markInternalChatRead')
+          .call<void>({'chatId': widget.chatId});
+    } catch (_) {
+      // The message view can remain usable if a read receipt fails.
+    }
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 240),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  Future<void> _restoreMessages(String uid) async {
+    final preferences = await SharedPreferences.getInstance();
+    final key = 'ellipse_chat_messages_${uid}_${widget.chatId}';
+    final encoded = preferences.getString(key);
+    if (encoded == null) return;
+    try {
+      final cached = Map<String, dynamic>.from(jsonDecode(encoded) as Map);
+      if (DateTime.now().millisecondsSinceEpoch - (cached['savedAt'] as int) >=
+          _cacheDuration.inMilliseconds) {
+        await preferences.remove(key);
+        return;
+      }
+      if (!mounted) return;
+      setState(() {
+        _messages = ((cached['messages'] as List?) ?? const [])
+            .map((item) => Map<String, dynamic>.from(item as Map))
+            .toList();
+        _loading = false;
+      });
+      _scrollToBottom();
+    } catch (_) {
+      await preferences.remove(key);
+    }
+  }
+
+  Future<void> _saveMessages(String uid) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(
+      'ellipse_chat_messages_${uid}_${widget.chatId}',
+      jsonEncode({
+        'savedAt': DateTime.now().millisecondsSinceEpoch,
+        'messages': _jsonSafe(_messages),
+      }),
+    );
+  }
+
+  dynamic _jsonSafe(dynamic value) {
+    if (value is Timestamp) return value.millisecondsSinceEpoch;
+    if (value is Map) {
+      return value.map((key, item) => MapEntry('$key', _jsonSafe(item)));
+    }
+    if (value is Iterable) return value.map(_jsonSafe).toList();
+    return value;
+  }
+
+  Future<void> _send() async {
+    final text = _draftController.text.trim();
+    if (text.isEmpty || _sending) return;
+    setState(() {
+      _sending = true;
+      _error = null;
+    });
+    _draftController.clear();
+    try {
+      await FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('sendInternalMessage')
+          .call<void>({'chatId': widget.chatId, 'text': text});
+    } catch (_) {
+      _draftController.text = text;
+      if (mounted) setState(() => _error = 'Message could not be sent.');
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  int _millis(dynamic value) {
+    if (value is Timestamp) return value.millisecondsSinceEpoch;
+    if (value is num) return value.toInt();
+    return 0;
+  }
+
+  String _time(dynamic value) {
+    final milliseconds = _millis(value);
+    if (milliseconds == 0) return '';
+    final date = DateTime.fromMillisecondsSinceEpoch(milliseconds).toLocal();
+    final hour = date.hour % 12 == 0 ? 12 : date.hour % 12;
+    return '$hour:${date.minute.toString().padLeft(2, '0')} ${date.hour >= 12 ? 'PM' : 'AM'}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    return Scaffold(
+      resizeToAvoidBottomInset: true,
+      backgroundColor: const Color(0xFFF9F9F7),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Container(
+              height: 70,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              color: Colors.white.withValues(alpha: 0.94),
+              child: Row(
+                children: [
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(
+                      Icons.arrow_back_ios_new_rounded,
+                      size: 20,
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          widget.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.poppins(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        Text(
+                          widget.group
+                              ? 'Organisation team'
+                              : 'Organisation member',
+                          style: GoogleFonts.poppins(
+                            color: const Color(0xFFAAA9A5),
+                            fontSize: 9.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () {},
+                    icon: const Icon(Iconsax.search_normal_1, size: 21),
+                  ),
+                ],
+              ),
+            ),
+            if (_error != null)
+              Container(
+                width: double.infinity,
+                color: const Color(0xFFFFE8E5),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 8,
+                ),
+                child: Text(
+                  _error!,
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.poppins(
+                    color: const Color(0xFFB63830),
+                    fontSize: 10.5,
+                  ),
+                ),
+              ),
+            Expanded(
+              child: _loading
+                  ? const Center(
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Color(0xFF1D2825),
+                      ),
+                    )
+                  : _messages.isEmpty
+                  ? _ConversationEmpty(name: widget.name, group: widget.group)
+                  : ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.fromLTRB(18, 24, 18, 20),
+                      itemCount: _messages.length,
+                      itemBuilder: (context, index) {
+                        final message = _messages[index];
+                        final mine = message['sender_uid'] == currentUid;
+                        final previousSender = index > 0
+                            ? _messages[index - 1]['sender_uid']
+                            : null;
+                        return _MessageBubble(
+                          text: '${message['text'] ?? ''}',
+                          sender: '${message['sender_name'] ?? 'Member'}',
+                          time: _time(message['created_at']),
+                          mine: mine,
+                          showSender:
+                              !mine && previousSender != message['sender_uid'],
+                          group: widget.group,
+                        );
+                      },
+                    ),
+            ),
+            Container(
+              color: Colors.white,
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  IconButton(
+                    onPressed: () {},
+                    icon: const Icon(Iconsax.export_1, size: 22),
+                    color: const Color(0xFF555752),
+                  ),
+                  Expanded(
+                    child: TextField(
+                      controller: _draftController,
+                      minLines: 1,
+                      maxLines: 5,
+                      maxLength: 5000,
+                      textInputAction: TextInputAction.newline,
+                      style: GoogleFonts.poppins(fontSize: 13),
+                      decoration: InputDecoration(
+                        counterText: '',
+                        hintText: 'Message ${widget.name}',
+                        filled: true,
+                        fillColor: const Color(0xFFF5F5F2),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(25),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 17,
+                          vertical: 13,
+                        ),
+                      ),
+                      onSubmitted: (_) => _send(),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton.filled(
+                    onPressed: _sending ? null : _send,
+                    style: IconButton.styleFrom(
+                      backgroundColor: const Color(0xFF1D2825),
+                      disabledBackgroundColor: const Color(0xFFBFC0BB),
+                    ),
+                    icon: _sending
+                        ? const SizedBox.square(
+                            dimension: 17,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Iconsax.arrow_up_1, size: 20),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MessageBubble extends StatelessWidget {
+  const _MessageBubble({
+    required this.text,
+    required this.sender,
+    required this.time,
+    required this.mine,
+    required this.showSender,
+    required this.group,
+  });
+
+  final String text;
+  final String sender;
+  final String time;
+  final bool mine;
+  final bool showSender;
+  final bool group;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        mainAxisAlignment: mine
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          if (!mine) ...[
+            Container(
+              width: 30,
+              height: 30,
+              margin: const EdgeInsets.only(right: 8),
+              decoration: const BoxDecoration(
+                color: Color(0xFFE4D9F4),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                group ? Iconsax.people : Iconsax.user,
+                size: 15,
+                color: const Color(0xFF3E3749),
+              ),
+            ),
+          ],
+          Flexible(
+            child: Column(
+              crossAxisAlignment: mine
+                  ? CrossAxisAlignment.end
+                  : CrossAxisAlignment.start,
+              children: [
+                if (showSender)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 10, bottom: 4),
+                    child: Text(
+                      sender,
+                      style: GoogleFonts.poppins(
+                        color: const Color(0xFF999994),
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                Container(
+                  constraints: const BoxConstraints(maxWidth: 290),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 15,
+                    vertical: 11,
+                  ),
+                  decoration: BoxDecoration(
+                    color: mine ? const Color(0xFF1D2825) : Colors.white,
+                    borderRadius: BorderRadius.only(
+                      topLeft: const Radius.circular(20),
+                      topRight: const Radius.circular(20),
+                      bottomLeft: Radius.circular(mine ? 20 : 5),
+                      bottomRight: Radius.circular(mine ? 5 : 20),
+                    ),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x08000000),
+                        blurRadius: 8,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Text(
+                    text,
+                    style: GoogleFonts.poppins(
+                      color: mine ? Colors.white : const Color(0xFF343632),
+                      fontSize: 12,
+                      height: 1.5,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  time,
+                  style: GoogleFonts.poppins(
+                    color: const Color(0xFFAAA9A5),
+                    fontSize: 8.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ConversationEmpty extends StatelessWidget {
+  const _ConversationEmpty({required this.name, required this.group});
+
+  final String name;
+  final bool group;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 62,
+              height: 62,
+              decoration: const BoxDecoration(
+                color: Color(0xFFE4D9F4),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(group ? Iconsax.people : Iconsax.user, size: 27),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Start the conversation',
+              style: GoogleFonts.poppins(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Messages with $name stay inside your organisation.',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.poppins(
+                color: const Color(0xFF999994),
+                fontSize: 11,
+                height: 1.5,
+              ),
             ),
           ],
         ),
