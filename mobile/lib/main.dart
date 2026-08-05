@@ -24,7 +24,554 @@ class EllipseDeskApp extends StatelessWidget {
         textTheme: GoogleFonts.poppinsTextTheme(),
         useMaterial3: true,
       ),
-      home: const AppShell(),
+      home: const OnboardingScreen(),
+    );
+  }
+}
+
+class OnboardingScreen extends StatelessWidget {
+  const OnboardingScreen({super.key});
+
+  void _continue(BuildContext context) {
+    Navigator.of(context).pushReplacement(
+      PageRouteBuilder<void>(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            const AppShell(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return FadeTransition(
+            opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
+            child: child,
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 420),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF07161F),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.asset(
+            'assets/images/onboarding-background.jpeg',
+            fit: BoxFit.cover,
+            alignment: Alignment.topCenter,
+          ),
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0x52020B11),
+                  Color(0x05020B11),
+                  Color(0x20020B11),
+                  Color(0xD9061118),
+                ],
+                stops: [0, 0.28, 0.62, 1],
+              ),
+            ),
+          ),
+          SafeArea(
+            minimum: const EdgeInsets.fromLTRB(28, 24, 28, 30),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxHeight < 700;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Spacer(flex: 5),
+                    Text(
+                      'Everything your\nteam needs, together.',
+                      style: GoogleFonts.poppins(
+                        color: Colors.white,
+                        fontSize: compact ? 34 : 38,
+                        height: 1.22,
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: -1.15,
+                        shadows: const [
+                          Shadow(
+                            color: Color(0x52000000),
+                            blurRadius: 18,
+                            offset: Offset(0, 3),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Text(
+                      'Work, approvals, and conversations —\norganized around your business.',
+                      style: GoogleFonts.poppins(
+                        color: Colors.white.withValues(alpha: 0.78),
+                        fontSize: compact ? 14 : 15,
+                        height: 1.5,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                    SizedBox(height: compact ? 34 : 42),
+                    _OnboardingButton(onPressed: () => _continue(context)),
+                    const SizedBox(height: 24),
+                    Align(
+                      alignment: Alignment.center,
+                      child: TextButton(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (context) => const SignInScreen(),
+                            ),
+                          );
+                        },
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 4,
+                          ),
+                        ),
+                        child: Text(
+                          'I already have an account',
+                          style: GoogleFonts.poppins(
+                            color: Colors.white.withValues(alpha: 0.92),
+                            fontSize: 14,
+                            fontWeight: FontWeight.w400,
+                            decoration: TextDecoration.underline,
+                            decorationColor: Colors.white.withValues(
+                              alpha: 0.92,
+                            ),
+                            decorationThickness: 1,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const Spacer(flex: 1),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OnboardingButton extends StatelessWidget {
+  const _OnboardingButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: 'Get started',
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(32),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onPressed,
+          child: Container(
+            height: 64,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(32),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.55),
+                width: 7,
+                strokeAlign: BorderSide.strokeAlignOutside,
+              ),
+            ),
+            child: Text(
+              'Get started',
+              style: GoogleFonts.poppins(
+                color: const Color(0xFF142B2C),
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class SignInScreen extends StatefulWidget {
+  const SignInScreen({super.key});
+
+  @override
+  State<SignInScreen> createState() => _SignInScreenState();
+}
+
+class _SignInScreenState extends State<SignInScreen> {
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _emailFocus = FocusNode();
+  final _passwordFocus = FocusNode();
+
+  bool _showPasswordField = false;
+  bool _obscurePassword = true;
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _emailFocus.requestFocus(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    _emailFocus.dispose();
+    _passwordFocus.dispose();
+    super.dispose();
+  }
+
+  bool get _hasValidEmail {
+    return RegExp(
+      r'^[^\s@]+@[^\s@]+\.[^\s@]+$',
+    ).hasMatch(_emailController.text.trim());
+  }
+
+  Future<bool> _accountExists(String email) async {
+    await Future<void>.delayed(const Duration(milliseconds: 550));
+    return true;
+  }
+
+  Future<void> _continue() async {
+    FocusScope.of(context).unfocus();
+    setState(() => _error = null);
+
+    if (!_showPasswordField) {
+      if (!_hasValidEmail) {
+        setState(() => _error = 'Enter a valid work email to continue.');
+        _emailFocus.requestFocus();
+        return;
+      }
+
+      setState(() => _loading = true);
+      final exists = await _accountExists(_emailController.text.trim());
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _showPasswordField = exists;
+        _error = exists ? null : 'We could not find an account for this email.';
+      });
+      if (exists) {
+        await Future<void>.delayed(const Duration(milliseconds: 180));
+        _passwordFocus.requestFocus();
+      }
+      return;
+    }
+
+    if (_passwordController.text.isEmpty) {
+      setState(() => _error = 'Enter your password to sign in.');
+      _passwordFocus.requestFocus();
+      return;
+    }
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute<void>(builder: (context) => const AppShell()),
+      (route) => false,
+    );
+  }
+
+  void _changeEmail() {
+    setState(() {
+      _showPasswordField = false;
+      _passwordController.clear();
+      _error = null;
+    });
+    _emailFocus.requestFocus();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      resizeToAvoidBottomInset: true,
+      backgroundColor: const Color(0xFF061219),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.asset(
+            'assets/images/onboarding-background.jpeg',
+            fit: BoxFit.cover,
+            alignment: Alignment.topCenter,
+            color: const Color(0xFF061219).withValues(alpha: 0.62),
+            colorBlendMode: BlendMode.srcOver,
+          ),
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(0xB8061219), Color(0xED061219)],
+              ),
+            ),
+          ),
+          SafeArea(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                28,
+                18,
+                28,
+                28 + MediaQuery.viewInsetsOf(context).bottom * 0.08,
+              ),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight:
+                      MediaQuery.sizeOf(context).height -
+                      MediaQuery.paddingOf(context).vertical -
+                      46,
+                ),
+                child: Column(
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: IconButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.arrow_back_rounded),
+                        color: Colors.white,
+                        iconSize: 27,
+                      ),
+                    ),
+                    const SizedBox(height: 66),
+                    const Icon(
+                      Icons.business_rounded,
+                      color: Colors.white,
+                      size: 72,
+                    ),
+                    const SizedBox(height: 28),
+                    Text(
+                      _showPasswordField
+                          ? 'Welcome back'
+                          : 'Sign in to your\norganisation',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.poppins(
+                        color: Colors.white,
+                        fontSize: 27,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.7,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 220),
+                      child: Text(
+                        _showPasswordField
+                            ? 'Enter your password to continue'
+                            : 'Enter your work email to continue',
+                        key: ValueKey(_showPasswordField),
+                        style: GoogleFonts.poppins(
+                          color: Colors.white.withValues(alpha: 0.58),
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 42),
+                    _AuthTextField(
+                      controller: _emailController,
+                      focusNode: _emailFocus,
+                      label: 'Email address',
+                      hint: 'you@company.com',
+                      keyboardType: TextInputType.emailAddress,
+                      readOnly: _showPasswordField,
+                      suffix: _showPasswordField
+                          ? TextButton(
+                              onPressed: _changeEmail,
+                              child: const Text('Change'),
+                            )
+                          : null,
+                      onSubmitted: (_) => _continue(),
+                    ),
+                    AnimatedSize(
+                      duration: const Duration(milliseconds: 280),
+                      curve: Curves.easeOutCubic,
+                      child: _showPasswordField
+                          ? Padding(
+                              padding: const EdgeInsets.only(top: 18),
+                              child: _AuthTextField(
+                                controller: _passwordController,
+                                focusNode: _passwordFocus,
+                                label: 'Password',
+                                hint: 'Enter your password',
+                                obscureText: _obscurePassword,
+                                suffix: IconButton(
+                                  onPressed: () => setState(
+                                    () => _obscurePassword = !_obscurePassword,
+                                  ),
+                                  icon: Icon(
+                                    _obscurePassword
+                                        ? Icons.visibility_outlined
+                                        : Icons.visibility_off_outlined,
+                                  ),
+                                  color: Colors.white.withValues(alpha: 0.6),
+                                ),
+                                onSubmitted: (_) => _continue(),
+                              ),
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                    AnimatedSize(
+                      duration: const Duration(milliseconds: 180),
+                      child: _error == null
+                          ? const SizedBox(height: 24)
+                          : Padding(
+                              padding: const EdgeInsets.only(
+                                top: 12,
+                                bottom: 8,
+                              ),
+                              child: Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  _error!,
+                                  style: GoogleFonts.poppins(
+                                    color: const Color(0xFFFFB4AB),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            ),
+                    ),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 58,
+                      child: FilledButton(
+                        onPressed: _loading ? null : _continue,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: const Color(0xFF142B2C),
+                          disabledBackgroundColor: Colors.white.withValues(
+                            alpha: 0.7,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(29),
+                          ),
+                        ),
+                        child: _loading
+                            ? const SizedBox.square(
+                                dimension: 21,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Color(0xFF142B2C),
+                                ),
+                              )
+                            : Text(
+                                _showPasswordField ? 'Sign in' : 'Continue',
+                                style: GoogleFonts.poppins(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                      ),
+                    ),
+                    if (_showPasswordField) ...[
+                      const SizedBox(height: 16),
+                      TextButton(
+                        onPressed: () {},
+                        child: Text(
+                          'Forgot password?',
+                          style: GoogleFonts.poppins(
+                            color: Colors.white.withValues(alpha: 0.76),
+                            fontSize: 13,
+                            decoration: TextDecoration.underline,
+                            decorationColor: Colors.white.withValues(
+                              alpha: 0.76,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AuthTextField extends StatelessWidget {
+  const _AuthTextField({
+    required this.controller,
+    required this.focusNode,
+    required this.label,
+    required this.hint,
+    required this.onSubmitted,
+    this.keyboardType,
+    this.obscureText = false,
+    this.readOnly = false,
+    this.suffix,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final String label;
+  final String hint;
+  final ValueChanged<String> onSubmitted;
+  final TextInputType? keyboardType;
+  final bool obscureText;
+  final bool readOnly;
+  final Widget? suffix;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      focusNode: focusNode,
+      keyboardType: keyboardType,
+      obscureText: obscureText,
+      readOnly: readOnly,
+      autofillHints: obscureText
+          ? const [AutofillHints.password]
+          : const [AutofillHints.email],
+      textInputAction: obscureText
+          ? TextInputAction.done
+          : TextInputAction.next,
+      style: GoogleFonts.poppins(color: Colors.white, fontSize: 15),
+      cursorColor: Colors.white,
+      onSubmitted: onSubmitted,
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: hint,
+        suffixIcon: suffix,
+        labelStyle: GoogleFonts.poppins(
+          color: Colors.white.withValues(alpha: 0.6),
+          fontSize: 13,
+        ),
+        hintStyle: GoogleFonts.poppins(
+          color: Colors.white.withValues(alpha: 0.3),
+          fontSize: 14,
+        ),
+        filled: true,
+        fillColor: Colors.white.withValues(alpha: 0.07),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 20,
+          vertical: 19,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(32),
+          borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.14)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(32),
+          borderSide: BorderSide.none,
+        ),
+        disabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(32),
+          borderSide: BorderSide.none,
+        ),
+      ),
     );
   }
 }
