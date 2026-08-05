@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -622,6 +623,7 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _selectedIndex = 0;
   int? _pendingApprovalCount;
+  int _unreadChatCount = 0;
 
   static const _destinations = [
     _NavDestination(label: 'Home', icon: Iconsax.home_1),
@@ -649,6 +651,13 @@ class _AppShellState extends State<AppShell> {
             }
           },
         ),
+        2 => _ChatScreen(
+          onUnreadCountChanged: (unreadValue) {
+            if (_unreadChatCount != unreadValue) {
+              setState(() => _unreadChatCount = unreadValue);
+            }
+          },
+        ),
         _ => SafeArea(
           child: Center(
             child: Text(
@@ -670,6 +679,7 @@ class _AppShellState extends State<AppShell> {
                 destinations: _destinations,
                 selectedIndex: _selectedIndex,
                 approvalBadge: _pendingApprovalCount,
+                chatBadge: _unreadChatCount,
                 onSelected: (index) => setState(() => _selectedIndex = index),
               ),
             ),
@@ -680,6 +690,541 @@ class _AppShellState extends State<AppShell> {
                   const SnackBar(content: Text('Ivy is ready to help.')),
                 );
               },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ChatScreen extends StatefulWidget {
+  const _ChatScreen({required this.onUnreadCountChanged});
+
+  final ValueChanged<int> onUnreadCountChanged;
+
+  @override
+  State<_ChatScreen> createState() => _ChatScreenState();
+}
+
+class _ChatScreenState extends State<_ChatScreen> {
+  static const _cacheDuration = Duration(minutes: 2);
+  final _searchController = TextEditingController();
+  final List<StreamSubscription<QuerySnapshot<Map<String, dynamic>>>>
+  _subscriptions = [];
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
+  _groupSubscription;
+
+  List<Map<String, dynamic>> _directChats = [];
+  Map<String, dynamic>? _groupChat;
+  Map<String, int> _readAt = {};
+  String _tab = 'All';
+  String _search = '';
+  String? _error;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController.addListener(() {
+      setState(() => _search = _searchController.text.trim().toLowerCase());
+    });
+    _openChatList();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _groupSubscription?.cancel();
+    for (final subscription in _subscriptions) {
+      subscription.cancel();
+    }
+    super.dispose();
+  }
+
+  Future<void> _openChatList() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    await _restoreCache(user.uid);
+    try {
+      final profile = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      final enterpriseId = profile.data()?['enterprise_id'] as String?;
+      if (enterpriseId == null) throw StateError('No organisation found.');
+
+      final groupResult = await FirebaseFunctions.instanceFor(
+        region: 'us-central1',
+      ).httpsCallable('ensureTeamChat').call<Map<String, dynamic>>({});
+      final groupId = groupResult.data['chatId'] as String;
+      _groupSubscription = FirebaseFirestore.instance
+          .collection('internal_chats')
+          .doc(groupId)
+          .snapshots()
+          .listen((snapshot) {
+            if (!mounted || !snapshot.exists) return;
+            setState(() {
+              _groupChat = {'id': snapshot.id, ...snapshot.data()!};
+              _loading = false;
+            });
+            _updateUnreadBadge();
+            _saveCache(user.uid);
+          });
+
+      _subscriptions.add(
+        FirebaseFirestore.instance
+            .collection('internal_chats')
+            .where('participant_uids', arrayContains: user.uid)
+            .limit(30)
+            .snapshots()
+            .listen((snapshot) {
+              if (!mounted) return;
+              final chats = snapshot.docs
+                  .map((doc) => {'id': doc.id, ...doc.data()})
+                  .where(
+                    (chat) =>
+                        chat['enterprise_id'] == enterpriseId &&
+                        chat['type'] == 'direct',
+                  )
+                  .toList();
+              chats.sort(
+                (a, b) => _millis(
+                  b['last_message_at'],
+                ).compareTo(_millis(a['last_message_at'])),
+              );
+              setState(() {
+                _directChats = chats;
+                _loading = false;
+              });
+              _updateUnreadBadge();
+              _saveCache(user.uid);
+            }),
+      );
+
+      _subscriptions.add(
+        FirebaseFirestore.instance
+            .collection('internal_chat_reads')
+            .where('user_id', isEqualTo: user.uid)
+            .limit(60)
+            .snapshots()
+            .listen((snapshot) {
+              if (!mounted) return;
+              final reads = <String, int>{};
+              for (final doc in snapshot.docs) {
+                final data = doc.data();
+                if (data['enterprise_id'] == enterpriseId) {
+                  reads['${data['chat_id']}'] = _millis(data['read_at']);
+                }
+              }
+              setState(() => _readAt = reads);
+              _updateUnreadBadge();
+              _saveCache(user.uid);
+            }),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'Team chat could not be opened.';
+      });
+    }
+  }
+
+  int _millis(dynamic value) {
+    if (value is Timestamp) return value.millisecondsSinceEpoch;
+    if (value is num) return value.toInt();
+    return 0;
+  }
+
+  bool _isUnread(Map<String, dynamic> chat) {
+    final user = FirebaseAuth.instance.currentUser;
+    return _millis(chat['last_message_at']) > (_readAt[chat['id']] ?? 0) &&
+        chat['last_sender_uid'] != user?.uid;
+  }
+
+  void _updateUnreadBadge() {
+    final chats = [?_groupChat, ..._directChats];
+    widget.onUnreadCountChanged(chats.where(_isUnread).length);
+  }
+
+  Future<void> _restoreCache(String uid) async {
+    final preferences = await SharedPreferences.getInstance();
+    final encoded = preferences.getString('ellipse_chat_list_$uid');
+    if (encoded == null) return;
+    try {
+      final cached = Map<String, dynamic>.from(jsonDecode(encoded) as Map);
+      if (DateTime.now().millisecondsSinceEpoch - (cached['savedAt'] as int) >=
+          _cacheDuration.inMilliseconds) {
+        await preferences.remove('ellipse_chat_list_$uid');
+        return;
+      }
+      if (!mounted) return;
+      setState(() {
+        _groupChat = cached['group'] == null
+            ? null
+            : Map<String, dynamic>.from(cached['group'] as Map);
+        _directChats = ((cached['direct'] as List?) ?? const [])
+            .map((item) => Map<String, dynamic>.from(item as Map))
+            .toList();
+        _readAt = Map<String, dynamic>.from(
+          cached['reads'] as Map? ?? const {},
+        ).map((key, value) => MapEntry(key, (value as num).toInt()));
+        _loading = false;
+      });
+      _updateUnreadBadge();
+    } catch (_) {
+      await preferences.remove('ellipse_chat_list_$uid');
+    }
+  }
+
+  Future<void> _saveCache(String uid) async {
+    final preferences = await SharedPreferences.getInstance();
+    Map<String, dynamic>? serialise(Map<String, dynamic>? chat) {
+      if (chat == null) return null;
+      return chat.map((key, value) {
+        if (value is Timestamp) {
+          return MapEntry(key, value.millisecondsSinceEpoch);
+        }
+        return MapEntry(key, value);
+      });
+    }
+
+    await preferences.setString(
+      'ellipse_chat_list_$uid',
+      jsonEncode({
+        'savedAt': DateTime.now().millisecondsSinceEpoch,
+        'group': serialise(_groupChat),
+        'direct': _directChats.map(serialise).toList(),
+        'reads': _readAt,
+      }),
+    );
+  }
+
+  String _chatName(Map<String, dynamic> chat) {
+    if (chat['type'] == 'group') return '${chat['name'] ?? 'Team Chat'}';
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final names = Map<String, dynamic>.from(
+      chat['participant_names'] as Map? ?? const {},
+    );
+    final emails = Map<String, dynamic>.from(
+      chat['participant_emails'] as Map? ?? const {},
+    );
+    final otherUid = (chat['participant_uids'] as List?)
+        ?.map((value) => '$value')
+        .where((value) => value != uid)
+        .firstOrNull;
+    return '${names[otherUid] ?? emails[otherUid] ?? 'Organisation member'}';
+  }
+
+  String _time(dynamic value) {
+    final milliseconds = _millis(value);
+    if (milliseconds == 0) return '';
+    final date = DateTime.fromMillisecondsSinceEpoch(milliseconds).toLocal();
+    final now = DateTime.now();
+    if (date.year == now.year &&
+        date.month == now.month &&
+        date.day == now.day) {
+      final hour = date.hour % 12 == 0 ? 12 : date.hour % 12;
+      return '$hour:${date.minute.toString().padLeft(2, '0')}';
+    }
+    final yesterday = now.subtract(const Duration(days: 1));
+    if (date.year == yesterday.year &&
+        date.month == yesterday.month &&
+        date.day == yesterday.day) {
+      return 'Yesterday';
+    }
+    return '${date.day}/${date.month}/${date.year.toString().substring(2)}';
+  }
+
+  List<Map<String, dynamic>> get _visibleChats {
+    var chats = [?_groupChat, ..._directChats];
+    if (_tab == 'Unread') chats = chats.where(_isUnread).toList();
+    if (_tab == 'Groups') {
+      chats = chats.where((chat) => chat['type'] == 'group').toList();
+    }
+    if (_search.isNotEmpty) {
+      chats = chats
+          .where(
+            (chat) =>
+                _chatName(chat).toLowerCase().contains(_search) ||
+                '${chat['last_message'] ?? ''}'.toLowerCase().contains(_search),
+          )
+          .toList();
+    }
+    return chats;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final chats = _visibleChats;
+    return SafeArea(
+      bottom: false,
+      child: CustomScrollView(
+        slivers: [
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(22, 24, 22, 118),
+            sliver: SliverList.list(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Chat',
+                        style: GoogleFonts.poppins(
+                          fontSize: 29,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.9,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () {},
+                      icon: const Icon(Iconsax.message_add_1),
+                      tooltip: 'New conversation',
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                TextField(
+                  controller: _searchController,
+                  style: GoogleFonts.poppins(fontSize: 13),
+                  decoration: InputDecoration(
+                    hintText: 'Search conversations',
+                    prefixIcon: const Icon(Iconsax.search_normal_1, size: 19),
+                    filled: true,
+                    fillColor: Colors.white,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(27),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: ['All', 'Unread', 'Groups'].map((tab) {
+                    final selected = tab == _tab;
+                    return Expanded(
+                      child: InkWell(
+                        onTap: () => setState(() => _tab = tab),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 11),
+                          decoration: BoxDecoration(
+                            border: Border(
+                              bottom: BorderSide(
+                                color: selected
+                                    ? const Color(0xFF1D2825)
+                                    : const Color(0xFFE7E7E3),
+                                width: selected ? 2 : 1,
+                              ),
+                            ),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(
+                            tab,
+                            style: GoogleFonts.poppins(
+                              color: selected
+                                  ? const Color(0xFF1D2825)
+                                  : const Color(0xFF999994),
+                              fontSize: 11,
+                              fontWeight: selected
+                                  ? FontWeight.w600
+                                  : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 14),
+                  _DashboardError(message: _error!, onRetry: _openChatList),
+                ],
+                const SizedBox(height: 10),
+                if (_loading)
+                  const _DashboardListSkeleton(rows: 7)
+                else if (chats.isEmpty)
+                  const _DashboardEmpty(label: 'No conversations here yet.')
+                else
+                  ...List.generate(chats.length, (index) {
+                    final chat = chats[index];
+                    return _ChatListRow(
+                      name: _chatName(chat),
+                      preview:
+                          '${chat['last_message'] ?? (chat['type'] == 'group' ? 'Organisation team chat' : 'Start a conversation')}',
+                      time: _time(chat['last_message_at']),
+                      unread: _isUnread(chat),
+                      group: chat['type'] == 'group',
+                      onTap: () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Opening ${_chatName(chat)} next.'),
+                          ),
+                        );
+                      },
+                    );
+                  }),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChatListRow extends StatelessWidget {
+  const _ChatListRow({
+    required this.name,
+    required this.preview,
+    required this.time,
+    required this.unread,
+    required this.group,
+    required this.onTap,
+  });
+
+  final String name;
+  final String preview;
+  final String time;
+  final bool unread;
+  final bool group;
+  final VoidCallback onTap;
+
+  Color get _avatarColor {
+    const colors = [
+      Color(0xFFE4D9F4),
+      Color(0xFFD8E8F4),
+      Color(0xFFDCECDD),
+      Color(0xFFF2E2D4),
+      Color(0xFFF0DCE5),
+    ];
+    return colors[(name.codeUnitAt(0) + name.length) % colors.length];
+  }
+
+  String get _initials => name
+      .trim()
+      .split(RegExp(r'\s+'))
+      .take(2)
+      .where((word) => word.isNotEmpty)
+      .map((word) => word[0].toUpperCase())
+      .join();
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 11),
+        child: Row(
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  width: 50,
+                  height: 50,
+                  decoration: BoxDecoration(
+                    color: group ? const Color(0xFF1D2825) : _avatarColor,
+                    shape: BoxShape.circle,
+                  ),
+                  alignment: Alignment.center,
+                  child: group
+                      ? const Icon(
+                          Iconsax.people,
+                          color: Colors.white,
+                          size: 23,
+                        )
+                      : Text(
+                          _initials,
+                          style: GoogleFonts.poppins(
+                            color: const Color(0xFF30322F),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                ),
+                if (group)
+                  Positioned(
+                    right: -2,
+                    bottom: -2,
+                    child: Container(
+                      width: 17,
+                      height: 17,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF77A987),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: const Color(0xFFF6F6F4),
+                          width: 2,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(width: 13),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.poppins(
+                      fontSize: 13,
+                      fontWeight: unread ? FontWeight.w700 : FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    preview,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.poppins(
+                      color: unread
+                          ? const Color(0xFF555752)
+                          : const Color(0xFF999994),
+                      fontSize: 10.5,
+                      fontWeight: unread ? FontWeight.w500 : FontWeight.w400,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  time,
+                  style: GoogleFonts.poppins(
+                    color: const Color(0xFFAAA9A5),
+                    fontSize: 9.5,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                if (unread)
+                  Container(
+                    width: 18,
+                    height: 18,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFE34B42),
+                      shape: BoxShape.circle,
+                    ),
+                    alignment: Alignment.center,
+                    child: const Text(
+                      '•',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        height: 0.9,
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ],
         ),
@@ -2517,12 +3062,14 @@ class _BottomNavBar extends StatelessWidget {
     required this.destinations,
     required this.selectedIndex,
     required this.approvalBadge,
+    required this.chatBadge,
     required this.onSelected,
   });
 
   final List<_NavDestination> destinations;
   final int selectedIndex;
   final int? approvalBadge;
+  final int chatBadge;
   final ValueChanged<int> onSelected;
 
   @override
@@ -2577,7 +3124,8 @@ class _BottomNavBar extends StatelessWidget {
                                 ? Colors.black
                                 : const Color(0xFFAAA9A5),
                           ),
-                          if (index == 1 && (approvalBadge ?? 0) > 0)
+                          if ((index == 1 && (approvalBadge ?? 0) > 0) ||
+                              (index == 2 && chatBadge > 0))
                             Positioned(
                               right: -10,
                               top: -7,
@@ -2593,9 +3141,12 @@ class _BottomNavBar extends StatelessWidget {
                                   borderRadius: BorderRadius.circular(9),
                                 ),
                                 child: Text(
-                                  (approvalBadge ?? 0) > 99
+                                  (index == 1
+                                              ? approvalBadge ?? 0
+                                              : chatBadge) >
+                                          99
                                       ? '99+'
-                                      : '${approvalBadge ?? 0}',
+                                      : '${index == 1 ? approvalBadge ?? 0 : chatBadge}',
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 8,
