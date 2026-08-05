@@ -41,6 +41,7 @@ dependencies:
   cloud_functions: ^6.3.6
   cloud_firestore: ^6.8.0
   shared_preferences: ^2.5.5
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:

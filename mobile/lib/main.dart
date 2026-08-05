@@ -7,10 +7,12 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:iconsax_flutter/iconsax_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'firebase_options.dart';
 
@@ -2635,16 +2637,7 @@ class _InboxReadingScreenState extends State<_InboxReadingScreen> {
                                     ),
                                   ),
                                 const SizedBox(height: 5),
-                                Text(
-                                  body,
-                                  style: GoogleFonts.poppins(
-                                    color: mine
-                                        ? Colors.white
-                                        : const Color(0xFF454743),
-                                    fontSize: 11.5,
-                                    height: 1.55,
-                                  ),
-                                ),
+                                _LinkifiedEmailText(text: body, mine: mine),
                                 const SizedBox(height: 8),
                                 Text(
                                   _date(message['timestamp']),
@@ -2664,6 +2657,91 @@ class _InboxReadingScreenState extends State<_InboxReadingScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _LinkifiedEmailText extends StatefulWidget {
+  const _LinkifiedEmailText({required this.text, required this.mine});
+
+  final String text;
+  final bool mine;
+
+  @override
+  State<_LinkifiedEmailText> createState() => _LinkifiedEmailTextState();
+}
+
+class _LinkifiedEmailTextState extends State<_LinkifiedEmailText> {
+  final List<TapGestureRecognizer> _recognizers = [];
+
+  @override
+  void dispose() {
+    for (final recognizer in _recognizers) {
+      recognizer.dispose();
+    }
+    super.dispose();
+  }
+
+  List<InlineSpan> _spans() {
+    for (final recognizer in _recognizers) {
+      recognizer.dispose();
+    }
+    _recognizers.clear();
+
+    final spans = <InlineSpan>[];
+    final linkPattern = RegExp(r'(?:https?://|mailto:)[^\s)]+');
+    var cursor = 0;
+    for (final match in linkPattern.allMatches(widget.text)) {
+      if (match.start > cursor) {
+        spans.add(TextSpan(text: widget.text.substring(cursor, match.start)));
+      }
+      final matched = match.group(0) ?? '';
+      final clean = matched.replaceFirst(RegExp(r'[.,;:]+$'), '');
+      final display = clean.length > 52
+          ? '${clean.substring(0, 38)}…${clean.substring(clean.length - 10)}'
+          : clean;
+      final punctuation = matched.substring(clean.length);
+      final recognizer = TapGestureRecognizer()
+        ..onTap = () async {
+          final uri = Uri.tryParse(clean);
+          if (uri != null) {
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+          }
+        };
+      _recognizers.add(recognizer);
+      spans.add(
+        TextSpan(
+          text: display,
+          style: TextStyle(
+            color: widget.mine
+                ? const Color(0xFFB9D8FF)
+                : const Color(0xFF426FA8),
+            decoration: TextDecoration.underline,
+            decorationColor: widget.mine
+                ? const Color(0xFFB9D8FF)
+                : const Color(0xFF426FA8),
+          ),
+          recognizer: recognizer,
+        ),
+      );
+      if (punctuation.isNotEmpty) spans.add(TextSpan(text: punctuation));
+      cursor = match.end;
+    }
+    if (cursor < widget.text.length) {
+      spans.add(TextSpan(text: widget.text.substring(cursor)));
+    }
+    return spans;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SelectableText.rich(
+      TextSpan(children: _spans()),
+      style: GoogleFonts.poppins(
+        color: widget.mine ? Colors.white : const Color(0xFF454743),
+        fontSize: 11.5,
+        height: 1.55,
       ),
     );
   }
@@ -3586,6 +3664,463 @@ class _ApprovalEditField extends StatelessWidget {
   }
 }
 
+class _ProfileScreen extends StatefulWidget {
+  const _ProfileScreen();
+
+  @override
+  State<_ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<_ProfileScreen> {
+  static const _notificationOptions = <String, (String, String)>{
+    'newMessage': (
+      'New inbox message',
+      'Customer messages from connected channels.',
+    ),
+    'teamChat': ('Team chat', 'Direct and organisation chat messages.'),
+    'agentApproval': ('Agent approvals', 'Actions waiting for your review.'),
+    'actionResult': (
+      'Action results',
+      'When an approved action completes or fails.',
+    ),
+    'accessRequest': (
+      'Integration access',
+      'New requests and access decisions.',
+    ),
+    'integrationStatus': (
+      'Integration status',
+      'When a connected service needs attention.',
+    ),
+  };
+
+  final _nameController = TextEditingController();
+  Map<String, bool> _notifications = {
+    for (final key in _notificationOptions.keys) key: true,
+  };
+  String _email = '';
+  String _role = '';
+  String _organisation = '';
+  String? _error;
+  bool _loading = true;
+  bool _savingName = false;
+  bool _passwordSent = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadProfile() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+      final profile = snapshot.data() ?? const <String, dynamic>{};
+      final enterpriseId = profile['enterprise_id'] as String?;
+      String organisation = 'No organisation';
+      if (enterpriseId != null) {
+        final enterprise = await FirebaseFirestore.instance
+            .collection('enterprises')
+            .doc(enterpriseId)
+            .get();
+        organisation = '${enterprise.data()?['name'] ?? 'Organisation'}';
+      }
+      final storedPreferences = Map<String, dynamic>.from(
+        profile['notification_preferences'] as Map? ?? const {},
+      );
+      if (!mounted) return;
+      setState(() {
+        _nameController.text =
+            '${profile['display_name'] ?? user.displayName ?? ''}';
+        _email = '${profile['email'] ?? user.email ?? ''}';
+        _role = '${profile['role'] ?? 'employee'}';
+        _organisation = organisation;
+        _notifications = {
+          for (final key in _notificationOptions.keys)
+            key: storedPreferences[key] as bool? ?? true,
+        };
+        _loading = false;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = 'Your profile could not be loaded.';
+        });
+      }
+    }
+  }
+
+  Future<void> _saveName() async {
+    final user = FirebaseAuth.instance.currentUser;
+    final name = _nameController.text.trim();
+    if (user == null || name.isEmpty || _savingName) return;
+    setState(() {
+      _savingName = true;
+      _error = null;
+    });
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        'display_name': name,
+        'updated_at': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      await user.updateDisplayName(name);
+      final preferences = await SharedPreferences.getInstance();
+      await preferences.remove('ellipse_dashboard_${user.uid}');
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Profile updated.')));
+      }
+    } catch (_) {
+      if (mounted) setState(() => _error = 'Your name could not be saved.');
+    } finally {
+      if (mounted) setState(() => _savingName = false);
+    }
+  }
+
+  Future<void> _toggleNotification(String key, bool value) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    final previous = _notifications[key] ?? true;
+    setState(() => _notifications[key] = value);
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        'notification_preferences': _notifications,
+        'updated_at': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _notifications[key] = previous;
+          _error = 'Notification preference could not be saved.';
+        });
+      }
+    }
+  }
+
+  Future<void> _resetPassword() async {
+    if (_email.isEmpty) return;
+    try {
+      await FirebaseAuth.instance.sendPasswordResetEmail(email: _email);
+      if (mounted) setState(() => _passwordSent = true);
+    } catch (_) {
+      if (mounted) setState(() => _error = 'Reset email could not be sent.');
+    }
+  }
+
+  Future<void> _signOut() async {
+    await FirebaseAuth.instance.signOut();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute<void>(builder: (context) => const OnboardingScreen()),
+      (route) => false,
+    );
+  }
+
+  String get _roleLabel =>
+      _role.isEmpty ? '' : '${_role[0].toUpperCase()}${_role.substring(1)}';
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF6F6F4),
+      body: SafeArea(
+        child: _loading
+            ? const Center(
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Color(0xFF1D2825),
+                ),
+              )
+            : CustomScrollView(
+                slivers: [
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(22, 12, 22, 34),
+                    sliver: SliverList.list(
+                      children: [
+                        Row(
+                          children: [
+                            IconButton(
+                              onPressed: () => Navigator.pop(context),
+                              icon: const Icon(
+                                Icons.arrow_back_ios_new_rounded,
+                                size: 20,
+                              ),
+                            ),
+                            Expanded(
+                              child: Text(
+                                'Profile',
+                                textAlign: TextAlign.center,
+                                style: GoogleFonts.poppins(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 48),
+                          ],
+                        ),
+                        const SizedBox(height: 26),
+                        Center(
+                          child: Container(
+                            width: 88,
+                            height: 88,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF1D2825),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Iconsax.user,
+                              color: Colors.white,
+                              size: 38,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
+                          _nameController.text.isEmpty
+                              ? 'Ellipse member'
+                              : _nameController.text,
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.poppins(
+                            fontSize: 21,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _email,
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.poppins(
+                            color: const Color(0xFF999994),
+                            fontSize: 11,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            _ProfileChip(label: _roleLabel),
+                            const SizedBox(width: 8),
+                            Flexible(child: _ProfileChip(label: _organisation)),
+                          ],
+                        ),
+                        if (_error != null) ...[
+                          const SizedBox(height: 20),
+                          _DashboardError(
+                            message: _error!,
+                            onRetry: _loadProfile,
+                          ),
+                        ],
+                        const SizedBox(height: 30),
+                        const _ProfileSectionTitle(
+                          title: 'Personal information',
+                        ),
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(22),
+                          ),
+                          child: Column(
+                            children: [
+                              TextField(
+                                controller: _nameController,
+                                textCapitalization: TextCapitalization.words,
+                                decoration: InputDecoration(
+                                  labelText: 'Display name',
+                                  filled: true,
+                                  fillColor: const Color(0xFFF4F4F1),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(18),
+                                    borderSide: BorderSide.none,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              SizedBox(
+                                width: double.infinity,
+                                height: 48,
+                                child: FilledButton(
+                                  onPressed: _savingName ? null : _saveName,
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: const Color(0xFF1D2825),
+                                  ),
+                                  child: Text(
+                                    _savingName ? 'Saving…' : 'Save changes',
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 28),
+                        const _ProfileSectionTitle(title: 'Notifications'),
+                        const SizedBox(height: 6),
+                        ..._notificationOptions.entries.map((entry) {
+                          final (title, description) = entry.value;
+                          return _ProfileToggleRow(
+                            title: title,
+                            description: description,
+                            value: _notifications[entry.key] ?? true,
+                            onChanged: (value) =>
+                                _toggleNotification(entry.key, value),
+                          );
+                        }),
+                        const SizedBox(height: 28),
+                        const _ProfileSectionTitle(title: 'Security'),
+                        const SizedBox(height: 8),
+                        ListTile(
+                          onTap: _resetPassword,
+                          tileColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          leading: const Icon(Iconsax.lock_1),
+                          title: const Text('Reset password'),
+                          subtitle: Text(
+                            _passwordSent
+                                ? 'Reset instructions sent to your email.'
+                                : 'Send a secure reset link to $_email',
+                          ),
+                          trailing: const Icon(
+                            Icons.arrow_forward_ios_rounded,
+                            size: 15,
+                          ),
+                        ),
+                        const SizedBox(height: 26),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 52,
+                          child: OutlinedButton.icon(
+                            onPressed: _signOut,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFFB63830),
+                              side: const BorderSide(color: Color(0xFFFFC9C4)),
+                              shape: const StadiumBorder(),
+                            ),
+                            icon: const Icon(Iconsax.logout, size: 19),
+                            label: const Text('Sign out'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+class _ProfileSectionTitle extends StatelessWidget {
+  const _ProfileSectionTitle({required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      title,
+      style: GoogleFonts.poppins(fontSize: 15, fontWeight: FontWeight.w600),
+    );
+  }
+}
+
+class _ProfileChip extends StatelessWidget {
+  const _ProfileChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFFECECE8),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: GoogleFonts.poppins(
+          color: const Color(0xFF666762),
+          fontSize: 9.5,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileToggleRow extends StatelessWidget {
+  const _ProfileToggleRow({
+    required this.title,
+    required this.description,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String title;
+  final String description;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 13),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: Color(0xFFE9E9E5))),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: GoogleFonts.poppins(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  description,
+                  style: GoogleFonts.poppins(
+                    color: const Color(0xFF999994),
+                    fontSize: 9.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: value,
+            onChanged: onChanged,
+            activeTrackColor: const Color(0xFF1D2825),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _HomeDashboard extends StatefulWidget {
   const _HomeDashboard({required this.onPendingCountChanged});
 
@@ -3809,21 +4344,33 @@ class _HomeDashboardState extends State<_HomeDashboard> {
                           ],
                         ),
                       ),
-                      Container(
-                        width: 54,
-                        height: 54,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFF1D2825),
-                          shape: BoxShape.circle,
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          _initials,
-                          style: GoogleFonts.poppins(
-                            color: Colors.white,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 0.5,
+                      Semantics(
+                        button: true,
+                        label: 'Open profile',
+                        child: InkWell(
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (context) => const _ProfileScreen(),
+                            ),
+                          ),
+                          customBorder: const CircleBorder(),
+                          child: Container(
+                            width: 54,
+                            height: 54,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF1D2825),
+                              shape: BoxShape.circle,
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              _initials,
+                              style: GoogleFonts.poppins(
+                                color: Colors.white,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
                           ),
                         ),
                       ),
