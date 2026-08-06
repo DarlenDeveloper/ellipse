@@ -1130,114 +1130,183 @@ class _ChatScreenState extends State<_ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final chats = _visibleChats;
-    return SafeArea(
-      bottom: false,
-      child: CustomScrollView(
-        slivers: [
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(22, 24, 22, 118),
-            sliver: SliverList.list(
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Chat',
-                        style: GoogleFonts.poppins(
-                          fontSize: 29,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.9,
+    final recent = chats
+        .where(
+          (chat) => chat['type'] == 'group' || chat['last_message_at'] != null,
+        )
+        .toList();
+    final people = chats
+        .where(
+          (chat) => chat['type'] != 'group' && chat['last_message_at'] == null,
+        )
+        .toList();
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFFF3F8FF), Color(0xFFF9FAFA), Color(0xFFF9F9F7)],
+          stops: [0, .3, 1],
+        ),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: CustomScrollView(
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(22, 24, 22, 118),
+              sliver: SliverList.list(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Chat',
+                          style: GoogleFonts.poppins(
+                            fontSize: 29,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.9,
+                          ),
                         ),
                       ),
-                    ),
-                    IconButton(
-                      onPressed: () {},
-                      icon: const Icon(Iconsax.add_circle, size: 27),
-                      tooltip: 'New conversation',
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                TextField(
-                  controller: _searchController,
-                  style: GoogleFonts.poppins(fontSize: 13),
-                  decoration: InputDecoration(
-                    hintText: 'Search conversations',
-                    prefixIcon: const Icon(Iconsax.search_normal_1, size: 19),
-                    filled: true,
-                    fillColor: Colors.white,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(27),
-                      borderSide: BorderSide.none,
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  TextField(
+                    controller: _searchController,
+                    style: GoogleFonts.poppins(fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'Search conversations',
+                      prefixIcon: const Icon(Iconsax.search_normal_1, size: 19),
+                      filled: true,
+                      fillColor: Colors.white.withValues(alpha: .84),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(27),
+                        borderSide: BorderSide.none,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(27),
+                        borderSide: BorderSide.none,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 14),
-                Row(
-                  children: ['All', 'Unread', 'Groups'].map((tab) {
-                    final selected = tab == _tab;
-                    return Expanded(
-                      child: InkWell(
-                        onTap: () => setState(() => _tab = tab),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 11),
-                          decoration: BoxDecoration(
-                            border: Border(
-                              bottom: BorderSide(
+                  const SizedBox(height: 14),
+                  Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE8F0FA),
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Row(
+                      children: ['All', 'Unread', 'Groups'].map((tab) {
+                        final selected = tab == _tab;
+                        return Expanded(
+                          child: InkWell(
+                            onTap: () => setState(() => _tab = tab),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 11),
+                              decoration: BoxDecoration(
                                 color: selected
-                                    ? const Color(0xFF1D2825)
-                                    : const Color(0xFFE7E7E3),
-                                width: selected ? 2 : 1,
+                                    ? Colors.white
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: selected
+                                    ? const [
+                                        BoxShadow(
+                                          color: Color(0x10000000),
+                                          blurRadius: 10,
+                                          offset: Offset(0, 3),
+                                        ),
+                                      ]
+                                    : null,
+                              ),
+                              alignment: Alignment.center,
+                              child: Text(
+                                tab,
+                                style: GoogleFonts.poppins(
+                                  color: selected
+                                      ? const Color(0xFF1D2825)
+                                      : const Color(0xFF999994),
+                                  fontSize: 11,
+                                  fontWeight: selected
+                                      ? FontWeight.w600
+                                      : FontWeight.w500,
+                                ),
                               ),
                             ),
                           ),
-                          alignment: Alignment.center,
-                          child: Text(
-                            tab,
-                            style: GoogleFonts.poppins(
-                              color: selected
-                                  ? const Color(0xFF1D2825)
-                                  : const Color(0xFF999994),
-                              fontSize: 11,
-                              fontWeight: selected
-                                  ? FontWeight.w600
-                                  : FontWeight.w500,
-                            ),
-                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: 14),
+                    _DashboardError(message: _error!, onRetry: _openChatList),
+                  ],
+                  const SizedBox(height: 10),
+                  if (_loading)
+                    const _DashboardListSkeleton(rows: 7)
+                  else if (chats.isEmpty)
+                    const _DashboardEmpty(label: 'No conversations here yet.')
+                  else ...[
+                    if (recent.isNotEmpty) ...[
+                      const _ChatSectionLabel(label: 'Recent conversations'),
+                      ...recent.map(
+                        (chat) => _ChatListRow(
+                          name: _chatName(chat),
+                          preview:
+                              '${chat['last_message'] ?? chat['member_email'] ?? (chat['type'] == 'group' ? 'Organisation team chat' : 'Start a conversation')}',
+                          time: _time(chat['last_message_at']),
+                          unread: _isUnread(chat),
+                          group: chat['type'] == 'group',
+                          onTap: () => _openConversation(chat),
                         ),
                       ),
-                    );
-                  }).toList(),
-                ),
-                if (_error != null) ...[
-                  const SizedBox(height: 14),
-                  _DashboardError(message: _error!, onRetry: _openChatList),
+                    ],
+                    if (people.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      const _ChatSectionLabel(label: 'Start a chat'),
+                      ...people.map(
+                        (chat) => _ChatListRow(
+                          name: _chatName(chat),
+                          preview:
+                              '${chat['member_email'] ?? 'Organisation member'}',
+                          time: '',
+                          unread: false,
+                          group: false,
+                          onTap: () => _openConversation(chat),
+                        ),
+                      ),
+                    ],
+                  ],
                 ],
-                const SizedBox(height: 10),
-                if (_loading)
-                  const _DashboardListSkeleton(rows: 7)
-                else if (chats.isEmpty)
-                  const _DashboardEmpty(label: 'No conversations here yet.')
-                else
-                  ...List.generate(chats.length, (index) {
-                    final chat = chats[index];
-                    return _ChatListRow(
-                      name: _chatName(chat),
-                      preview:
-                          '${chat['last_message'] ?? chat['member_email'] ?? (chat['type'] == 'group' ? 'Organisation team chat' : 'Start a conversation')}',
-                      time: _time(chat['last_message_at']),
-                      unread: _isUnread(chat),
-                      group: chat['type'] == 'group',
-                      onTap: () => _openConversation(chat),
-                    );
-                  }),
-              ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
+}
+
+class _ChatSectionLabel extends StatelessWidget {
+  const _ChatSectionLabel({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(4, 14, 4, 6),
+    child: Text(
+      label,
+      style: GoogleFonts.poppins(
+        color: const Color(0xFF718199),
+        fontSize: 10,
+        fontWeight: FontWeight.w600,
+        letterSpacing: .3,
+      ),
+    ),
+  );
 }
 
 class _ChatListRow extends StatelessWidget {
@@ -1259,13 +1328,24 @@ class _ChatListRow extends StatelessWidget {
 
   Color get _avatarColor {
     const colors = [
-      Color(0xFFE4D9F4),
-      Color(0xFFD8E8F4),
-      Color(0xFFDCECDD),
-      Color(0xFFF2E2D4),
-      Color(0xFFF0DCE5),
+      Color(0xFFDDEBFF),
+      Color(0xFFD9F2F5),
+      Color(0xFFE7E2FF),
+      Color(0xFFDDEFE8),
+      Color(0xFFEFE4FF),
     ];
     return colors[(name.codeUnitAt(0) + name.length) % colors.length];
+  }
+
+  String get _initials {
+    final parts = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) return parts.first[0].toUpperCase();
+    return '${parts.first[0]}${parts.last[0]}'.toUpperCase();
   }
 
   @override
@@ -1294,10 +1374,13 @@ class _ChatListRow extends StatelessWidget {
                           color: Colors.white,
                           size: 23,
                         )
-                      : const Icon(
-                          Iconsax.user,
-                          color: Color(0xFF30322F),
-                          size: 22,
+                      : Text(
+                          _initials,
+                          style: GoogleFonts.poppins(
+                            color: const Color(0xFF29415F),
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                 ),
                 if (group)
