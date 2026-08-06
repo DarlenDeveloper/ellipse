@@ -4687,7 +4687,7 @@ class _HomeDashboardState extends State<_HomeDashboard> {
                           caption: 'all time',
                           icon: Iconsax.message_2,
                           visual: _MetricVisual.ring,
-                          accent: Color(0xFF4E8D72),
+                          accent: Color(0xFF438FF2),
                           trend: '+12%',
                           loading: _loading,
                         ),
@@ -4700,7 +4700,7 @@ class _HomeDashboardState extends State<_HomeDashboard> {
                           caption: 'active',
                           icon: Iconsax.routing,
                           visual: _MetricVisual.ringLow,
-                          accent: Color(0xFF527CA8),
+                          accent: Color(0xFF42B3D1),
                           trend: '+8%',
                           loading: _loading,
                         ),
@@ -4717,7 +4717,7 @@ class _HomeDashboardState extends State<_HomeDashboard> {
                           caption: 'actions',
                           icon: Iconsax.clock,
                           visual: _MetricVisual.bars,
-                          accent: Color(0xFFB47A35),
+                          accent: Color(0xFF6E83ED),
                           trend: 'Today',
                           loading: _loading,
                         ),
@@ -4730,7 +4730,7 @@ class _HomeDashboardState extends State<_HomeDashboard> {
                           caption: 'connected',
                           icon: Iconsax.cpu,
                           visual: _MetricVisual.line,
-                          accent: Color(0xFF8068A5),
+                          accent: Color(0xFF9575D8),
                           trend: '+3',
                           loading: _loading,
                         ),
@@ -4950,15 +4950,30 @@ class _MetricCard extends StatelessWidget {
       height: 166,
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: const Color(0xFFEEEDEA),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color.lerp(Colors.white, accent, .22)!,
+            Color.lerp(Colors.white, accent, .08)!,
+          ],
+        ),
         borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: Colors.white.withValues(alpha: .58)),
+        boxShadow: [
+          BoxShadow(
+            color: accent.withValues(alpha: .09),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(icon, size: 21, color: const Color(0xFF171917)),
+              Icon(icon, size: 21, color: const Color(0xFF17233A)),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -4966,6 +4981,7 @@ class _MetricCard extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: GoogleFonts.poppins(
+                    color: const Color(0xFF17233A),
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
                     letterSpacing: -0.25,
@@ -4988,6 +5004,7 @@ class _MetricCard extends StatelessWidget {
                       Text(
                         value,
                         style: GoogleFonts.poppins(
+                          color: const Color(0xFF17233A),
                           fontSize: 28,
                           height: 1,
                           fontWeight: FontWeight.w600,
@@ -4998,7 +5015,7 @@ class _MetricCard extends StatelessWidget {
                     Text(
                       caption,
                       style: GoogleFonts.poppins(
-                        color: const Color(0xFF8A8A86),
+                        color: const Color(0xFF66758C),
                         fontSize: 12,
                         height: 1,
                       ),
@@ -5064,7 +5081,7 @@ class _MetricPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
     final light = Paint()
-      ..color = const Color(0xFFD3D2CF)
+      ..color = Colors.white.withValues(alpha: .62)
       ..strokeWidth = 6
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
@@ -5086,9 +5103,7 @@ class _MetricPainter extends CustomPainter {
       final heights = [22.0, 34.0, 43.0, 29.0, 48.0, 38.0];
       for (var index = 0; index < heights.length; index++) {
         final paint = Paint()
-          ..color = index == 3
-              ? const Color(0xFF171917)
-              : const Color(0xFFD3D2CF)
+          ..color = index == 3 ? accent : Colors.white.withValues(alpha: .62)
           ..strokeWidth = 6
           ..strokeCap = StrokeCap.round;
         final x = 5.0 + index * 9;
