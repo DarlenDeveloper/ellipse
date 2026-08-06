@@ -1,6 +1,18 @@
 import { HttpsError } from "firebase-functions/v2/https";
-import { db, FieldValue } from "./admin";
+import { db, FieldValue, bucket } from "./admin";
 import { notifyUsers } from "./notifications";
+import { randomUUID } from "crypto";
+
+const MAX_CHAT_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+type ChatAttachment = {
+  documentId: string;
+  storagePath: string;
+  fileName: string;
+  contentType: string;
+  size: number;
+  url: string;
+};
 
 type Member = { uid: string; enterpriseId: string; name: string; email: string; status: string };
 
@@ -32,6 +44,80 @@ async function activeMemberUids(enterpriseId: string) {
   return snap.docs
     .filter((item) => (item.data().status ?? "active") === "active")
     .map((item) => item.id);
+}
+
+async function requireChat(caller: Member, chatId: string) {
+  const chat = await db.doc(`internal_chats/${chatId}`).get();
+  const data = chat.data();
+  if (!chat.exists || data?.enterprise_id !== caller.enterpriseId) {
+    throw new HttpsError("not-found", "Chat not found.");
+  }
+  if (data.type === "direct" && !((data.participant_uids as string[] | undefined) ?? []).includes(caller.uid)) {
+    throw new HttpsError("permission-denied", "You are not part of this chat.");
+  }
+  return { chat, data };
+}
+
+/** Authorize a direct-to-Storage upload for an internal chat attachment. */
+export async function prepareInternalChatAttachment(callerUid: string, args: {
+  chatId?: string; fileName?: string; contentType?: string; size?: number;
+}) {
+  const caller = await loadMember(callerUid);
+  const chatId = String(args.chatId ?? "").trim();
+  const originalName = String(args.fileName ?? "").trim();
+  const contentType = String(args.contentType ?? "application/octet-stream").trim() || "application/octet-stream";
+  const size = Number(args.size ?? 0);
+  if (!chatId || !originalName || !size) throw new HttpsError("invalid-argument", "Missing attachment data.");
+  if (size > MAX_CHAT_ATTACHMENT_BYTES) throw new HttpsError("invalid-argument", "Attachment must be 25 MB or smaller.");
+  await requireChat(caller, chatId);
+  const safeName = originalName.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(-120) || "attachment";
+  const documentId = db.collection("documents").doc().id;
+  const storagePath = `internal-chat/${caller.enterpriseId}/${chatId}/${documentId}/${safeName}`;
+  const [uploadUrl] = await bucket().file(storagePath).getSignedUrl({
+    version: "v4", action: "write", expires: Date.now() + 15 * 60 * 1000, contentType,
+  });
+  return { documentId, storagePath, fileName: originalName, contentType, size, uploadUrl };
+}
+
+/** Verify an uploaded chat file and register the protected document metadata. */
+export async function finalizeInternalChatAttachment(callerUid: string, args: {
+  chatId?: string; documentId?: string; storagePath?: string; fileName?: string; contentType?: string;
+}) {
+  const caller = await loadMember(callerUid);
+  const chatId = String(args.chatId ?? "").trim();
+  const documentId = String(args.documentId ?? "").trim();
+  const storagePath = String(args.storagePath ?? "").trim();
+  const originalName = String(args.fileName ?? "").trim();
+  const contentType = String(args.contentType ?? "application/octet-stream").trim() || "application/octet-stream";
+  if (!chatId || !documentId || !storagePath || !originalName) throw new HttpsError("invalid-argument", "Missing attachment data.");
+  await requireChat(caller, chatId);
+  const prefix = `internal-chat/${caller.enterpriseId}/${chatId}/${documentId}/`;
+  if (!storagePath.startsWith(prefix) || storagePath.slice(prefix.length).includes("/")) {
+    throw new HttpsError("permission-denied", "Invalid attachment location.");
+  }
+  const file = bucket().file(storagePath);
+  const [metadata] = await file.getMetadata();
+  const size = Number(metadata.size ?? 0);
+  if (!size || size > MAX_CHAT_ATTACHMENT_BYTES) {
+    await file.delete({ ignoreNotFound: true });
+    throw new HttpsError("invalid-argument", "Attachment must be 25 MB or smaller.");
+  }
+  const token = randomUUID();
+  await file.setMetadata({ metadata: { firebaseStorageDownloadTokens: token } });
+  const url = `https://firebasestorage.googleapis.com/v0/b/${bucket().name}/o/${encodeURIComponent(storagePath)}?alt=media&token=${token}`;
+  await db.doc(`documents/${documentId}`).set({
+    enterprise_id: caller.enterpriseId,
+    chat_id: chatId,
+    name: originalName,
+    file: { name: originalName, size, url },
+    content_type: contentType,
+    storage_path: storagePath,
+    type: "chat_attachment",
+    source: "internal_chat",
+    created_by_uid: callerUid,
+    created_at: FieldValue.serverTimestamp(),
+  });
+  return { documentId, storagePath, fileName: originalName, contentType, size, url } satisfies ChatAttachment;
 }
 
 /** Ensure the pinned organization-wide group exists and return its id. */
@@ -80,19 +166,23 @@ export async function startInternalChat(callerUid: string, args: { targetUid?: s
   return { chatId: id };
 }
 
-/** Send one plain-text internal message after re-checking membership. */
-export async function sendInternalMessage(callerUid: string, args: { chatId?: string; text?: string }) {
+/** Send text and/or one verified attachment after re-checking membership. */
+export async function sendInternalMessage(callerUid: string, args: { chatId?: string; text?: string; attachment?: ChatAttachment }) {
   const caller = await loadMember(callerUid);
   const chatId = String(args.chatId ?? "").trim();
   const text = String(args.text ?? "").trim();
-  if (!chatId || !text) throw new HttpsError("invalid-argument", "Message text is required.");
+  const attachment = args.attachment;
+  if (!chatId || (!text && !attachment)) throw new HttpsError("invalid-argument", "A message or attachment is required.");
   if (text.length > 5000) throw new HttpsError("invalid-argument", "Messages must be 5,000 characters or fewer.");
   const chatRef = db.doc(`internal_chats/${chatId}`);
-  const chat = await chatRef.get();
-  const data = chat.data();
-  if (!chat.exists || data?.enterprise_id !== caller.enterpriseId) throw new HttpsError("not-found", "Chat not found.");
-  if (data.type === "direct" && !((data.participant_uids as string[] | undefined) ?? []).includes(callerUid)) {
-    throw new HttpsError("permission-denied", "You are not part of this chat.");
+  const { data } = await requireChat(caller, chatId);
+  if (attachment) {
+    const document = await db.doc(`documents/${attachment.documentId}`).get();
+    const stored = document.data();
+    if (!document.exists || stored?.enterprise_id !== caller.enterpriseId || stored?.chat_id !== chatId ||
+        stored?.storage_path !== attachment.storagePath || stored?.created_by_uid !== callerUid) {
+      throw new HttpsError("permission-denied", "Attachment is not valid for this chat.");
+    }
   }
 
   const messageRef = chatRef.collection("messages").doc();
@@ -103,10 +193,11 @@ export async function sendInternalMessage(callerUid: string, args: { chatId?: st
     sender_uid: callerUid,
     sender_name: caller.name,
     text,
+    attachment: attachment ?? null,
     created_at: FieldValue.serverTimestamp(),
   });
   batch.set(chatRef, {
-    last_message: text.slice(0, 180),
+    last_message: (text || `Attachment: ${attachment?.fileName ?? "file"}`).slice(0, 180),
     last_message_at: FieldValue.serverTimestamp(),
     last_sender_uid: callerUid,
     updated_at: FieldValue.serverTimestamp(),
@@ -127,7 +218,7 @@ export async function sendInternalMessage(callerUid: string, args: { chatId?: st
     recipientUids: recipients,
     kind: "internal_message",
     title: data.type === "group" ? `${caller.name} · ${data.name || "Team chat"}` : caller.name,
-    body: text.slice(0, 160),
+    body: (text || `Sent ${attachment?.fileName ?? "an attachment"}`).slice(0, 160),
     href: `/team-chat?chat=${encodeURIComponent(chatId)}`,
     entityId: chatId,
   });

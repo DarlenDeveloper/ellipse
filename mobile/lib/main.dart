@@ -8,10 +8,12 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:iconsax_flutter/iconsax_flutter.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -1524,6 +1526,7 @@ class _ConversationScreenState extends State<_ConversationScreen> {
   final _scrollController = ScrollController();
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _subscription;
   List<Map<String, dynamic>> _messages = [];
+  PlatformFile? _attachment;
   String? _error;
   bool _loading = true;
   bool _sending = false;
@@ -1650,22 +1653,104 @@ class _ConversationScreenState extends State<_ConversationScreen> {
 
   Future<void> _send() async {
     final text = _draftController.text.trim();
-    if (text.isEmpty || _sending) return;
+    if ((text.isEmpty && _attachment == null) || _sending) return;
+    final selectedFile = _attachment;
     setState(() {
       _sending = true;
       _error = null;
+      _attachment = null;
     });
     _draftController.clear();
     try {
-      await FirebaseFunctions.instanceFor(region: 'us-central1')
-          .httpsCallable('sendInternalMessage')
-          .call<void>({'chatId': widget.chatId, 'text': text});
+      Map<String, dynamic>? uploaded;
+      if (selectedFile != null) {
+        final bytes = selectedFile.bytes;
+        if (bytes == null) {
+          throw StateError('The selected file could not be read.');
+        }
+        final functions = FirebaseFunctions.instanceFor(region: 'us-central1');
+        final prepared = await functions
+            .httpsCallable('prepareInternalChatAttachment')
+            .call<Map<String, dynamic>>({
+              'chatId': widget.chatId,
+              'fileName': selectedFile.name,
+              'contentType': _contentType(selectedFile.extension),
+              'size': selectedFile.size,
+            });
+        final upload = prepared.data;
+        final response = await http.put(
+          Uri.parse('${upload['uploadUrl']}'),
+          headers: {'Content-Type': '${upload['contentType']}'},
+          body: bytes,
+        );
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          throw StateError('The attachment upload failed.');
+        }
+        final finalized = await functions
+            .httpsCallable('finalizeInternalChatAttachment')
+            .call<Map<String, dynamic>>({
+              'chatId': widget.chatId,
+              'documentId': upload['documentId'],
+              'storagePath': upload['storagePath'],
+              'fileName': upload['fileName'],
+              'contentType': upload['contentType'],
+            });
+        uploaded = finalized.data;
+      }
+      await FirebaseFunctions.instanceFor(
+        region: 'us-central1',
+      ).httpsCallable('sendInternalMessage').call<void>({
+        'chatId': widget.chatId,
+        'text': text,
+        'attachment': uploaded,
+      });
     } catch (_) {
       _draftController.text = text;
-      if (mounted) setState(() => _error = 'Message could not be sent.');
+      if (mounted) {
+        setState(() {
+          _attachment = selectedFile;
+          _error = 'Message or attachment could not be sent.';
+        });
+      }
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+
+  Future<void> _pickAttachment() async {
+    final result = await FilePicker.pickFiles(
+      allowMultiple: false,
+      withData: true,
+    );
+    final file = result?.files.singleOrNull;
+    if (file == null || !mounted) return;
+    if (file.size > 25 * 1024 * 1024) {
+      setState(() => _error = 'Attachment must be 25 MB or smaller.');
+      return;
+    }
+    setState(() {
+      _attachment = file;
+      _error = null;
+    });
+  }
+
+  String _contentType(String? extension) {
+    return switch (extension?.toLowerCase()) {
+      'jpg' || 'jpeg' => 'image/jpeg',
+      'png' => 'image/png',
+      'gif' => 'image/gif',
+      'webp' => 'image/webp',
+      'pdf' => 'application/pdf',
+      'doc' => 'application/msword',
+      'docx' =>
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'xls' => 'application/vnd.ms-excel',
+      'xlsx' =>
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'txt' => 'text/plain',
+      'csv' => 'text/csv',
+      _ => 'application/octet-stream',
+    };
   }
 
   int _millis(dynamic value) {
@@ -1775,6 +1860,11 @@ class _ConversationScreenState extends State<_ConversationScreen> {
                             : null;
                         return _MessageBubble(
                           text: '${message['text'] ?? ''}',
+                          attachment: message['attachment'] == null
+                              ? null
+                              : Map<String, dynamic>.from(
+                                  message['attachment'] as Map,
+                                ),
                           sender: '${message['sender_name'] ?? 'Member'}',
                           time: _time(message['created_at']),
                           mine: mine,
@@ -1788,55 +1878,100 @@ class _ConversationScreenState extends State<_ConversationScreen> {
             Container(
               color: Colors.white,
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  IconButton(
-                    onPressed: () {},
-                    icon: const Icon(Iconsax.export_1, size: 22),
-                    color: const Color(0xFF555752),
-                  ),
-                  Expanded(
-                    child: TextField(
-                      controller: _draftController,
-                      minLines: 1,
-                      maxLines: 5,
-                      maxLength: 5000,
-                      textInputAction: TextInputAction.newline,
-                      style: GoogleFonts.poppins(fontSize: 13),
-                      decoration: InputDecoration(
-                        counterText: '',
-                        hintText: 'Message ${widget.name}',
-                        filled: true,
-                        fillColor: const Color(0xFFF5F5F2),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(25),
-                          borderSide: BorderSide.none,
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 17,
-                          vertical: 13,
+                  if (_attachment != null)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 9,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEAF3FF),
+                        borderRadius: BorderRadius.circular(15),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Iconsax.document,
+                            size: 18,
+                            color: Color(0xFF426FA8),
+                          ),
+                          const SizedBox(width: 9),
+                          Expanded(
+                            child: Text(
+                              _attachment!.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.poppins(
+                                color: const Color(0xFF426FA8),
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => setState(() => _attachment = null),
+                            visualDensity: VisualDensity.compact,
+                            icon: const Icon(Icons.close_rounded, size: 18),
+                          ),
+                        ],
+                      ),
+                    ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      IconButton(
+                        onPressed: _sending ? null : _pickAttachment,
+                        icon: const Icon(Iconsax.paperclip_2, size: 22),
+                        color: const Color(0xFF555752),
+                        tooltip: 'Attach a file',
+                      ),
+                      Expanded(
+                        child: TextField(
+                          controller: _draftController,
+                          minLines: 1,
+                          maxLines: 5,
+                          maxLength: 5000,
+                          textInputAction: TextInputAction.newline,
+                          style: GoogleFonts.poppins(fontSize: 13),
+                          decoration: InputDecoration(
+                            counterText: '',
+                            hintText: 'Message ${widget.name}',
+                            filled: true,
+                            fillColor: const Color(0xFFF5F5F2),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(25),
+                              borderSide: BorderSide.none,
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 17,
+                              vertical: 13,
+                            ),
+                          ),
+                          onSubmitted: (_) => _send(),
                         ),
                       ),
-                      onSubmitted: (_) => _send(),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton.filled(
-                    onPressed: _sending ? null : _send,
-                    style: IconButton.styleFrom(
-                      backgroundColor: const Color(0xFF1D2825),
-                      disabledBackgroundColor: const Color(0xFFBFC0BB),
-                    ),
-                    icon: _sending
-                        ? const SizedBox.square(
-                            dimension: 17,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Icon(Iconsax.arrow_up_1, size: 20),
+                      const SizedBox(width: 8),
+                      IconButton.filled(
+                        onPressed: _sending ? null : _send,
+                        style: IconButton.styleFrom(
+                          backgroundColor: const Color(0xFF1D2825),
+                          disabledBackgroundColor: const Color(0xFFBFC0BB),
+                        ),
+                        icon: _sending
+                            ? const SizedBox.square(
+                                dimension: 17,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Icon(Iconsax.send_2, size: 20),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -1851,6 +1986,7 @@ class _ConversationScreenState extends State<_ConversationScreen> {
 class _MessageBubble extends StatelessWidget {
   const _MessageBubble({
     required this.text,
+    required this.attachment,
     required this.sender,
     required this.time,
     required this.mine,
@@ -1859,6 +1995,7 @@ class _MessageBubble extends StatelessWidget {
   });
 
   final String text;
+  final Map<String, dynamic>? attachment;
   final String sender;
   final String time;
   final bool mine;
@@ -1931,13 +2068,75 @@ class _MessageBubble extends StatelessWidget {
                       ),
                     ],
                   ),
-                  child: Text(
-                    text,
-                    style: GoogleFonts.poppins(
-                      color: mine ? Colors.white : const Color(0xFF343632),
-                      fontSize: 12,
-                      height: 1.5,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (text.isNotEmpty)
+                        Text(
+                          text,
+                          style: GoogleFonts.poppins(
+                            color: mine
+                                ? Colors.white
+                                : const Color(0xFF343632),
+                            fontSize: 12,
+                            height: 1.5,
+                          ),
+                        ),
+                      if (text.isNotEmpty && attachment != null)
+                        const SizedBox(height: 9),
+                      if (attachment != null)
+                        InkWell(
+                          onTap: () async {
+                            final uri = Uri.tryParse('${attachment!['url']}');
+                            if (uri != null) {
+                              await launchUrl(
+                                uri,
+                                mode: LaunchMode.externalApplication,
+                              );
+                            }
+                          },
+                          borderRadius: BorderRadius.circular(12),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 9,
+                            ),
+                            decoration: BoxDecoration(
+                              color: mine
+                                  ? Colors.white.withValues(alpha: .12)
+                                  : const Color(0xFFEAF3FF),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Iconsax.document_download,
+                                  size: 18,
+                                  color: mine
+                                      ? Colors.white
+                                      : const Color(0xFF426FA8),
+                                ),
+                                const SizedBox(width: 8),
+                                Flexible(
+                                  child: Text(
+                                    '${attachment!['fileName'] ?? 'Attachment'}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: GoogleFonts.poppins(
+                                      color: mine
+                                          ? Colors.white
+                                          : const Color(0xFF426FA8),
+                                      fontSize: 10.5,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 4),

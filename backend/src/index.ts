@@ -856,6 +856,18 @@ export const sendInternalMessage = onCall(async (request) => {
   return chat.sendInternalMessage(request.auth.uid, request.data ?? {});
 });
 
+export const prepareInternalChatAttachment = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const chat = await import("./internalChat");
+  return chat.prepareInternalChatAttachment(request.auth.uid, request.data ?? {});
+});
+
+export const finalizeInternalChatAttachment = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const chat = await import("./internalChat");
+  return chat.finalizeInternalChatAttachment(request.auth.uid, request.data ?? {});
+});
+
 export const markInternalChatRead = onCall(async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
   const chat = await import("./internalChat");

@@ -12,7 +12,7 @@ import {
   where,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
-import { EmojiHappy, People, SearchNormal1, Send2, User } from "iconsax-react";
+import { DocumentDownload, EmojiHappy, Paperclip2, People, SearchNormal1, Send2, User } from "iconsax-react";
 import { db, functions } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 import { useAccess } from "@/lib/use-access";
@@ -45,7 +45,17 @@ type ChatMessage = {
   sender_uid: string;
   sender_name: string;
   text: string;
+  attachment?: ChatAttachment | null;
   created_at?: Timestamp;
+};
+
+type ChatAttachment = {
+  documentId: string;
+  storagePath: string;
+  fileName: string;
+  contentType: string;
+  size: number;
+  url: string;
 };
 
 const avatarClasses = ["bg-violet-100 text-violet-700", "bg-blue-100 text-blue-700", "bg-emerald-100 text-emerald-700", "bg-amber-100 text-amber-700", "bg-pink-100 text-pink-700"];
@@ -88,6 +98,7 @@ export default function TeamChatPage() {
   const [search, setSearch] = useState("");
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [attachment, setAttachment] = useState<File | null>(null);
   const [pendingChat, setPendingChat] = useState<Chat | null>(null);
   const [pendingChatReady, setPendingChatReady] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
@@ -95,6 +106,7 @@ export default function TeamChatPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef<HTMLTextAreaElement>(null);
   const emojiRef = useRef<HTMLDivElement>(null);
+  const attachmentRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("chat");
@@ -230,12 +242,38 @@ export default function TeamChatPage() {
 
   const send = async () => {
     const text = draft.trim();
-    if (!selectedId || !text || sending || !selectedIsReady) return;
-    setSending(true); setError(null); setDraft(""); setEmojiOpen(false);
+    if (!selectedId || (!text && !attachment) || sending || !selectedIsReady) return;
+    const selectedFile = attachment;
+    setSending(true); setError(null); setDraft(""); setAttachment(null); setEmojiOpen(false);
     try {
-      await httpsCallable(functions, "sendInternalMessage")({ chatId: selectedId, text });
+      let uploaded: ChatAttachment | undefined;
+      if (selectedFile) {
+        const prepared = await httpsCallable(functions, "prepareInternalChatAttachment")({
+          chatId: selectedId,
+          fileName: selectedFile.name,
+          contentType: selectedFile.type || "application/octet-stream",
+          size: selectedFile.size,
+        });
+        const upload = prepared.data as Omit<ChatAttachment, "url"> & { uploadUrl: string };
+        const response = await fetch(upload.uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": upload.contentType },
+          body: selectedFile,
+        });
+        if (!response.ok) throw new Error("The attachment upload failed.");
+        const finalized = await httpsCallable(functions, "finalizeInternalChatAttachment")({
+          chatId: selectedId,
+          documentId: upload.documentId,
+          storagePath: upload.storagePath,
+          fileName: upload.fileName,
+          contentType: upload.contentType,
+        });
+        uploaded = finalized.data as ChatAttachment;
+      }
+      await httpsCallable(functions, "sendInternalMessage")({ chatId: selectedId, text, attachment: uploaded });
     } catch (cause) {
       setDraft(text);
+      setAttachment(selectedFile);
       setError((cause as Error).message || "Message could not be sent.");
     } finally {
       setSending(false);
@@ -298,14 +336,17 @@ export default function TeamChatPage() {
                 {messages.map((message, index) => {
                   const mine = message.sender_uid === user?.uid;
                   const showSender = !mine && (index === 0 || messages[index - 1]?.sender_uid !== message.sender_uid);
-                  return <div key={message.id} className={cn("flex", mine ? "justify-end" : "justify-start")}><div className="max-w-[72%]">{showSender && <p className="mb-1 ml-2 text-[11px] font-semibold text-gray-500">{message.sender_name}</p>}<div className={cn("whitespace-pre-wrap break-words rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm", mine ? "rounded-br-md bg-black text-white" : "rounded-bl-md border border-gray-100 bg-white text-gray-700")}>{message.text}</div><p className={cn("mt-1 text-[10px] text-gray-400", mine ? "text-right" : "ml-2")}>{timeLabel(message.created_at)}</p></div></div>;
+                  return <div key={message.id} className={cn("flex", mine ? "justify-end" : "justify-start")}><div className="max-w-[72%]">{showSender && <p className="mb-1 ml-2 text-[11px] font-semibold text-gray-500">{message.sender_name}</p>}<div className={cn("space-y-2 whitespace-pre-wrap break-words rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm", mine ? "rounded-br-md bg-black text-white" : "rounded-bl-md border border-gray-100 bg-white text-gray-700")}>{message.text && <p>{message.text}</p>}{message.attachment && <a href={message.attachment.url} target="_blank" rel="noreferrer" className={cn("flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold", mine ? "border-white/20 bg-white/10 text-white" : "border-blue-100 bg-blue-50 text-blue-700")}><DocumentDownload size={18} /><span className="min-w-0 flex-1 truncate">{message.attachment.fileName}</span></a>}</div><p className={cn("mt-1 text-[10px] text-gray-400", mine ? "text-right" : "ml-2")}>{timeLabel(message.created_at)}</p></div></div>;
                 })}
                 <div ref={bottomRef} />
               </div>
             </div>
             <div className="border-t border-gray-100 bg-white p-4">
               {error && <p className="mb-2 text-xs text-red-600">{error}</p>}
+              {attachment && <div className="mb-2 flex items-center gap-2 rounded-xl bg-blue-50 px-3 py-2 text-xs text-blue-700"><DocumentDownload size={16} /><span className="min-w-0 flex-1 truncate">{attachment.name}</span><button type="button" onClick={() => setAttachment(null)} className="font-bold">×</button></div>}
               <div className="relative flex items-end gap-2 rounded-2xl bg-gray-50 px-3 py-2.5 ring-purple-100 focus-within:ring-4">
+                <input ref={attachmentRef} type="file" className="hidden" onChange={(event) => { const file = event.target.files?.[0] ?? null; if (file && file.size > 25 * 1024 * 1024) { setError("Attachment must be 25 MB or smaller."); event.target.value = ""; return; } setAttachment(file); event.target.value = ""; }} />
+                <button type="button" onClick={() => attachmentRef.current?.click()} className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-gray-600 hover:bg-white hover:text-blue-600" aria-label="Attach a file"><Paperclip2 size={21} /></button>
                 <div ref={emojiRef} className="relative shrink-0">
                   {emojiOpen && (
                     <div className="absolute bottom-12 left-0 z-30 w-[320px] rounded-2xl border border-gray-100 bg-white p-3 shadow-[0_16px_45px_rgba(17,24,39,0.18)]">
@@ -318,7 +359,7 @@ export default function TeamChatPage() {
                   <button type="button" onClick={() => setEmojiOpen((open) => !open)} className="mb-0.5 flex h-9 w-9 items-center justify-center rounded-full text-gray-600 hover:bg-white hover:text-violet-600" aria-label="Choose an emoji" aria-expanded={emojiOpen}><EmojiHappy size={22} variant="Bold" /></button>
                 </div>
                 <textarea ref={draftRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setEmojiOpen(false); if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} rows={1} maxLength={5000} placeholder={`Message ${selectedName}`} className="max-h-32 flex-1 resize-none bg-transparent py-1.5 text-sm outline-none" />
-                <button type="button" onClick={send} disabled={!draft.trim() || sending || !selectedIsReady} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40"><Send2 size={18} variant="Bold" /></button>
+                <button type="button" onClick={send} disabled={(!draft.trim() && !attachment) || sending || !selectedIsReady} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40"><Send2 size={18} variant="Bold" /></button>
               </div>
             </div>
           </> : <div className="flex h-full items-center justify-center text-sm text-gray-400">Choose a member to start chatting.</div>}
