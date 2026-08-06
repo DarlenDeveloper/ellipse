@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'firebase_options.dart';
+import 'ivy_screen.dart';
 
 String _emailBodyToText(String input) {
   var text = input.replaceAll(RegExp(r'\r\n?'), '\n');
@@ -745,8 +746,10 @@ class _AppShellState extends State<AppShell> {
             const SizedBox(width: 12),
             _IvyButton(
               onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Ivy is ready to help.')),
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (context) => const IvyScreen(),
+                  ),
                 );
               },
             ),
