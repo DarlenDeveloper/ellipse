@@ -683,6 +683,8 @@ class _AppShellState extends State<AppShell> {
   int _selectedIndex = 0;
   int? _pendingApprovalCount;
   int _unreadChatCount = 0;
+  int _unreadInboxCount = 0;
+  late final List<Widget> _pages;
 
   static const _destinations = [
     _NavDestination(label: 'Home', icon: Iconsax.home_1),
@@ -692,43 +694,39 @@ class _AppShellState extends State<AppShell> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    _pages = [
+      _HomeDashboard(onPendingCountChanged: _setPendingApprovalCount),
+      _ApprovalsScreen(onPendingCountChanged: _setPendingApprovalCount),
+      _ChatScreen(onUnreadCountChanged: _setUnreadChatCount),
+      _InboxScreen(onUnreadCountChanged: _setUnreadInboxCount),
+    ];
+  }
+
+  void _setPendingApprovalCount(int value) {
+    if (mounted && _pendingApprovalCount != value) {
+      setState(() => _pendingApprovalCount = value);
+    }
+  }
+
+  void _setUnreadChatCount(int value) {
+    if (mounted && _unreadChatCount != value) {
+      setState(() => _unreadChatCount = value);
+    }
+  }
+
+  void _setUnreadInboxCount(int value) {
+    if (mounted && _unreadInboxCount != value) {
+      setState(() => _unreadInboxCount = value);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       extendBody: true,
-      body: switch (_selectedIndex) {
-        0 => _HomeDashboard(
-          onPendingCountChanged: (pendingValue) {
-            if (_pendingApprovalCount != pendingValue) {
-              setState(() => _pendingApprovalCount = pendingValue);
-            }
-          },
-        ),
-        1 => _ApprovalsScreen(
-          onPendingCountChanged: (pendingValue) {
-            if (_pendingApprovalCount != pendingValue) {
-              setState(() => _pendingApprovalCount = pendingValue);
-            }
-          },
-        ),
-        2 => _ChatScreen(
-          onUnreadCountChanged: (unreadValue) {
-            if (_unreadChatCount != unreadValue) {
-              setState(() => _unreadChatCount = unreadValue);
-            }
-          },
-        ),
-        3 => const _InboxScreen(),
-        _ => SafeArea(
-          child: Center(
-            child: Text(
-              _destinations[_selectedIndex].label,
-              style: Theme.of(
-                context,
-              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w600),
-            ),
-          ),
-        ),
-      },
+      body: IndexedStack(index: _selectedIndex, children: _pages),
       bottomNavigationBar: SafeArea(
         minimum: const EdgeInsets.fromLTRB(20, 8, 20, 16),
         child: Row(
@@ -740,6 +738,7 @@ class _AppShellState extends State<AppShell> {
                 selectedIndex: _selectedIndex,
                 approvalBadge: _pendingApprovalCount,
                 chatBadge: _unreadChatCount,
+                inboxBadge: _unreadInboxCount,
                 onSelected: (index) => setState(() => _selectedIndex = index),
               ),
             ),
@@ -1889,7 +1888,9 @@ class _ConversationEmpty extends StatelessWidget {
 }
 
 class _InboxScreen extends StatefulWidget {
-  const _InboxScreen();
+  const _InboxScreen({required this.onUnreadCountChanged});
+
+  final ValueChanged<int> onUnreadCountChanged;
 
   @override
   State<_InboxScreen> createState() => _InboxScreenState();
@@ -1971,6 +1972,7 @@ class _InboxScreenState extends State<_InboxScreen> {
             reads['${data['conversation_id']}'] = _millis(data['read_at']);
           }
           setState(() => _readAt = reads);
+          _updateUnreadBadge();
         }, onError: (_) {});
   }
 
@@ -2039,6 +2041,11 @@ class _InboxScreenState extends State<_InboxScreen> {
       _scope = '${payload['scope'] ?? _scope}';
       _loading = false;
     });
+    _updateUnreadBadge();
+  }
+
+  void _updateUnreadBadge() {
+    widget.onUnreadCountChanged(_conversations.where(_unread).length);
   }
 
   void _changePeriod(String value) {
@@ -2161,6 +2168,7 @@ class _InboxScreenState extends State<_InboxScreen> {
     setState(() {
       _readAt[id] = _millis(conversation['last_message_at']);
     });
+    _updateUnreadBadge();
     FirebaseFunctions.instanceFor(region: 'us-central1')
         .httpsCallable('markConversationRead')
         .call<void>({'conversationId': id})
@@ -2484,6 +2492,7 @@ class _InboxReadingScreenState extends State<_InboxReadingScreen> {
   List<Map<String, dynamic>> _messages = [];
   String? _error;
   bool _loading = true;
+  bool _actionLoading = false;
 
   @override
   void initState() {
@@ -2541,6 +2550,143 @@ class _InboxReadingScreenState extends State<_InboxReadingScreen> {
     return '${date.day}/${date.month} · ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
   }
 
+  String _conversationContext() {
+    final transcript = _messages.reversed.take(12).toList().reversed.map((
+      message,
+    ) {
+      final sender = message['sender_type'] == 'us'
+          ? 'Our team'
+          : '${message['from'] ?? message['from_email'] ?? 'Customer'}';
+      final body = _emailBodyToText(
+        '${message['body'] ?? message['snippet'] ?? ''}',
+      );
+      return '$sender: ${body.length > 1800 ? body.substring(0, 1800) : body}';
+    });
+    return [
+      'Conversation title: ${widget.conversation['subject'] ?? ''}',
+      'Customer: ${widget.conversation['customer_ref'] ?? ''}',
+      'Channel: ${widget.conversation['channel'] ?? 'unknown'}',
+      'Recent transcript:',
+      ...transcript,
+    ].join('\n');
+  }
+
+  Future<void> _selectAction(String action) async {
+    if (action == 'ask') {
+      final question = await _askIvyQuestion();
+      if (question == null || question.trim().isEmpty) return;
+      await _runAiAction(action, question: question.trim());
+      return;
+    }
+    await _runAiAction(action);
+  }
+
+  Future<String?> _askIvyQuestion() {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Text(
+          'Ask Ivy',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+        ),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          minLines: 2,
+          maxLines: 5,
+          decoration: InputDecoration(
+            hintText: 'What do you want to know about this conversation?',
+            filled: true,
+            fillColor: const Color(0xFFF4F4F1),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(18),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Ask'),
+          ),
+        ],
+      ),
+    ).whenComplete(controller.dispose);
+  }
+
+  Future<void> _runAiAction(String action, {String? question}) async {
+    setState(() => _actionLoading = true);
+    try {
+      String title;
+      String result;
+      if (action == 'tasks') {
+        final response =
+            await FirebaseFunctions.instanceFor(region: 'us-central1')
+                .httpsCallable('extractConversationTasks')
+                .call<Map<String, dynamic>>({
+                  'conversationId': widget.conversation['id'],
+                });
+        final tasks = (response.data['tasks'] as List? ?? const []);
+        title = 'Suggested tasks';
+        result = tasks.isEmpty
+            ? 'No concrete tasks were found in this conversation.'
+            : tasks
+                  .map((item) {
+                    final task = Map<String, dynamic>.from(item as Map);
+                    final description = '${task['description'] ?? ''}'.trim();
+                    return '• ${task['title'] ?? 'Task'}${description.isEmpty ? '' : '\n  $description'}';
+                  })
+                  .join('\n\n');
+      } else {
+        final instruction = action == 'brief'
+            ? 'Create a concise personalized AI brief for me. Use headings: Why this matters to me, What changed, My actions, Risks or deadlines, Suggested next step. Do not invent facts.'
+            : action == 'draft'
+            ? 'Draft a ready-to-send reply in the appropriate tone for this channel. Return only the reply text, with no commentary or markdown heading.'
+            : 'Answer my question about this conversation using only grounded workspace and transcript context. Question: ${question ?? ''}';
+        final response =
+            await FirebaseFunctions.instanceFor(
+              region: 'us-central1',
+            ).httpsCallable('askAgent').call<Map<String, dynamic>>({
+              'enterpriseId': widget.enterpriseId,
+              'agentId': 'ivy',
+              'message': '$instruction\n\n${_conversationContext()}',
+              'history': const [],
+            });
+        title = action == 'brief'
+            ? 'Personalized AI Brief'
+            : action == 'draft'
+            ? 'Suggested reply'
+            : 'Ivy';
+        result = '${response.data['reply'] ?? 'Ivy did not return a response.'}'
+            .trim();
+      }
+      if (!mounted) return;
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (context) =>
+            _InboxActionResultSheet(title: title, result: result),
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Ivy could not analyze this conversation.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _actionLoading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -2589,6 +2735,51 @@ class _InboxReadingScreenState extends State<_InboxReadingScreen> {
                       ],
                     ),
                   ),
+                  if (_actionLoading)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 14),
+                      child: SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Color(0xFF1D2825),
+                        ),
+                      ),
+                    )
+                  else
+                    PopupMenuButton<String>(
+                      tooltip: 'Conversation options',
+                      icon: const Icon(Icons.more_horiz_rounded, size: 28),
+                      color: Colors.white,
+                      elevation: 10,
+                      position: PopupMenuPosition.under,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      onSelected: _selectAction,
+                      itemBuilder: (context) => [
+                        _inboxActionMenuItem(
+                          'brief',
+                          'AI Brief',
+                          Iconsax.document_text,
+                        ),
+                        _inboxActionMenuItem(
+                          'draft',
+                          'Draft reply',
+                          Iconsax.send_2,
+                        ),
+                        _inboxActionMenuItem(
+                          'tasks',
+                          'Create tasks',
+                          Iconsax.task_square,
+                        ),
+                        _inboxActionMenuItem(
+                          'ask',
+                          'Ask Ivy',
+                          Iconsax.message_question,
+                        ),
+                      ],
+                    ),
                 ],
               ),
             ),
@@ -2654,6 +2845,100 @@ class _InboxReadingScreenState extends State<_InboxReadingScreen> {
                         );
                       },
                     ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+PopupMenuItem<String> _inboxActionMenuItem(
+  String value,
+  String label,
+  IconData icon,
+) {
+  return PopupMenuItem<String>(
+    value: value,
+    height: 48,
+    child: Row(
+      children: [
+        Icon(icon, size: 19, color: const Color(0xFF454743)),
+        const SizedBox(width: 12),
+        Text(
+          label,
+          style: GoogleFonts.poppins(
+            color: const Color(0xFF252622),
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _InboxActionResultSheet extends StatelessWidget {
+  const _InboxActionResultSheet({required this.title, required this.result});
+
+  final String title;
+  final String result;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.78,
+      ),
+      padding: const EdgeInsets.fromLTRB(22, 10, 22, 24),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 42,
+              height: 5,
+              decoration: BoxDecoration(
+                color: const Color(0xFFD5D5D1),
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                const Icon(Iconsax.magic_star, color: Color(0xFF55457A)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: GoogleFonts.poppins(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            Flexible(
+              child: SingleChildScrollView(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    result,
+                    style: GoogleFonts.poppins(
+                      color: const Color(0xFF454743),
+                      fontSize: 12,
+                      height: 1.6,
+                    ),
+                  ),
+                ),
+              ),
             ),
           ],
         ),
@@ -5046,6 +5331,7 @@ class _BottomNavBar extends StatelessWidget {
     required this.selectedIndex,
     required this.approvalBadge,
     required this.chatBadge,
+    required this.inboxBadge,
     required this.onSelected,
   });
 
@@ -5053,6 +5339,7 @@ class _BottomNavBar extends StatelessWidget {
   final int selectedIndex;
   final int? approvalBadge;
   final int chatBadge;
+  final int inboxBadge;
   final ValueChanged<int> onSelected;
 
   @override
@@ -5076,6 +5363,12 @@ class _BottomNavBar extends StatelessWidget {
         children: List.generate(destinations.length, (index) {
           final destination = destinations[index];
           final selected = selectedIndex == index;
+          final badge = switch (index) {
+            1 => approvalBadge ?? 0,
+            2 => chatBadge,
+            3 => inboxBadge,
+            _ => 0,
+          };
 
           return Expanded(
             child: Semantics(
@@ -5107,8 +5400,7 @@ class _BottomNavBar extends StatelessWidget {
                                 ? Colors.black
                                 : const Color(0xFFAAA9A5),
                           ),
-                          if ((index == 1 && (approvalBadge ?? 0) > 0) ||
-                              (index == 2 && chatBadge > 0))
+                          if (badge > 0)
                             Positioned(
                               right: -10,
                               top: -7,
@@ -5124,12 +5416,7 @@ class _BottomNavBar extends StatelessWidget {
                                   borderRadius: BorderRadius.circular(9),
                                 ),
                                 child: Text(
-                                  (index == 1
-                                              ? approvalBadge ?? 0
-                                              : chatBadge) >
-                                          99
-                                      ? '99+'
-                                      : '${index == 1 ? approvalBadge ?? 0 : chatBadge}',
+                                  badge > 99 ? '99+' : '$badge',
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 8,
