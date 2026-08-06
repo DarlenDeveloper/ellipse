@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -16,6 +17,28 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'firebase_options.dart';
 import 'ivy_screen.dart';
+import 'push_notifications.dart';
+
+final _navigatorKey = GlobalKey<NavigatorState>();
+
+void _openPushNotification(Map<String, dynamic> data) {
+  if (FirebaseAuth.instance.currentUser == null) return;
+  final href = '${data['href'] ?? ''}'.toLowerCase();
+  final kind = '${data['kind'] ?? ''}'.toLowerCase();
+  final index = href.contains('approval') || kind.contains('approval')
+      ? 1
+      : href.contains('chat') || kind == 'internal_message'
+      ? 2
+      : href.contains('inbox') || kind == 'new_message'
+      ? 3
+      : 0;
+  _navigatorKey.currentState?.pushAndRemoveUntil(
+    MaterialPageRoute<void>(
+      builder: (context) => AppShell(initialIndex: index),
+    ),
+    (route) => false,
+  );
+}
 
 String _emailBodyToText(String input) {
   var text = input.replaceAll(RegExp(r'\r\n?'), '\n');
@@ -77,6 +100,8 @@ String _emailBodyToText(String input) {
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  await PushNotifications.instance.initialize(onTap: _openPushNotification);
   runApp(const EllipseDeskApp());
 }
 
@@ -86,6 +111,7 @@ class EllipseDeskApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: _navigatorKey,
       debugShowCheckedModeBanner: false,
       title: 'ELLIPSE DESK',
       theme: ThemeData(
@@ -674,14 +700,16 @@ class _AuthTextField extends StatelessWidget {
 }
 
 class AppShell extends StatefulWidget {
-  const AppShell({super.key});
+  const AppShell({super.key, this.initialIndex = 0});
+
+  final int initialIndex;
 
   @override
   State<AppShell> createState() => _AppShellState();
 }
 
 class _AppShellState extends State<AppShell> {
-  int _selectedIndex = 0;
+  late int _selectedIndex;
   int? _pendingApprovalCount;
   int _unreadChatCount = 0;
   int _unreadInboxCount = 0;
@@ -697,12 +725,16 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
+    _selectedIndex = widget.initialIndex.clamp(0, 3);
     _pages = [
       _HomeDashboard(onPendingCountChanged: _setPendingApprovalCount),
       _ApprovalsScreen(onPendingCountChanged: _setPendingApprovalCount),
       _ChatScreen(onUnreadCountChanged: _setUnreadChatCount),
       _InboxScreen(onUnreadCountChanged: _setUnreadInboxCount),
     ];
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      PushNotifications.instance.registerForSignedInUser();
+    });
   }
 
   void _setPendingApprovalCount(int value) {
@@ -4191,6 +4223,7 @@ class _ProfileScreenState extends State<_ProfileScreen> {
   }
 
   Future<void> _signOut() async {
+    await PushNotifications.instance.unregisterCurrentToken();
     await FirebaseAuth.instance.signOut();
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
