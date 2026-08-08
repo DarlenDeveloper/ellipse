@@ -292,6 +292,28 @@ export default function TeamChatPage() {
     });
   };
 
+  const pasteAttachment = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const clipboardFile = Array.from(event.clipboardData.items)
+      .find((item) => item.kind === "file")
+      ?.getAsFile();
+    if (!clipboardFile) return;
+    event.preventDefault();
+    if (clipboardFile.size > 25 * 1024 * 1024) {
+      setError("Attachment must be 25 MB or smaller.");
+      return;
+    }
+    const extension = clipboardFile.type.split("/")[1]?.replace("jpeg", "jpg") || "png";
+    const namedFile = clipboardFile.name && clipboardFile.name !== "image.png"
+      ? clipboardFile
+      : new File(
+          [clipboardFile],
+          `pasted-image-${new Date().toISOString().replace(/[:.]/g, "-")}.${extension}`,
+          { type: clipboardFile.type || "image/png", lastModified: Date.now() },
+        );
+    setAttachment(namedFile);
+    setError(null);
+  };
+
   if (accessLoading) return <div className="flex h-screen items-center justify-center text-sm text-gray-400">Opening Team Chat…</div>;
 
   return (
@@ -358,7 +380,7 @@ export default function TeamChatPage() {
                   )}
                   <button type="button" onClick={() => setEmojiOpen((open) => !open)} className="mb-0.5 flex h-9 w-9 items-center justify-center rounded-full text-gray-600 hover:bg-white hover:text-violet-600" aria-label="Choose an emoji" aria-expanded={emojiOpen}><EmojiHappy size={22} variant="Bold" /></button>
                 </div>
-                <textarea ref={draftRef} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setEmojiOpen(false); if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} rows={1} maxLength={5000} placeholder={`Message ${selectedName}`} className="max-h-32 flex-1 resize-none bg-transparent py-1.5 text-sm outline-none" />
+                <textarea ref={draftRef} value={draft} onChange={(event) => setDraft(event.target.value)} onPaste={pasteAttachment} onKeyDown={(event) => { if (event.key === "Escape") setEmojiOpen(false); if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); } }} rows={1} maxLength={5000} placeholder={`Message ${selectedName}`} className="max-h-32 flex-1 resize-none bg-transparent py-1.5 text-sm outline-none" />
                 <button type="button" onClick={send} disabled={(!draft.trim() && !attachment) || sending || !selectedIsReady} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40"><Send2 size={18} variant="Bold" /></button>
               </div>
             </div>
