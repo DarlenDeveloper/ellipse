@@ -138,6 +138,11 @@ export default function LoginPage() {
           Sign up
         </a>
       </p>
+      <p className="mt-4 text-center text-xs text-white/35">
+        <a href="/terms" className="hover:text-white/65 hover:underline">Terms</a>
+        <span className="mx-2">·</span>
+        <a href="/privacy" className="hover:text-white/65 hover:underline">Privacy</a>
+      </p>
     </AuthLayout>
   );
 }

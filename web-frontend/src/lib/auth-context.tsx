@@ -23,16 +23,16 @@ import { auth, db, googleProvider } from "./firebase";
 type AuthContextType = {
   user: User | null;
   loading: boolean;
-  signUpWithEmail: (name: string, email: string, password: string) => Promise<UserCredential>;
+  signUpWithEmail: (name: string, email: string, password: string, legalVersion: string) => Promise<UserCredential>;
   signInWithEmail: (email: string, password: string) => Promise<UserCredential>;
-  signInWithGoogle: () => Promise<UserCredential>;
+  signInWithGoogle: (legalVersion?: string) => Promise<UserCredential>;
   logout: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType>({} as AuthContextType);
 
 // Create the users/{uid} doc if it doesn't already exist.
-async function ensureUserDoc(user: User, displayName?: string) {
+async function ensureUserDoc(user: User, displayName?: string, legalVersion?: string) {
   const ref = doc(db, "users", user.uid);
   const snap = await getDoc(ref);
   if (!snap.exists()) {
@@ -44,7 +44,18 @@ async function ensureUserDoc(user: User, displayName?: string) {
       can_approve: false,
       status: "active",
       created_at: serverTimestamp(),
+      ...(legalVersion ? {
+        terms_accepted_at: serverTimestamp(),
+        privacy_accepted_at: serverTimestamp(),
+        legal_version: legalVersion,
+      } : {}),
     });
+  } else if (legalVersion) {
+    await setDoc(ref, {
+      terms_accepted_at: serverTimestamp(),
+      privacy_accepted_at: serverTimestamp(),
+      legal_version: legalVersion,
+    }, { merge: true });
   }
 }
 
@@ -60,10 +71,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => unsub();
   }, []);
 
-  const signUpWithEmail = async (name: string, email: string, password: string) => {
+  const signUpWithEmail = async (name: string, email: string, password: string, legalVersion: string) => {
     const cred = await createUserWithEmailAndPassword(auth, email, password);
     await updateProfile(cred.user, { displayName: name });
-    await ensureUserDoc(cred.user, name);
+    await ensureUserDoc(cred.user, name, legalVersion);
     return cred;
   };
 
@@ -71,9 +82,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return signInWithEmailAndPassword(auth, email, password);
   };
 
-  const signInWithGoogle = async () => {
+  const signInWithGoogle = async (legalVersion?: string) => {
     const cred = await signInWithPopup(auth, googleProvider);
-    await ensureUserDoc(cred.user);
+    await ensureUserDoc(cred.user, undefined, legalVersion);
     return cred;
   };
 

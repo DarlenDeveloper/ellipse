@@ -7,6 +7,8 @@ import { AuthLayout } from "@/components/auth/AuthLayout";
 import { useAuth } from "@/lib/auth-context";
 import { getLandingRoute } from "@/lib/onboarding";
 
+const LEGAL_VERSION = "2026-08-09";
+
 export default function SignupPage() {
   const router = useRouter();
   const { signUpWithEmail, signInWithGoogle } = useAuth();
@@ -14,6 +16,7 @@ export default function SignupPage() {
   const [form, setForm] = useState({ firstName: "", lastName: "", email: "", password: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [acceptedLegal, setAcceptedLegal] = useState(false);
 
   const mapError = (code: string) => {
     if (code.includes("email-already-in-use")) return "An account with this email already exists.";
@@ -25,6 +28,10 @@ export default function SignupPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    if (!acceptedLegal) {
+      setError("Please accept the Terms and Conditions and Privacy Policy to continue.");
+      return;
+    }
     if (form.password.length < 8) {
       setError("Password must be at least 8 characters.");
       return;
@@ -32,7 +39,7 @@ export default function SignupPage() {
     setLoading(true);
     try {
       const name = `${form.firstName} ${form.lastName}`.trim();
-      const cred = await signUpWithEmail(name, form.email, form.password);
+      const cred = await signUpWithEmail(name, form.email, form.password, LEGAL_VERSION);
       // Invited employees get auto-linked to their org; everyone else onboards.
       router.push(await getLandingRoute(cred.user.uid));
     } catch (err: unknown) {
@@ -44,9 +51,13 @@ export default function SignupPage() {
 
   const handleGoogle = async () => {
     setError("");
+    if (!acceptedLegal) {
+      setError("Please accept the Terms and Conditions and Privacy Policy to continue.");
+      return;
+    }
     setLoading(true);
     try {
-      const cred = await signInWithGoogle();
+      const cred = await signInWithGoogle(LEGAL_VERSION);
       router.push(await getLandingRoute(cred.user.uid));
     } catch {
       setError("Google sign-in failed. Please try again.");
@@ -70,7 +81,7 @@ export default function SignupPage() {
         <button
           type="button"
           onClick={handleGoogle}
-          disabled={loading}
+          disabled={loading || !acceptedLegal}
           className="flex items-center justify-center gap-2 bg-white/5 border border-white/10 rounded-full py-3 text-sm font-medium text-white hover:bg-white/10 transition-colors disabled:opacity-50"
         >
           <img src="/logos/google-workspace.svg" alt="" className="w-4 h-4" />
@@ -98,6 +109,22 @@ export default function SignupPage() {
           {error}
         </div>
       )}
+
+      <label className="mb-6 flex cursor-pointer items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-left">
+        <input
+          type="checkbox"
+          checked={acceptedLegal}
+          onChange={(e) => setAcceptedLegal(e.target.checked)}
+          className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-white"
+          aria-describedby="legal-consent-copy"
+        />
+        <span id="legal-consent-copy" className="text-xs leading-5 text-white/55">
+          I have read and agree to the{" "}
+          <a href="/terms" target="_blank" rel="noopener noreferrer" className="font-semibold text-white underline underline-offset-2">Terms and Conditions</a>
+          {" "}and acknowledge the{" "}
+          <a href="/privacy" target="_blank" rel="noopener noreferrer" className="font-semibold text-white underline underline-offset-2">Privacy Policy</a>.
+        </span>
+      </label>
 
       {/* Form */}
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -160,7 +187,7 @@ export default function SignupPage() {
 
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || !acceptedLegal}
           className="w-full bg-white text-black font-semibold rounded-full py-3.5 hover:bg-white/90 transition-colors mt-2 disabled:opacity-60"
         >
           {loading ? "Creating account..." : "Sign Up"}

@@ -752,8 +752,8 @@ export default function AgenticPage() {
           {/* Legal links */}
           <div className="flex items-center gap-6">
             {[
-              { label: "Privacy", href: "#" },
-              { label: "Terms",   href: "#" },
+              { label: "Privacy", href: "/privacy" },
+              { label: "Terms",   href: "/terms" },
               { label: "Docs",    href: "#" },
               { label: "GitHub",  href: "#" },
             ].map(l => (

@@ -10,7 +10,7 @@ import { IvyBubble } from "@/components/ivy/IvyBubble";
 import { NotificationCenter } from "./NotificationCenter";
 
 // Routes that render WITHOUT the app sidebar (pre-login / onboarding)
-const bareRoutes = ["/login", "/signup", "/onboarding"];
+const bareRoutes = ["/login", "/signup", "/onboarding", "/terms", "/privacy"];
 
 function ShellInner({ children }: { children: ReactNode }) {
   const { collapsed, navigationHref } = useSidebar();
