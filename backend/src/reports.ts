@@ -620,6 +620,57 @@ export async function generateDueReports(now = new Date()): Promise<{ enterprise
   return { enterprises, reports };
 }
 
+/** Send the completed team digest to organisation owners at 07:00 local time. */
+export async function notifyDueOwnerReports(now = new Date()): Promise<{ enterprises: number; notified: number }> {
+  const entSnap = await db.collection("enterprises").get();
+  let enterprises = 0;
+  let notified = 0;
+
+  for (const doc of entSnap.docs) {
+    const ent = doc.data();
+    const timeZone = (ent.timezone as string) || "UTC";
+    const local = getLocalParts(now, timeZone);
+    if (local.hour !== 7) continue;
+    enterprises++;
+
+    const todayStart = zonedTimeToUtc(local.year, local.month, local.day, 0, 0, timeZone);
+    const w = windowFor("daily", todayStart, timeZone);
+    const marker = db.doc(`notification_deliveries/${doc.id}_owner_daily_${w.key}`);
+    if ((await marker.get()).exists) continue;
+
+    const orgName = (ent.name as string) || "Your organisation";
+    const { generateOrgUsersReport } = await import("./orgUsers");
+    const report = await generateOrgUsersReport(doc.id, w, orgName);
+    const owners = await db.collection("users")
+      .where("enterprise_id", "==", doc.id)
+      .where("role", "==", "owner")
+      .get();
+    const recipientUids = owners.docs
+      .filter((owner) => (owner.data().status ?? "active") !== "disabled")
+      .map((owner) => owner.id);
+    if (!recipientUids.length) continue;
+
+    const { notifyUsers } = await import("./notifications");
+    await notifyUsers({
+      enterpriseId: doc.id,
+      recipientUids,
+      kind: "daily_report",
+      title: "Your daily team report is ready",
+      body: `Review ${orgName}'s activity for ${w.label}.`,
+      href: "/data",
+      entityId: report.id,
+    });
+    await marker.set({
+      enterprise_id: doc.id,
+      report_id: report.id,
+      recipient_uids: recipientUids,
+      delivered_at: FieldValue.serverTimestamp(),
+    });
+    notified += recipientUids.length;
+  }
+  return { enterprises, notified };
+}
+
 /**
  * On-demand generation for testing — builds the last completed period for each
  * active agent, ignoring the time-of-day gate.

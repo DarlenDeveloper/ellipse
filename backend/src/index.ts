@@ -711,9 +711,12 @@ export const zohoOAuthCallback = onRequest(
 export const scheduledReports = onSchedule(
   { schedule: "every 60 minutes", secrets: [geminiKey, zohoClientId, zohoClientSecret, msClientId, msClientSecret] },
   async () => {
-    const { generateDueReports } = await import("./reports");
-    const res = await generateDueReports();
-    logger.info("scheduledReports complete", res);
+    const { generateDueReports, notifyDueOwnerReports } = await import("./reports");
+    const [reports, ownerNotifications] = await Promise.all([
+      generateDueReports(),
+      notifyDueOwnerReports(),
+    ]);
+    logger.info("scheduledReports complete", { reports, ownerNotifications });
   }
 );
 

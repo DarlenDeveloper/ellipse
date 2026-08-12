@@ -11,7 +11,8 @@ export type NotificationKind =
   | "access_requested"
   | "access_approved"
   | "access_denied"
-  | "internal_message";
+  | "internal_message"
+  | "daily_report";
 
 type Recipient = { notification_preferences?: Record<string, boolean> };
 
@@ -26,6 +27,7 @@ const preferenceKey: Partial<Record<NotificationKind, string>> = {
   // Team chat is independently configurable. Reusing newMessage meant users
   // who disabled inbox alerts also lost internal messages without realizing it.
   internal_message: "teamChat",
+  daily_report: "dailyReport",
 };
 
 export async function notifyUsers(args: {
@@ -63,8 +65,16 @@ export async function notifyUsers(args: {
 
   if (!deliveredUids.length) return;
   try {
-    const tokenSnap = await db.collection("push_tokens").where("user_uid", "in", deliveredUids.slice(0, 30)).get();
-    const tokenDocs = tokenSnap.docs.filter((doc) => Boolean(doc.data().token)).slice(0, 500);
+    // Firestore `in` queries accept a limited number of values. Query every
+    // recipient chunk so chats in larger organisations do not silently omit
+    // users after the first chunk.
+    const tokenDocs: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+    for (let offset = 0; offset < deliveredUids.length && tokenDocs.length < 500; offset += 30) {
+      const tokenSnap = await db.collection("push_tokens")
+        .where("user_uid", "in", deliveredUids.slice(offset, offset + 30)).get();
+      tokenDocs.push(...tokenSnap.docs.filter((doc) => Boolean(doc.data().token)));
+    }
+    tokenDocs.splice(500);
     const tokens = tokenDocs.map((doc) => String(doc.data().token));
     if (tokens.length) {
       const response = await getMessaging().sendEachForMulticast({

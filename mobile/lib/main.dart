@@ -125,7 +125,31 @@ class EllipseDeskApp extends StatelessWidget {
         textTheme: GoogleFonts.poppinsTextTheme(),
         useMaterial3: true,
       ),
-      home: const OnboardingScreen(),
+      home: const _AuthGate(),
+    );
+  }
+}
+
+/// Firebase Auth persists native sessions. Route from that restored state so a
+/// cold start does not send an already signed-in user back through onboarding.
+class _AuthGate extends StatelessWidget {
+  const _AuthGate();
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      initialData: FirebaseAuth.instance.currentUser,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+          );
+        }
+        return snapshot.data == null
+            ? const OnboardingScreen()
+            : const AppShell();
+      },
     );
   }
 }
@@ -4274,38 +4298,13 @@ class _ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<_ProfileScreen> {
-  static const _notificationOptions = <String, (String, String)>{
-    'newMessage': (
-      'New inbox message',
-      'Customer messages from connected channels.',
-    ),
-    'teamChat': ('Team chat', 'Direct and organisation chat messages.'),
-    'agentApproval': ('Agent approvals', 'Actions waiting for your review.'),
-    'actionResult': (
-      'Action results',
-      'When an approved action completes or fails.',
-    ),
-    'accessRequest': (
-      'Integration access',
-      'New requests and access decisions.',
-    ),
-    'integrationStatus': (
-      'Integration status',
-      'When a connected service needs attention.',
-    ),
-  };
-
   final _nameController = TextEditingController();
-  Map<String, bool> _notifications = {
-    for (final key in _notificationOptions.keys) key: true,
-  };
   String _email = '';
   String _role = '';
   String _organisation = '';
   String? _error;
   bool _loading = true;
   bool _savingName = false;
-  bool _passwordSent = false;
 
   @override
   void initState() {
@@ -4337,9 +4336,6 @@ class _ProfileScreenState extends State<_ProfileScreen> {
             .get();
         organisation = '${enterprise.data()?['name'] ?? 'Organisation'}';
       }
-      final storedPreferences = Map<String, dynamic>.from(
-        profile['notification_preferences'] as Map? ?? const {},
-      );
       if (!mounted) return;
       setState(() {
         _nameController.text =
@@ -4347,10 +4343,6 @@ class _ProfileScreenState extends State<_ProfileScreen> {
         _email = '${profile['email'] ?? user.email ?? ''}';
         _role = '${profile['role'] ?? 'employee'}';
         _organisation = organisation;
-        _notifications = {
-          for (final key in _notificationOptions.keys)
-            key: storedPreferences[key] as bool? ?? true,
-        };
         _loading = false;
       });
     } catch (_) {
@@ -4388,36 +4380,6 @@ class _ProfileScreenState extends State<_ProfileScreen> {
       if (mounted) setState(() => _error = 'Your name could not be saved.');
     } finally {
       if (mounted) setState(() => _savingName = false);
-    }
-  }
-
-  Future<void> _toggleNotification(String key, bool value) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-    final previous = _notifications[key] ?? true;
-    setState(() => _notifications[key] = value);
-    try {
-      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-        'notification_preferences': _notifications,
-        'updated_at': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-    } catch (_) {
-      if (mounted) {
-        setState(() {
-          _notifications[key] = previous;
-          _error = 'Notification preference could not be saved.';
-        });
-      }
-    }
-  }
-
-  Future<void> _resetPassword() async {
-    if (_email.isEmpty) return;
-    try {
-      await FirebaseAuth.instance.sendPasswordResetEmail(email: _email);
-      if (mounted) setState(() => _passwordSent = true);
-    } catch (_) {
-      if (mounted) setState(() => _error = 'Reset email could not be sent.');
     }
   }
 
@@ -4569,40 +4531,6 @@ class _ProfileScreenState extends State<_ProfileScreen> {
                             ],
                           ),
                         ),
-                        const SizedBox(height: 28),
-                        const _ProfileSectionTitle(title: 'Notifications'),
-                        const SizedBox(height: 6),
-                        ..._notificationOptions.entries.map((entry) {
-                          final (title, description) = entry.value;
-                          return _ProfileToggleRow(
-                            title: title,
-                            description: description,
-                            value: _notifications[entry.key] ?? true,
-                            onChanged: (value) =>
-                                _toggleNotification(entry.key, value),
-                          );
-                        }),
-                        const SizedBox(height: 28),
-                        const _ProfileSectionTitle(title: 'Security'),
-                        const SizedBox(height: 8),
-                        ListTile(
-                          onTap: _resetPassword,
-                          tileColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          leading: const Icon(Iconsax.lock_1),
-                          title: const Text('Reset password'),
-                          subtitle: Text(
-                            _passwordSent
-                                ? 'Reset instructions sent to your email.'
-                                : 'Send a secure reset link to $_email',
-                          ),
-                          trailing: const Icon(
-                            Icons.arrow_forward_ios_rounded,
-                            size: 15,
-                          ),
-                        ),
                         const SizedBox(height: 26),
                         SizedBox(
                           width: double.infinity,
@@ -4664,61 +4592,6 @@ class _ProfileChip extends StatelessWidget {
           fontSize: 9.5,
           fontWeight: FontWeight.w500,
         ),
-      ),
-    );
-  }
-}
-
-class _ProfileToggleRow extends StatelessWidget {
-  const _ProfileToggleRow({
-    required this.title,
-    required this.description,
-    required this.value,
-    required this.onChanged,
-  });
-
-  final String title;
-  final String description;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 13),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: Color(0xFFE9E9E5))),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: GoogleFonts.poppins(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  description,
-                  style: GoogleFonts.poppins(
-                    color: const Color(0xFF999994),
-                    fontSize: 9.5,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Switch(
-            value: value,
-            onChanged: onChanged,
-            activeTrackColor: const Color(0xFF1D2825),
-          ),
-        ],
       ),
     );
   }
