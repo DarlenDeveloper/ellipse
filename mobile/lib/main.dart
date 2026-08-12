@@ -1908,21 +1908,39 @@ class _ConversationScreenState extends State<_ConversationScreen> {
                   if (_attachment != null)
                     Container(
                       margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 9,
-                      ),
+                      padding: const EdgeInsets.all(8),
                       decoration: BoxDecoration(
                         color: const Color(0xFFEAF3FF),
                         borderRadius: BorderRadius.circular(15),
                       ),
                       child: Row(
                         children: [
-                          const Icon(
-                            Iconsax.document,
-                            size: 18,
-                            color: Color(0xFF426FA8),
-                          ),
+                          if (_isImageExtension(_attachment!.extension) &&
+                              _attachment!.bytes != null)
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(10),
+                              child: Image.memory(
+                                _attachment!.bytes!,
+                                width: 58,
+                                height: 58,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, _, _) => const SizedBox(
+                                  width: 42,
+                                  height: 42,
+                                  child: Icon(Iconsax.gallery, size: 20),
+                                ),
+                              ),
+                            )
+                          else
+                            const SizedBox(
+                              width: 42,
+                              height: 42,
+                              child: Icon(
+                                Iconsax.document,
+                                size: 20,
+                                color: Color(0xFF426FA8),
+                              ),
+                            ),
                           const SizedBox(width: 9),
                           Expanded(
                             child: Text(
@@ -2121,39 +2139,76 @@ class _MessageBubble extends StatelessWidget {
                           },
                           borderRadius: BorderRadius.circular(12),
                           child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 9,
-                            ),
+                            clipBehavior: Clip.antiAlias,
                             decoration: BoxDecoration(
                               color: mine
                                   ? Colors.white.withValues(alpha: .12)
                                   : const Color(0xFFEAF3FF),
                               borderRadius: BorderRadius.circular(12),
                             ),
-                            child: Row(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(
-                                  Iconsax.document_download,
-                                  size: 18,
-                                  color: mine
-                                      ? Colors.white
-                                      : const Color(0xFF426FA8),
-                                ),
-                                const SizedBox(width: 8),
-                                Flexible(
-                                  child: Text(
-                                    '${attachment!['fileName'] ?? 'Attachment'}',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: GoogleFonts.poppins(
-                                      color: mine
-                                          ? Colors.white
-                                          : const Color(0xFF426FA8),
-                                      fontSize: 10.5,
-                                      fontWeight: FontWeight.w600,
+                                if (_isImageContentType(
+                                  '${attachment!['contentType'] ?? ''}',
+                                ))
+                                  Image.network(
+                                    '${attachment!['url']}',
+                                    width: 260,
+                                    height: 210,
+                                    fit: BoxFit.cover,
+                                    loadingBuilder: (context, child, loading) =>
+                                        loading == null
+                                        ? child
+                                        : const SizedBox(
+                                            width: 260,
+                                            height: 210,
+                                            child: Center(
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            ),
+                                          ),
+                                    errorBuilder: (_, _, _) => const SizedBox(
+                                      width: 260,
+                                      height: 120,
+                                      child: Center(
+                                        child: Icon(Iconsax.gallery_slash),
+                                      ),
                                     ),
+                                  ),
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 9,
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Iconsax.document_download,
+                                        size: 18,
+                                        color: mine
+                                            ? Colors.white
+                                            : const Color(0xFF426FA8),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Flexible(
+                                        child: Text(
+                                          '${attachment!['fileName'] ?? 'Attachment'}',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: GoogleFonts.poppins(
+                                            color: mine
+                                                ? Colors.white
+                                                : const Color(0xFF426FA8),
+                                            fontSize: 10.5,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ],
@@ -4596,6 +4651,12 @@ class _ProfileChip extends StatelessWidget {
     );
   }
 }
+
+bool _isImageContentType(String value) =>
+    value.toLowerCase().startsWith('image/');
+
+bool _isImageExtension(String? value) =>
+    const {'jpg', 'jpeg', 'png', 'gif', 'webp'}.contains(value?.toLowerCase());
 
 class _HomeDashboard extends StatefulWidget {
   const _HomeDashboard({required this.onPendingCountChanged});

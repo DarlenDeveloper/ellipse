@@ -86,6 +86,25 @@ function timeLabel(timestamp?: Timestamp) {
     : date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
+function isImage(contentType?: string) {
+  return contentType?.toLowerCase().startsWith("image/") ?? false;
+}
+
+function fileSizeLabel(size?: number) {
+  if (!size) return "";
+  return size < 1024 * 1024
+    ? `${Math.ceil(size / 1024)} KB`
+    : `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function callableError(cause: unknown, fallback: string) {
+  const error = cause as { code?: string; message?: string };
+  if (error.code === "functions/internal" || error.message?.trim().toLowerCase() === "internal") {
+    return fallback;
+  }
+  return error.message || fallback;
+}
+
 export default function TeamChatPage() {
   const { user } = useAuth();
   const { enterpriseId, loading: accessLoading } = useAccess();
@@ -107,6 +126,14 @@ export default function TeamChatPage() {
   const draftRef = useRef<HTMLTextAreaElement>(null);
   const emojiRef = useRef<HTMLDivElement>(null);
   const attachmentRef = useRef<HTMLInputElement>(null);
+  const attachmentPreviewUrl = useMemo(
+    () => attachment && isImage(attachment.type) ? URL.createObjectURL(attachment) : null,
+    [attachment],
+  );
+
+  useEffect(() => () => {
+    if (attachmentPreviewUrl) URL.revokeObjectURL(attachmentPreviewUrl);
+  }, [attachmentPreviewUrl]);
 
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("chat");
@@ -248,33 +275,47 @@ export default function TeamChatPage() {
     try {
       let uploaded: ChatAttachment | undefined;
       if (selectedFile) {
-        const prepared = await httpsCallable(functions, "prepareInternalChatAttachment")({
-          chatId: selectedId,
-          fileName: selectedFile.name,
-          contentType: selectedFile.type || "application/octet-stream",
-          size: selectedFile.size,
-        });
+        let prepared;
+        try {
+          prepared = await httpsCallable(functions, "prepareInternalChatAttachment")({
+            chatId: selectedId,
+            fileName: selectedFile.name,
+            contentType: selectedFile.type || "application/octet-stream",
+            size: selectedFile.size,
+          });
+        } catch (cause) {
+          throw new Error(callableError(cause, "The attachment could not be prepared. Please try again."));
+        }
         const upload = prepared.data as Omit<ChatAttachment, "url"> & { uploadUrl: string };
         const response = await fetch(upload.uploadUrl, {
           method: "PUT",
           headers: { "Content-Type": upload.contentType },
           body: selectedFile,
         });
-        if (!response.ok) throw new Error("The attachment upload failed.");
-        const finalized = await httpsCallable(functions, "finalizeInternalChatAttachment")({
-          chatId: selectedId,
-          documentId: upload.documentId,
-          storagePath: upload.storagePath,
-          fileName: upload.fileName,
-          contentType: upload.contentType,
-        });
+        if (!response.ok) throw new Error(`The attachment upload failed (${response.status}). Please try again.`);
+        let finalized;
+        try {
+          finalized = await httpsCallable(functions, "finalizeInternalChatAttachment")({
+            chatId: selectedId,
+            documentId: upload.documentId,
+            storagePath: upload.storagePath,
+            fileName: upload.fileName,
+            contentType: upload.contentType,
+          });
+        } catch (cause) {
+          throw new Error(callableError(cause, "The uploaded attachment could not be finalized. Please try again."));
+        }
         uploaded = finalized.data as ChatAttachment;
       }
-      await httpsCallable(functions, "sendInternalMessage")({ chatId: selectedId, text, attachment: uploaded });
+      try {
+        await httpsCallable(functions, "sendInternalMessage")({ chatId: selectedId, text, attachment: uploaded });
+      } catch (cause) {
+        throw new Error(callableError(cause, "The message could not be sent. Please try again."));
+      }
     } catch (cause) {
       setDraft(text);
       setAttachment(selectedFile);
-      setError((cause as Error).message || "Message could not be sent.");
+      setError(callableError(cause, "Message or attachment could not be sent."));
     } finally {
       setSending(false);
     }
@@ -358,14 +399,14 @@ export default function TeamChatPage() {
                 {messages.map((message, index) => {
                   const mine = message.sender_uid === user?.uid;
                   const showSender = !mine && (index === 0 || messages[index - 1]?.sender_uid !== message.sender_uid);
-                  return <div key={message.id} className={cn("flex", mine ? "justify-end" : "justify-start")}><div className="max-w-[72%]">{showSender && <p className="mb-1 ml-2 text-[11px] font-semibold text-gray-500">{message.sender_name}</p>}<div className={cn("space-y-2 whitespace-pre-wrap break-words rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm", mine ? "rounded-br-md bg-black text-white" : "rounded-bl-md border border-gray-100 bg-white text-gray-700")}>{message.text && <p>{message.text}</p>}{message.attachment && <a href={message.attachment.url} target="_blank" rel="noreferrer" className={cn("flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold", mine ? "border-white/20 bg-white/10 text-white" : "border-blue-100 bg-blue-50 text-blue-700")}><DocumentDownload size={18} /><span className="min-w-0 flex-1 truncate">{message.attachment.fileName}</span></a>}</div><p className={cn("mt-1 text-[10px] text-gray-400", mine ? "text-right" : "ml-2")}>{timeLabel(message.created_at)}</p></div></div>;
+                  return <div key={message.id} className={cn("flex", mine ? "justify-end" : "justify-start")}><div className="max-w-[72%]">{showSender && <p className="mb-1 ml-2 text-[11px] font-semibold text-gray-500">{message.sender_name}</p>}<div className={cn("space-y-2 whitespace-pre-wrap break-words rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm", mine ? "rounded-br-md bg-black text-white" : "rounded-bl-md border border-gray-100 bg-white text-gray-700")}>{message.text && <p>{message.text}</p>}{message.attachment && <a href={message.attachment.url} target="_blank" rel="noreferrer" className={cn("block overflow-hidden rounded-xl border text-xs font-semibold", mine ? "border-white/20 bg-white/10 text-white" : "border-blue-100 bg-blue-50 text-blue-700")}>{isImage(message.attachment.contentType) && <img src={message.attachment.url} alt={message.attachment.fileName} className="max-h-72 w-full bg-black/5 object-contain" loading="lazy" />}<span className="flex items-center gap-2 px-3 py-2"><DocumentDownload size={18} /><span className="min-w-0 flex-1 truncate">{message.attachment.fileName}</span>{message.attachment.size > 0 && <span className="shrink-0 font-normal opacity-70">{fileSizeLabel(message.attachment.size)}</span>}</span></a>}</div><p className={cn("mt-1 text-[10px] text-gray-400", mine ? "text-right" : "ml-2")}>{timeLabel(message.created_at)}</p></div></div>;
                 })}
                 <div ref={bottomRef} />
               </div>
             </div>
             <div className="border-t border-gray-100 bg-white p-4">
               {error && <p className="mb-2 text-xs text-red-600">{error}</p>}
-              {attachment && <div className="mb-2 flex items-center gap-2 rounded-xl bg-blue-50 px-3 py-2 text-xs text-blue-700"><DocumentDownload size={16} /><span className="min-w-0 flex-1 truncate">{attachment.name}</span><button type="button" onClick={() => setAttachment(null)} className="font-bold">×</button></div>}
+              {attachment && <div className="mb-2 flex max-w-md items-center gap-3 rounded-xl bg-blue-50 p-2 text-xs text-blue-700">{attachmentPreviewUrl ? <img src={attachmentPreviewUrl} alt="Attachment preview" className="h-16 w-16 shrink-0 rounded-lg bg-white object-cover" /> : <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-white"><DocumentDownload size={20} /></span>}<span className="min-w-0 flex-1"><span className="block truncate font-semibold">{attachment.name}</span><span className="mt-0.5 block opacity-70">{fileSizeLabel(attachment.size)}</span></span><button type="button" onClick={() => setAttachment(null)} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-lg font-bold hover:bg-blue-100" aria-label="Remove attachment">×</button></div>}
               <div className="relative flex items-end gap-2 rounded-2xl bg-gray-50 px-3 py-2.5 ring-purple-100 focus-within:ring-4">
                 <input ref={attachmentRef} type="file" className="hidden" onChange={(event) => { const file = event.target.files?.[0] ?? null; if (file && file.size > 25 * 1024 * 1024) { setError("Attachment must be 25 MB or smaller."); event.target.value = ""; return; } setAttachment(file); event.target.value = ""; }} />
                 <button type="button" onClick={() => attachmentRef.current?.click()} className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-gray-600 hover:bg-white hover:text-blue-600" aria-label="Attach a file"><Paperclip2 size={21} /></button>
