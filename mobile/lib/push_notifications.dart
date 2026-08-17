@@ -37,6 +37,8 @@ class PushNotifications {
   StreamSubscription<String>? _tokenSubscription;
   PushTapHandler? _onTap;
   String? _registeredToken;
+  Timer? _registrationRetry;
+  int _registrationAttempts = 0;
   bool _initialized = false;
 
   bool get _isMobile =>
@@ -128,25 +130,40 @@ class PushNotifications {
 
     if (defaultTargetPlatform == TargetPlatform.iOS) {
       String? apnsToken;
-      for (var attempt = 0; attempt < 8 && apnsToken == null; attempt++) {
+      // APNs registration can take several seconds on a fresh install or after
+      // the device changes network. Do not abandon FCM registration too early.
+      for (var attempt = 0; attempt < 30 && apnsToken == null; attempt++) {
         apnsToken = await FirebaseMessaging.instance.getAPNSToken();
         if (apnsToken == null) {
-          await Future<void>.delayed(const Duration(milliseconds: 500));
+          await Future<void>.delayed(const Duration(seconds: 1));
         }
       }
-      if (apnsToken == null) return false;
+      if (apnsToken == null) {
+        debugPrint('Push registration: APNs token is still unavailable.');
+        _scheduleRegistrationRetry();
+        return false;
+      }
     }
 
-    final token = await FirebaseMessaging.instance.getToken();
-    if (token == null || token.isEmpty) return false;
-    await _registerToken(token);
-    return true;
+    try {
+      final token = await FirebaseMessaging.instance.getToken();
+      if (token == null || token.isEmpty) {
+        debugPrint('Push registration: Firebase did not return an FCM token.');
+        _scheduleRegistrationRetry();
+        return false;
+      }
+      return await _registerToken(token);
+    } catch (error, stackTrace) {
+      debugPrint('Push registration failed: $error\n$stackTrace');
+      _scheduleRegistrationRetry();
+      return false;
+    }
   }
 
-  Future<void> _registerToken(String token) async {
+  Future<bool> _registerToken(String token) async {
     if (FirebaseAuth.instance.currentUser == null ||
         token == _registeredToken) {
-      return;
+      return token == _registeredToken;
     }
     try {
       await _functions.httpsCallable('registerPushToken').call<void>({
@@ -154,9 +171,28 @@ class PushNotifications {
         'platform': defaultTargetPlatform.name,
       });
       _registeredToken = token;
-    } catch (_) {
-      // Registration retries on the next launch or token refresh.
+      _registrationAttempts = 0;
+      _registrationRetry?.cancel();
+      return true;
+    } catch (error, stackTrace) {
+      debugPrint('Push token backend registration failed: $error\n$stackTrace');
+      _scheduleRegistrationRetry();
+      return false;
     }
+  }
+
+  void _scheduleRegistrationRetry() {
+    if (!_isMobile ||
+        FirebaseAuth.instance.currentUser == null ||
+        _registrationAttempts >= 6 ||
+        _registrationRetry?.isActive == true) {
+      return;
+    }
+    _registrationAttempts++;
+    final delay = Duration(seconds: 10 * _registrationAttempts);
+    _registrationRetry = Timer(delay, () {
+      registerForSignedInUser(requestPermission: false);
+    });
   }
 
   Future<void> unregisterCurrentToken() async {
@@ -169,6 +205,8 @@ class PushNotifications {
         'token': token,
       });
       _registeredToken = null;
+      _registrationRetry?.cancel();
+      _registrationAttempts = 0;
     } catch (_) {}
   }
 
@@ -198,6 +236,7 @@ class PushNotifications {
   }
 
   Future<void> dispose() async {
+    _registrationRetry?.cancel();
     await _foregroundSubscription?.cancel();
     await _openedSubscription?.cancel();
     await _tokenSubscription?.cancel();

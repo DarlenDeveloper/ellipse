@@ -1,0 +1,15 @@
+rules_version = '2';
+
+// Ellipse Storage security rules.
+//
+// Files are uploaded by trusted Cloud Functions (Admin SDK) or through
+// short-lived, server-authorized signed URLs. Downloads are authorized by the
+// backend as well. The Admin SDK and signed URLs do not depend on these rules,
+// so direct Firebase client access can remain closed.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}
