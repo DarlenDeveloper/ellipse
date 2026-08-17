@@ -1536,6 +1536,27 @@ export const disconnectPersonalIntegration = onCall(async (request) => {
   return run(enterpriseId, type, request.auth.uid);
 });
 
+// ---- Attendance & field work ----
+export const attendanceStatus = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  return (await import("./attendance")).getAttendanceStatus(request.auth.uid);
+});
+
+export const attendanceAction = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  return (await import("./attendance")).recordAttendanceAction(request.auth.uid, request.data ?? {});
+});
+
+export const updateAttendanceSettings = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  return (await import("./attendance")).saveAttendanceSettings(request.auth.uid, request.data ?? {});
+});
+
+export const attendanceDashboard = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  return (await import("./attendance")).getAttendanceDashboard(request.auth.uid, request.data ?? {});
+});
+
 /** TEMPORARY — generate a detailed CRM report file and return its URL, to inspect contents. Remove before ship. */
 export const reportGenDebug = onRequest(
   { secrets: [zohoClientId, zohoClientSecret] },

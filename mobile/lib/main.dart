@@ -20,6 +20,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'firebase_options.dart';
 import 'ivy_screen.dart';
 import 'push_notifications.dart';
+import 'attendance_screen.dart';
 
 final _navigatorKey = GlobalKey<NavigatorState>();
 
@@ -4359,7 +4360,6 @@ class _ProfileScreenState extends State<_ProfileScreen> {
   String _organisation = '';
   String? _error;
   bool _loading = true;
-  bool _savingName = false;
 
   @override
   void initState() {
@@ -4410,35 +4410,42 @@ class _ProfileScreenState extends State<_ProfileScreen> {
     }
   }
 
-  Future<void> _saveName() async {
-    final user = FirebaseAuth.instance.currentUser;
-    final name = _nameController.text.trim();
-    if (user == null || name.isEmpty || _savingName) return;
-    setState(() {
-      _savingName = true;
-      _error = null;
-    });
-    try {
-      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-        'display_name': name,
-        'updated_at': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-      await user.updateDisplayName(name);
-      final preferences = await SharedPreferences.getInstance();
-      await preferences.remove('ellipse_dashboard_${user.uid}');
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Profile updated.')));
-      }
-    } catch (_) {
-      if (mounted) setState(() => _error = 'Your name could not be saved.');
-    } finally {
-      if (mounted) setState(() => _savingName = false);
-    }
-  }
-
   Future<void> _signOut() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Text(
+          'Sign out?',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w700),
+        ),
+        content: Text(
+          'Are you sure you want to sign out of Ellipse Desk?',
+          style: GoogleFonts.poppins(
+            color: const Color(0xFF777772),
+            fontSize: 13,
+            height: 1.5,
+          ),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFB63830),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Sign out'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
     await PushNotifications.instance.unregisterCurrentToken();
     await FirebaseAuth.instance.signOut();
     if (!mounted) return;
@@ -4544,46 +4551,47 @@ class _ProfileScreenState extends State<_ProfileScreen> {
                           ),
                         ],
                         const SizedBox(height: 30),
-                        const _ProfileSectionTitle(
-                          title: 'Personal information',
-                        ),
+                        const _ProfileSectionTitle(title: 'Work'),
                         const SizedBox(height: 10),
-                        Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(22),
-                          ),
-                          child: Column(
-                            children: [
-                              TextField(
-                                controller: _nameController,
-                                textCapitalization: TextCapitalization.words,
-                                decoration: InputDecoration(
-                                  labelText: 'Display name',
-                                  filled: true,
-                                  fillColor: const Color(0xFFF4F4F1),
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(18),
-                                    borderSide: BorderSide.none,
-                                  ),
-                                ),
+                        Material(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(22),
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 8,
+                            ),
+                            leading: const CircleAvatar(
+                              backgroundColor: Color(0xFF1D2825),
+                              child: Icon(
+                                Iconsax.clock,
+                                color: Colors.white,
+                                size: 20,
                               ),
-                              const SizedBox(height: 12),
-                              SizedBox(
-                                width: double.infinity,
-                                height: 48,
-                                child: FilledButton(
-                                  onPressed: _savingName ? null : _saveName,
-                                  style: FilledButton.styleFrom(
-                                    backgroundColor: const Color(0xFF1D2825),
-                                  ),
-                                  child: Text(
-                                    _savingName ? 'Saving…' : 'Save changes',
-                                  ),
-                                ),
+                            ),
+                            title: Text(
+                              'Attendance & field work',
+                              style: GoogleFonts.poppins(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
                               ),
-                            ],
+                            ),
+                            subtitle: Text(
+                              'Clock in, clock out, and record client visits',
+                              style: GoogleFonts.poppins(
+                                fontSize: 11,
+                                color: const Color(0xFF999994),
+                              ),
+                            ),
+                            trailing: const Icon(
+                              Icons.arrow_forward_ios_rounded,
+                              size: 16,
+                            ),
+                            onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) => const AttendanceScreen(),
+                              ),
+                            ),
                           ),
                         ),
                         const SizedBox(height: 26),
