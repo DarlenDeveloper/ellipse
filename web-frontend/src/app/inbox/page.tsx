@@ -10,6 +10,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useAccess } from "@/lib/use-access";
 import { InboxTopBar } from "@/components/inbox/InboxTopBar";
 import { ReadingPane } from "@/components/inbox/ReadingPane";
+import { NewEmailComposer, type EmailOption } from "@/components/inbox/NewEmailComposer";
 import { cn } from "@/lib/utils";
 
 // Channel → display name + logo. logo null falls back to a mailbox icon.
@@ -72,7 +73,7 @@ function fmtTime(ts?: { toDate: () => Date }): string {
 
 export default function InboxPage() {
   const { user } = useAuth();
-  const { enterpriseId, role } = useAccess();
+  const { enterpriseId, role, sharedTypes, personalTypes } = useAccess();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [period, setPeriod] = useState<InboxPeriod>("today");
   const [scope, setScope] = useState<InboxScope>("all");
@@ -90,6 +91,15 @@ export default function InboxPage() {
   const [search, setSearch] = useState("");
   const [requestedConversation, setRequestedConversation] = useState<string | null>(null);
   const [readAt, setReadAt] = useState<Record<string, Timestamp>>({});
+  const [showCompose, setShowCompose] = useState(false);
+  const [orgEmailTypes, setOrgEmailTypes] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!enterpriseId) return;
+    return onSnapshot(query(collection(db, "connections"), where("enterprise_id", "==", enterpriseId)), (snapshot) => {
+      setOrgEmailTypes(new Set(snapshot.docs.map((item) => item.data()).filter((item) => item.status === "active" && item.scope !== "personal").map((item) => String(item.type))));
+    });
+  }, [enterpriseId]);
 
   useEffect(() => {
     setRequestedConversation(new URLSearchParams(window.location.search).get("conversation"));
@@ -271,10 +281,19 @@ export default function InboxPage() {
   }, [filteredConversations]);
 
   const selectedConv = conversations.find((c) => c.id === selectedId) ?? null;
+  const emailOptions: EmailOption[] = [];
+  const emailTypes = ["google-workspace", "microsoft365", "smtp"];
+  const labels: Record<string, string> = { "google-workspace": "Gmail", microsoft365: "Outlook", smtp: "SMTP" };
+  emailTypes.forEach((channel) => {
+    if (role === "owner" || role === "admin" || sharedTypes.has(channel)) {
+      if (orgEmailTypes.has(channel)) emailOptions.push({ channel, scope: "org", label: `${labels[channel]} · Company` });
+    }
+    if (personalTypes.has(channel)) emailOptions.push({ channel, scope: "personal", label: `${labels[channel]} · Personal` });
+  });
 
   return (
     <div className="flex flex-col h-screen">
-      <InboxTopBar value={search} onChange={setSearch} />
+      <InboxTopBar value={search} onChange={setSearch} onCompose={() => setShowCompose(true)} canCompose={emailOptions.length > 0} />
       <div className="flex flex-1 min-h-0">
         {/* Conversation list */}
         <div className="w-[380px] shrink-0 border-r border-gray-100 flex flex-col bg-white">
@@ -373,6 +392,7 @@ export default function InboxPage() {
           messagesError={messagesError}
         />
       </div>
+      {showCompose && enterpriseId && <NewEmailComposer enterpriseId={enterpriseId} options={emailOptions} onClose={() => setShowCompose(false)} />}
     </div>
   );
 }

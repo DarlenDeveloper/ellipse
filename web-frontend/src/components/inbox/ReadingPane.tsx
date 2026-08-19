@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { DocumentText, Send2, Messages2, Clock, CloseCircle, Paperclip2, Trash, Maximize4, Minus, ArrowUp2 } from "iconsax-react";
+import { DocumentText, Send2, Messages2, Clock, CloseCircle, Paperclip2, Trash, Maximize4, Minus, ArrowUp2, ArrowDown2 } from "iconsax-react";
 import { httpsCallable } from "firebase/functions";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db, functions } from "@/lib/firebase";
@@ -170,6 +170,7 @@ export function ReadingPane({
   const [signatures, setSignatures] = useState<EmailSignature[]>([]);
   const [selectedSignatureId, setSelectedSignatureId] = useState("none");
   const [pastedSignature, setPastedSignature] = useState<{ html: string; plainText: string } | null>(null);
+  const [aiActionsOpen, setAiActionsOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sendNotice, setSendNotice] = useState<string | null>(null);
@@ -456,19 +457,16 @@ export function ReadingPane({
   return (
     <div className="flex-1 flex flex-col bg-white min-w-0">
       {/* Toolbar */}
-      <div className="flex items-center gap-2 px-6 py-3 border-b border-gray-100 overflow-x-auto">
+      <div className="relative flex items-center gap-2 px-6 py-3 border-b border-gray-100">
         <button onClick={() => runAi("brief")} className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium rounded-full px-4 py-2 whitespace-nowrap">
           <DocumentText size={16} variant="Linear" color="#ffffff" /> AI Brief
         </button>
-        <button onClick={() => runAi("draft")} className="flex items-center gap-2 border border-gray-200 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-full px-4 py-2 whitespace-nowrap">
-          <Send2 size={16} variant="Linear" /> Draft reply
-        </button>
-        <button onClick={() => runAi("tasks")} className="flex items-center gap-2 border border-gray-200 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-full px-4 py-2 whitespace-nowrap">
-          <Clock size={16} variant="Linear" /> Create tasks
-        </button>
-        <button onClick={() => { setAiMode("ask"); setAiResult(""); setAiError(null); }} className="flex items-center gap-2 border border-gray-200 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-full px-4 py-2 whitespace-nowrap">
-          <Messages2 size={16} variant="Linear" /> Ask Ivy
-        </button>
+        <button onClick={() => setAiActionsOpen((value) => !value)} className="flex items-center gap-2 border border-gray-200 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-full px-4 py-2 whitespace-nowrap"><Messages2 size={16} /> More actions <ArrowDown2 size={14} /></button>
+        {aiActionsOpen && <div className="absolute left-36 top-14 z-20 w-52 rounded-2xl border border-gray-100 bg-white p-2 shadow-xl">
+          <button onClick={() => { setAiActionsOpen(false); runAi("draft"); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm hover:bg-gray-50"><Send2 size={17} /> Draft reply</button>
+          <button onClick={() => { setAiActionsOpen(false); runAi("tasks"); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm hover:bg-gray-50"><Clock size={17} /> Create tasks</button>
+          <button onClick={() => { setAiActionsOpen(false); setAiMode("ask"); setAiResult(""); setAiError(null); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm hover:bg-gray-50"><Messages2 size={17} /> Ask Ivy</button>
+        </div>}
       </div>
 
       {aiMode && (
@@ -570,7 +568,7 @@ export function ReadingPane({
                     {msg.from_email && !msg.from.toLowerCase().includes(msg.from_email.toLowerCase()) && (
                       <p className="text-xs text-gray-500">{msg.from_email}</p>
                     )}
-                    <p className="text-xs text-gray-400">{msg.sender_type === "us" ? "Sent" : `to ${msg.to || "you"}`}</p>
+                    {msg.sender_type === "us" ? <p className="text-xs text-gray-400">Sent</p> : <details className="max-w-[680px] text-xs text-gray-400"><summary className="cursor-pointer list-none truncate">to {(msg.to || "you").split(",")[0]}{(msg.to || "").includes(",") ? " and others" : ""} <ArrowDown2 size={11} className="inline" /></summary><p className="mt-1 whitespace-normal break-words leading-5">{msg.to || "you"}</p></details>}
                   </div>
                 </div>
                 <span className="text-xs text-gray-400 shrink-0">{fmtFull(msg.timestamp)}</span>

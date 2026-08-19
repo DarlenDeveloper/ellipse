@@ -251,6 +251,7 @@ async function executeGmailAction(
         to: params.to as string,
         subject: (params.subject as string) ?? "",
         body: (params.body as string) ?? "",
+        bodyHtml: params.bodyHtml as string | undefined,
         cc: params.cc as string | undefined,
         attachment: await loadAttachment(params),
       }, params.connectionOwnerUid as string | undefined);
@@ -298,6 +299,7 @@ async function executeSmtpAction(
         to: params.to as string,
         subject: (params.subject as string) ?? "",
         body: (params.body as string) ?? "",
+        bodyHtml: params.bodyHtml as string | undefined,
         cc: params.cc as string | undefined,
         attachment: await loadAttachment(params),
       });
@@ -367,6 +369,7 @@ async function executeMicrosoftAction(
         to: params.to as string,
         subject: (params.subject as string) ?? "",
         body: (params.body as string) ?? "",
+        bodyHtml: params.bodyHtml as string | undefined,
         cc: params.cc as string | undefined,
         attachment: await loadAttachment(params),
       });

@@ -164,12 +164,12 @@ export async function sendGmailReply(
  */
 export async function sendGmailEmail(
   enterpriseId: string,
-  opts: { to: string; subject: string; body: string; cc?: string; attachment?: { filename: string; contentType: string; content: Buffer } },
+  opts: { to: string; subject: string; body: string; bodyHtml?: string; cc?: string; attachment?: { filename: string; contentType: string; content: Buffer } },
   ownerUid?: string
 ): Promise<string> {
   const { client } = await authedClientFor(enterpriseId, ownerUid);
   const gmail = google.gmail({ version: "v1", auth: client });
-  const { to, subject, body, cc, attachment } = opts;
+  const { to, subject, body, bodyHtml, cc, attachment } = opts;
 
   const headers = [`To: ${to}`, cc ? `Cc: ${cc}` : null, `Subject: ${subject}`, "MIME-Version: 1.0"].filter(Boolean) as string[];
 
@@ -182,9 +182,9 @@ export async function sendGmailEmail(
       `Content-Type: multipart/mixed; boundary="${boundary}"`,
       "",
       `--${boundary}`,
-      `Content-Type: text/plain; charset="UTF-8"`,
+      `Content-Type: ${bodyHtml ? "text/html" : "text/plain"}; charset="UTF-8"`,
       "",
-      body,
+      bodyHtml || body,
       "",
       `--${boundary}`,
       `Content-Type: ${attachment.contentType}; name="${attachment.filename}"`,
@@ -196,7 +196,7 @@ export async function sendGmailEmail(
       `--${boundary}--`,
     ].join("\r\n");
   } else {
-    message = [...headers, `Content-Type: text/plain; charset="UTF-8"`, "", body].join("\r\n");
+    message = [...headers, `Content-Type: ${bodyHtml ? "text/html" : "text/plain"}; charset="UTF-8"`, "", bodyHtml || body].join("\r\n");
   }
 
   const raw = Buffer.from(message).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");

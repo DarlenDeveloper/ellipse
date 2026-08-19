@@ -1004,6 +1004,53 @@ export const sendReply = onCall(
   }
 );
 
+/** User-composed brand-new email; sends immediately and keeps an audit record. */
+export const sendDirectEmail = onCall(
+  { secrets: [googleClientId, googleClientSecret, msClientId, msClientSecret] },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+    const enterpriseId = String(request.data?.enterpriseId ?? "");
+    const channel = String(request.data?.channel ?? "");
+    const scope = request.data?.scope === "personal" ? "personal" : "org";
+    const to = String(request.data?.to ?? "").trim();
+    const cc = String(request.data?.cc ?? "").trim() || undefined;
+    const subject = String(request.data?.subject ?? "").trim();
+    const body = String(request.data?.body ?? "").trim();
+    const bodyHtml = sanitizeEmailHtml(request.data?.bodyHtml as string | undefined);
+    const attachment = request.data?.attachment as { documentId?: string; storagePath?: string; fileName?: string; contentType?: string; size?: number } | undefined;
+    const addressesValid = (value: string) => value.split(",").every((address) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address.trim()));
+    if (!enterpriseId || !to || !subject || !body || !addressesValid(to) || (cc && !addressesValid(cc))) throw new HttpsError("invalid-argument", "Enter valid recipients, subject, and message.");
+    const targetByChannel: Record<string, string> = { "google-workspace": "gmail", smtp: "smtp", microsoft365: "microsoft365" };
+    const target = targetByChannel[channel];
+    if (!target) throw new HttpsError("invalid-argument", "Choose a connected email provider.");
+    const { db, FieldValue } = await import("./admin");
+    const caller = (await db.doc(`users/${request.auth.uid}`).get()).data();
+    if (caller?.enterprise_id !== enterpriseId) throw new HttpsError("permission-denied", "Wrong organization.");
+    const manager = caller.role === "owner" || caller.role === "admin";
+    if (scope === "org" && !manager) {
+      const grant = (await db.doc(`connection_grants/${enterpriseId}_${request.auth.uid}`).get()).data();
+      if (!((grant?.types as string[] | undefined) ?? []).includes(channel)) throw new HttpsError("permission-denied", "You do not have access to this company connection.");
+    }
+    if (attachment) {
+      if (!attachment.documentId || !attachment.storagePath?.startsWith(`documents/${enterpriseId}/${attachment.documentId}/`)) throw new HttpsError("permission-denied", "Invalid attachment location.");
+      const stored = (await db.doc(`documents/${attachment.documentId}`).get()).data();
+      if (stored?.enterprise_id !== enterpriseId || stored?.storage_path !== attachment.storagePath) throw new HttpsError("permission-denied", "Attachment does not belong to this organization.");
+    }
+    const params = { to, cc, subject, body, bodyHtml, attachment, connectionOwnerUid: scope === "personal" ? request.auth.uid : undefined };
+    const audit = db.collection("pending_actions").doc();
+    await audit.set({ enterprise_id: enterpriseId, agent_id: `human-${request.auth.uid}`, domain: "inbox", action_type: "send_email", params, target_system: target, status: "executing", action_summary: `Direct email to ${to}.`, created_at: FieldValue.serverTimestamp() });
+    try {
+      const externalRef = await executeAction(enterpriseId, target, "send_email", params);
+      await audit.update({ status: "executed", external_ref: externalRef, executed_at: FieldValue.serverTimestamp() });
+      return { ok: true, status: "executed", externalRef };
+    } catch (error) {
+      const message = (error as Error).message || "The connected channel rejected the email.";
+      await audit.update({ status: "error", error: message, executed_at: FieldValue.serverTimestamp() });
+      throw new HttpsError("unavailable", message);
+    }
+  }
+);
+
 const MAX_INBOX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
 
 /** Prepare a direct-to-Storage upload so large files do not cross callable limits. */

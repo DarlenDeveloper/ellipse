@@ -36,7 +36,7 @@ function ShellInner({ children }: { children: ReactNode }) {
   return (
     <>
       <Sidebar />
-      <NotificationCenter />
+      {pathname !== "/inbox" && <NotificationCenter />}
       <div
         className="min-h-screen transition-all duration-200"
         style={{ marginLeft: collapsed ? 70 : 230 }}
