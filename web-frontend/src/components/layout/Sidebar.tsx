@@ -50,7 +50,7 @@ export function Sidebar() {
   const router = useRouter();
   const { collapsed, toggle, navigationHref, startNavigation, finishNavigation } = useSidebar();
   const { logout } = useAuth();
-  const { isManager, role, loading: accessLoading } = useAccess();
+  const { role, loading: accessLoading } = useAccess();
   const [signingOut, setSigningOut] = useState(false);
 
   const handleLogout = async () => {
@@ -69,8 +69,8 @@ export function Sidebar() {
   }, [pathname, finishNavigation]);
 
   useEffect(() => {
-    navItems.filter((item) => (!item.ownerOnly || role === "owner") && (item.href !== "/users" || isManager)).forEach((item) => router.prefetch(item.href));
-  }, [router, isManager, role]);
+    navItems.filter((item) => !item.ownerOnly || role === "owner").forEach((item) => router.prefetch(item.href));
+  }, [router, role]);
 
   return (
     <aside
@@ -93,7 +93,7 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 min-h-0 overflow-y-auto space-y-1.5 -mr-2 pr-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {navItems.filter((item) => (!item.ownerOnly || (!accessLoading && role === "owner")) && (item.href !== "/users" || (!accessLoading && isManager))).map((item) => {
+        {navItems.filter((item) => !item.ownerOnly || (!accessLoading && role === "owner")).map((item) => {
           const active = navigationHref
             ? navigationHref === item.href
             : pathname.startsWith(item.href);

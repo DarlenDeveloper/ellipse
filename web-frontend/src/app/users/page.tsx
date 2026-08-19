@@ -17,8 +17,6 @@ import { collection, query, where, onSnapshot, doc, getDoc } from "firebase/fire
 import { httpsCallable } from "firebase/functions";
 import { db, functions } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
-import { useAccess } from "@/lib/use-access";
-import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { integrations } from "@/components/integrations/data";
 
@@ -47,8 +45,6 @@ const colorFor = (s: string) => avatarColors[(s.charCodeAt(0) || 0) % avatarColo
 
 export default function UsersPage() {
   const { user } = useAuth();
-  const { isManager, loading: accessLoading } = useAccess();
-  const router = useRouter();
   const [enterpriseId, setEnterpriseId] = useState<string | null>(null);
   const [myRole, setMyRole] = useState<Role>("employee");
   const [members, setMembers] = useState<Member[]>([]);
@@ -80,10 +76,6 @@ export default function UsersPage() {
       setEnterpriseId((d?.enterprise_id as string) ?? null);
     });
   }, [user]);
-
-  useEffect(() => {
-    if (!accessLoading && !isManager) router.replace("/dashboard");
-  }, [accessLoading, isManager, router]);
 
   useEffect(() => {
     if (!enterpriseId || !user) return;
@@ -234,8 +226,6 @@ export default function UsersPage() {
     if (isOwner) return true;
     return m.role === "employee"; // admins manage employees only
   };
-
-  if (accessLoading || !isManager) return null;
 
   return (
     <main className="p-8">
