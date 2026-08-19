@@ -1,0 +1,14 @@
+[
+  {
+    "origin": [
+      "http://localhost:3000",
+      "http://localhost:3001",
+      "https://ellipse-desk.web.app",
+      "https://ellipse-desk.firebaseapp.com",
+      "https://crm.mercurycomputerslimited.com"
+    ],
+    "method": ["PUT"],
+    "responseHeader": ["Content-Type", "ETag"],
+    "maxAgeSeconds": 3600
+  }
+]

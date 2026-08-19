@@ -4,7 +4,7 @@ import { setGlobalOptions } from "firebase-functions/v2";
 import { defineSecret } from "firebase-functions/params";
 import * as logger from "firebase-functions/logger";
 import "./admin";
-import { executeAgentAction } from "./executeAgentAction";
+import { executeAction, executeAgentAction } from "./executeAgentAction";
 import { ExecuteAgentActionInput } from "./types";
 
 setGlobalOptions({ region: "us-central1", maxInstances: 10 });
@@ -877,7 +877,7 @@ export const markInternalChatRead = onCall(async (request) => {
   return chat.markInternalChatRead(request.auth.uid, request.data ?? {});
 });
 
-/** Human-composed Inbox reply. It uses the universal gate just like agent replies. */
+/** Human-composed Inbox reply. An explicit user click sends immediately. */
 export const sendReply = onCall(
   {
     secrets: [
@@ -953,17 +953,30 @@ export const sendReply = onCall(
         connectionScope: conv.connection_scope ?? "org",
         ownerUid: conv.connection_scope === "personal" ? conv.owner_uid : null,
       };
-    const result = await executeAgentAction({
-      enterpriseId,
-      agentId: `human-${request.auth.uid}`,
+    // This is a user-authored action, not an autonomous agent action. Agent
+    // modes (Off/Supervised/Unsupervised) must never suppress or re-queue an
+    // explicit click on Send. Keep an audit record without passing through the
+    // agent approval gate.
+    const auditRef = db.collection("pending_actions").doc();
+    await auditRef.set({
+      enterprise_id: enterpriseId,
+      agent_id: `human-${request.auth.uid}`,
       domain: "inbox",
-      actionType: "send_reply",
+      action_type: "send_reply",
       params: actionParams,
-      targetSystem: target as ExecuteAgentActionInput["targetSystem"],
-      reasoning: `Human-reviewed reply to ${String(conv.customer_ref ?? "customer")} from the Inbox.`,
+      target_system: target,
+      status: "executing",
+      action_summary: `Direct reply to ${String(conv.customer_ref ?? "customer")} from the Inbox.`,
+      created_at: FieldValue.serverTimestamp(),
     });
 
-    if (result.status === "executed") {
+    try {
+      const externalRef = await executeAction(enterpriseId, target, "send_reply", actionParams);
+      await auditRef.update({
+        status: "executed",
+        external_ref: externalRef,
+        executed_at: FieldValue.serverTimestamp(),
+      });
       await db.collection("messages").add({
         conversation_id: conversationId, enterprise_id: enterpriseId, channel,
         sender_type: "us", from: "You", from_email: "", subject: conv.subject ?? "",
@@ -974,9 +987,17 @@ export const sendReply = onCall(
       await db.doc(`conversations/${conversationId}`).set(
         { last_message_at: new Date(), updated_at: FieldValue.serverTimestamp() }, { merge: true }
       );
+      return { ok: true, status: "executed", pendingActionId: auditRef.id, externalRef };
+    } catch (error) {
+      const message = (error as Error).message || "The connected channel rejected the reply.";
+      await auditRef.update({
+        status: "error",
+        error: message,
+        executed_at: FieldValue.serverTimestamp(),
+      });
+      logger.error("Direct Inbox reply failed", { enterpriseId, conversationId, channel, error: message });
+      throw new HttpsError("unavailable", message);
     }
-
-    return { ok: result.status === "executed" || result.status === "pending", ...result };
   }
 );
 
