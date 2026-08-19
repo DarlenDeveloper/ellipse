@@ -1036,7 +1036,15 @@ export const sendDirectEmail = onCall(
       const stored = (await db.doc(`documents/${attachment.documentId}`).get()).data();
       if (stored?.enterprise_id !== enterpriseId || stored?.storage_path !== attachment.storagePath) throw new HttpsError("permission-denied", "Attachment does not belong to this organization.");
     }
-    const params = { to, cc, subject, body, bodyHtml, attachment, connectionOwnerUid: scope === "personal" ? request.auth.uid : undefined };
+    const params = {
+      to,
+      subject,
+      body,
+      ...(cc ? { cc } : {}),
+      ...(bodyHtml ? { bodyHtml } : {}),
+      ...(attachment ? { attachment } : {}),
+      ...(scope === "personal" ? { connectionOwnerUid: request.auth.uid } : {}),
+    };
     const audit = db.collection("pending_actions").doc();
     await audit.set({ enterprise_id: enterpriseId, agent_id: `human-${request.auth.uid}`, domain: "inbox", action_type: "send_email", params, target_system: target, status: "executing", action_summary: `Direct email to ${to}.`, created_at: FieldValue.serverTimestamp() });
     try {
