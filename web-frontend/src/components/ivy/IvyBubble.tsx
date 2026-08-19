@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Send2, CloseCircle, Maximize4 } from "iconsax-react";
 import { httpsCallable } from "firebase/functions";
@@ -22,6 +22,12 @@ const SUGGESTIONS = [
   "Summarize today across all channels",
 ];
 
+const ORB_SIZE = 62;
+const ORB_MARGIN = 24;
+const IVY_POSITION_KEY = "ivy-bubble-position";
+
+type OrbPosition = { x: number; y: number };
+
 export function IvyBubble() {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
@@ -34,6 +40,16 @@ export function IvyBubble() {
   const [thinking, setThinking] = useState(false);
   const [chatId, setChatId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+    moved: boolean;
+  } | null>(null);
+  const suppressClickRef = useRef(false);
+  const [orbPosition, setOrbPosition] = useState<OrbPosition | null>(null);
   const router = useRouter();
   const { user } = useAuth();
   const { enterpriseId } = useEnterpriseId();
@@ -41,6 +57,77 @@ export function IvyBubble() {
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, open]);
+
+  const clampPosition = useCallback((position: OrbPosition): OrbPosition => ({
+    x: Math.min(Math.max(ORB_MARGIN, position.x), Math.max(ORB_MARGIN, window.innerWidth - ORB_SIZE - ORB_MARGIN)),
+    y: Math.min(Math.max(ORB_MARGIN, position.y), Math.max(ORB_MARGIN, window.innerHeight - ORB_SIZE - ORB_MARGIN)),
+  }), []);
+
+  useEffect(() => {
+    const defaultPosition = {
+      x: window.innerWidth - ORB_SIZE - ORB_MARGIN,
+      y: window.innerHeight - ORB_SIZE - ORB_MARGIN,
+    };
+
+    try {
+      const saved = window.localStorage.getItem(IVY_POSITION_KEY);
+      setOrbPosition(clampPosition(saved ? JSON.parse(saved) as OrbPosition : defaultPosition));
+    } catch {
+      setOrbPosition(clampPosition(defaultPosition));
+    }
+
+    const keepInViewport = () => setOrbPosition((position) => position ? clampPosition(position) : position);
+    window.addEventListener("resize", keepInViewport);
+    return () => window.removeEventListener("resize", keepInViewport);
+  }, [clampPosition]);
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!orbPosition) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: orbPosition.x,
+      originY: orbPosition.y,
+      moved: false,
+    };
+  };
+
+  const handlePointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    const dx = event.clientX - drag.startX;
+    const dy = event.clientY - drag.startY;
+    if (Math.hypot(dx, dy) > 4) drag.moved = true;
+    setOrbPosition(clampPosition({ x: drag.originX + dx, y: drag.originY + dy }));
+  };
+
+  const handlePointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    const finalPosition = clampPosition({
+      x: drag.originX + event.clientX - drag.startX,
+      y: drag.originY + event.clientY - drag.startY,
+    });
+    suppressClickRef.current = drag.moved;
+    dragRef.current = null;
+    setOrbPosition(finalPosition);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    window.localStorage.setItem(IVY_POSITION_KEY, JSON.stringify(finalPosition));
+  };
+
+  const toggleOpen = () => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
+    setOpen((current) => !current);
+  };
 
   const send = async (text?: string) => {
     const q = (text ?? input).trim();
@@ -188,9 +275,14 @@ export function IvyBubble() {
 
       {/* Floating button */}
       <button
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggleOpen}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
         aria-label="Open Ivy"
-        className="fixed bottom-6 right-6 z-50 group"
+        className="fixed z-50 group touch-none cursor-grab active:cursor-grabbing"
+        style={orbPosition ? { left: orbPosition.x, top: orbPosition.y } : { right: ORB_MARGIN, bottom: ORB_MARGIN }}
       >
         <span
           className="relative block transition-transform group-hover:scale-105 active:scale-95"
