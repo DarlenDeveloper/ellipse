@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { DocumentText, Send2, Messages2, Clock, CloseCircle, Paperclip2, Trash } from "iconsax-react";
+import { DocumentText, Send2, Messages2, Clock, CloseCircle, Paperclip2, Trash, Maximize4, Minus, ArrowUp2 } from "iconsax-react";
 import { httpsCallable } from "firebase/functions";
 import { functions } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
@@ -148,6 +148,9 @@ export function ReadingPane({
   const [reply, setReply] = useState("");
   const [cc, setCc] = useState("");
   const [attachment, setAttachment] = useState<File | null>(null);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [composerMinimized, setComposerMinimized] = useState(false);
+  const [composerMaximized, setComposerMaximized] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sendNotice, setSendNotice] = useState<string | null>(null);
@@ -163,18 +166,37 @@ export function ReadingPane({
   const canReply = ["google-workspace", "smtp", "microsoft365", "whatsapp"].includes(conversation?.channel ?? "");
   const isEmail = ["google-workspace", "smtp", "microsoft365"].includes(conversation?.channel ?? "");
 
+  const draftKey = conversation && user ? `ellipse_reply_draft_${user.uid}_${conversation.id}` : null;
+  const updateReply = (value: string) => {
+    setReply(value);
+    if (!draftKey) return;
+    try {
+      if (value) window.localStorage.setItem(draftKey, value);
+      else window.localStorage.removeItem(draftKey);
+    } catch {
+      // Draft persistence is a convenience; private browsing may disable it.
+    }
+  };
+
   useEffect(() => {
     setAiMode(null);
     setAiResult("");
     setAiQuestion("");
     setAiError(null);
     setProposedTasks([]);
-    setReply("");
+    let savedDraft = "";
+    if (conversation?.id && user) {
+      try { savedDraft = window.localStorage.getItem(`ellipse_reply_draft_${user.uid}_${conversation.id}`) ?? ""; } catch { /* unavailable */ }
+    }
+    setReply(savedDraft);
     setCc("");
     setAttachment(null);
+    setComposerOpen(false);
+    setComposerMinimized(false);
+    setComposerMaximized(false);
     setError(null);
     setSendNotice(null);
-  }, [conversation?.id]);
+  }, [conversation?.id, user]);
 
   // Behave like Reply all: carry the latest inbound message's original CC list
   // into the composer. The user can still edit or remove recipients before send.
@@ -350,9 +372,11 @@ export function ReadingPane({
       } else if (result.status === "frozen" || result.status === "blocked" || result.status === "error") {
         throw new Error("The reply could not be queued or sent under the current workspace settings.");
       }
-      setReply("");
+      updateReply("");
       setCc("");
       setAttachment(null);
+      setComposerOpen(false);
+      setComposerMinimized(false);
     } catch (e) {
       const msg = (e as { message?: string })?.message || "";
       setError(/access blocked|token|expired|OAuth/i.test(msg)
@@ -442,8 +466,10 @@ export function ReadingPane({
               {aiMode === "draft" && aiResult && canReply && (
                 <button
                   onClick={() => {
-                    setReply(aiResult);
+                    updateReply(aiResult);
                     setAiMode(null);
+                    setComposerOpen(true);
+                    setComposerMinimized(false);
                     requestAnimationFrame(() => replyRef.current?.focus());
                   }}
                   className="mt-3 inline-flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold rounded-full px-4 py-2"
@@ -525,72 +551,86 @@ export function ReadingPane({
 
       </div>
 
-      {/* Human-reviewed reply composer for every supported messaging channel. */}
       {canReply && (
-      <div className="border-t border-gray-100 px-6 py-4 bg-white">
-        {error && <p className="text-xs text-red-500 mb-2">{error}</p>}
-        {sendNotice && <p className="text-xs text-green-700 bg-green-50 border border-green-100 rounded-xl px-3 py-2 mb-2">{sendNotice}</p>}
-        {isEmail && (
-          <div className="mb-2 flex items-center gap-2 rounded-xl border border-gray-100 bg-white px-3 py-2">
-            <span className="text-xs font-semibold text-gray-500">CC</span>
-            <input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="name@company.com (optional)" className="min-w-0 flex-1 bg-transparent text-sm outline-none" />
-          </div>
-        )}
-        {attachment && (
-          <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-purple-100 bg-purple-50 px-3 py-2">
-            <div className="flex min-w-0 items-center gap-2">
-              <Paperclip2 size={16} variant="Linear" className="shrink-0 text-purple-600" />
-              <span className="truncate text-xs font-semibold text-purple-800">{attachment.name}</span>
-              <span className="shrink-0 text-[11px] text-purple-500">
-                {attachment.size < 1024 * 1024
-                  ? `${Math.ceil(attachment.size / 1024)} KB`
-                  : `${(attachment.size / 1024 / 1024).toFixed(1)} MB`}
-              </span>
-            </div>
-            <button type="button" onClick={() => setAttachment(null)} className="rounded-full p-1 text-purple-500 hover:bg-purple-100 hover:text-red-600" aria-label="Remove attachment"><Trash size={15} variant="Linear" /></button>
-          </div>
-        )}
-        <div className="flex items-end gap-3 bg-gray-50 rounded-2xl px-4 py-2.5">
-          {isEmail && (
-            <>
-              <input ref={attachmentRef} type="file" className="hidden" onChange={(e) => {
-                const file = e.target.files?.[0] ?? null;
-                e.target.value = "";
-                if (!file) return;
-                const max = 100;
-                if (file.size > max * 1024 * 1024) {
-                  setError(`Attachments must be ${max} MB or smaller.`);
-                  return;
-                }
-                setError(null);
-                setAttachment(file);
-              }} />
-              <button type="button" onClick={() => attachmentRef.current?.click()} className="mb-0.5 rounded-full p-2 text-gray-500 hover:bg-white hover:text-purple-600" aria-label={attachment ? "Replace attachment" : "Add attachment"} title={attachment ? "Replace attachment" : "Add attachment"}><Paperclip2 size={18} variant="Linear" /></button>
-            </>
-          )}
-          <textarea
-            ref={replyRef}
-            value={reply}
-            onChange={(e) => setReply(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                send();
-              }
-            }}
-            rows={1}
-            placeholder={`Reply to ${conversation.customer_ref}…`}
-            className="flex-1 resize-none bg-transparent outline-none text-sm py-1.5 max-h-32"
-          />
+        <div className="border-t border-gray-100 bg-white px-6 py-4">
+          {sendNotice && <p className="mb-2 rounded-xl border border-green-100 bg-green-50 px-3 py-2 text-xs text-green-700">{sendNotice}</p>}
           <button
-            onClick={send}
-            disabled={!reply.trim() || sending}
-            className="w-9 h-9 rounded-full bg-black text-white flex items-center justify-center hover:bg-gray-800 disabled:opacity-40 shrink-0"
+            type="button"
+            onClick={() => { setComposerOpen(true); setComposerMinimized(false); requestAnimationFrame(() => replyRef.current?.focus()); }}
+            className="flex w-full items-center gap-3 rounded-2xl bg-gray-50 px-5 py-4 text-left text-sm text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
           >
-            {sending ? <span className="text-[10px] px-1">Sending</span> : <Send2 size={16} variant="Bold" color="#ffffff" />}
+            <ArrowUp2 size={18} variant="Linear" />
+            <span className="min-w-0 flex-1 truncate">{reply.trim() || `Reply to ${conversation.customer_ref}…`}</span>
+            {reply.trim() && <span className="rounded-full bg-purple-100 px-2.5 py-1 text-[11px] font-semibold text-purple-700">Draft saved</span>}
           </button>
         </div>
-      </div>
+      )}
+
+      {canReply && composerOpen && (
+        <section
+          role="dialog"
+          aria-label={`Reply to ${conversation.customer_ref}`}
+          className={cn(
+            "fixed z-[60] flex flex-col overflow-hidden border border-gray-200 bg-white shadow-[0_28px_90px_rgba(15,23,42,0.28)] transition-all duration-200",
+            composerMaximized
+              ? "inset-4 rounded-3xl md:left-[250px]"
+              : composerMinimized
+              ? "bottom-0 right-4 h-14 w-[min(520px,calc(100vw-2rem))] rounded-t-2xl"
+              : "bottom-0 right-4 h-[min(680px,calc(100vh-5rem))] w-[min(640px,calc(100vw-2rem))] rounded-t-3xl"
+          )}
+        >
+          <header className="flex h-14 shrink-0 cursor-pointer items-center gap-3 bg-[#f2f6ff] px-5 text-[#112d60]" onClick={() => composerMinimized && setComposerMinimized(false)}>
+            <div className="min-w-0 flex-1">
+              <h2 className="truncate text-base font-bold">Reply · {conversation.subject || "No subject"}</h2>
+              {!composerMinimized && <p className="truncate text-[11px] text-blue-900/50">Draft saved locally · Ctrl/⌘ + Enter to send</p>}
+            </div>
+            <button type="button" onClick={(event) => { event.stopPropagation(); setComposerMinimized((value) => !value); }} className="rounded-full p-2 hover:bg-white/70" aria-label={composerMinimized ? "Restore composer" : "Minimize composer"}><Minus size={18} /></button>
+            <button type="button" onClick={(event) => { event.stopPropagation(); setComposerMaximized((value) => !value); setComposerMinimized(false); }} className="rounded-full p-2 hover:bg-white/70" aria-label={composerMaximized ? "Restore composer size" : "Maximize composer"}><Maximize4 size={18} /></button>
+            <button type="button" onClick={(event) => { event.stopPropagation(); setComposerOpen(false); }} className="rounded-full p-2 hover:bg-white/70" aria-label="Close composer"><CloseCircle size={20} /></button>
+          </header>
+
+          {!composerMinimized && (
+            <>
+              <div className="shrink-0 border-b border-gray-100 px-6">
+                <div className="flex min-h-14 items-center border-b border-gray-100 text-sm"><span className="w-20 shrink-0 font-semibold text-gray-400">To</span><span className="min-w-0 flex-1 truncate text-gray-800">{conversation.customer_ref}</span></div>
+                {isEmail && <div className="flex min-h-14 items-center border-b border-gray-100 text-sm"><span className="w-20 shrink-0 font-semibold text-gray-400">CC</span><input value={cc} onChange={(e) => setCc(e.target.value)} placeholder="Add comma-separated recipients" className="min-w-0 flex-1 bg-transparent text-gray-800 outline-none placeholder:text-gray-300" /></div>}
+                <div className="flex min-h-14 items-center text-sm"><span className="w-20 shrink-0 font-semibold text-gray-400">Subject</span><span className="min-w-0 flex-1 truncate text-gray-800">{conversation.subject?.toLowerCase().startsWith("re:") ? conversation.subject : `Re: ${conversation.subject}`}</span></div>
+              </div>
+
+              <div className="flex min-h-0 flex-1 flex-col px-6 pt-5">
+                {error && <p className="mb-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600">{error}</p>}
+                <textarea
+                  ref={replyRef}
+                  value={reply}
+                  onChange={(e) => updateReply(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }}
+                  placeholder="Write your reply…"
+                  className="min-h-[180px] flex-1 resize-none bg-transparent text-[15px] leading-7 text-gray-800 outline-none placeholder:text-gray-300"
+                />
+                {attachment && (
+                  <div className="mb-3 flex items-center justify-between gap-3 rounded-2xl border border-purple-100 bg-purple-50 px-4 py-3">
+                    <div className="flex min-w-0 items-center gap-2"><Paperclip2 size={17} className="shrink-0 text-purple-600" /><span className="truncate text-xs font-semibold text-purple-900">{attachment.name}</span><span className="shrink-0 text-[11px] text-purple-500">{attachment.size < 1024 * 1024 ? `${Math.ceil(attachment.size / 1024)} KB` : `${(attachment.size / 1024 / 1024).toFixed(1)} MB`}</span></div>
+                    <button type="button" onClick={() => setAttachment(null)} className="rounded-full p-1 text-purple-500 hover:bg-purple-100 hover:text-red-600" aria-label="Remove attachment"><Trash size={15} /></button>
+                  </div>
+                )}
+              </div>
+
+              <footer className="flex shrink-0 items-center gap-2 border-t border-gray-100 px-6 py-4">
+                <button type="button" onClick={send} disabled={!reply.trim() || sending} className="flex h-11 min-w-28 items-center justify-center gap-2 rounded-full bg-[#155bd7] px-6 text-sm font-semibold text-white transition hover:bg-[#0f4fca] disabled:cursor-not-allowed disabled:opacity-40">
+                  {sending ? "Sending…" : <><span>Send</span><Send2 size={17} variant="Bold" color="#ffffff" /></>}
+                </button>
+                {isEmail && (
+                  <>
+                    <input ref={attachmentRef} type="file" className="hidden" onChange={(e) => { const file = e.target.files?.[0] ?? null; e.target.value = ""; if (!file) return; if (file.size > 100 * 1024 * 1024) { setError("Attachments must be 100 MB or smaller."); return; } setError(null); setAttachment(file); }} />
+                    <button type="button" onClick={() => attachmentRef.current?.click()} className="rounded-full p-3 text-gray-500 hover:bg-gray-100 hover:text-purple-600" aria-label={attachment ? "Replace attachment" : "Add attachment"} title={attachment ? "Replace attachment" : "Add attachment"}><Paperclip2 size={20} /></button>
+                  </>
+                )}
+                <span className="ml-auto text-[11px] text-gray-400">{reply.length.toLocaleString()} characters</span>
+                <button type="button" onClick={() => { updateReply(""); setAttachment(null); setError(null); }} disabled={!reply && !attachment} className="rounded-full p-3 text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-30" aria-label="Discard draft" title="Discard draft"><Trash size={19} /></button>
+              </footer>
+            </>
+          )}
+        </section>
       )}
     </div>
   );
