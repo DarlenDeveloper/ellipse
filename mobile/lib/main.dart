@@ -159,23 +159,15 @@ class OnboardingScreen extends StatelessWidget {
   const OnboardingScreen({super.key});
 
   Future<void> _continue(BuildContext context) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withValues(alpha: 0.72),
-      builder: (sheetContext) => _PremiumIntroSheet(
-        onContinue: () {
-          Navigator.of(sheetContext).pop();
-          Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (context) => const SignInScreen(),
-            ),
-          );
-        },
-      ),
+    final opened = await launchUrl(
+      Uri.parse('https://www.ellipsedesk.com'),
+      mode: LaunchMode.externalApplication,
     );
+    if (!opened && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open ellipsedesk.com.')),
+      );
+    }
   }
 
   @override
@@ -284,179 +276,6 @@ class OnboardingScreen extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _PremiumIntroSheet extends StatelessWidget {
-  const _PremiumIntroSheet({required this.onContinue});
-
-  final VoidCallback onContinue;
-
-  Future<void> _learnMore(BuildContext context) async {
-    final opened = await launchUrl(
-      Uri.parse('https://www.ellipsedesk.com'),
-      mode: LaunchMode.externalApplication,
-    );
-    if (!opened && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open ellipsedesk.com.')),
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FractionallySizedBox(
-      heightFactor: 0.88,
-      child: Container(
-        margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-        padding: const EdgeInsets.fromLTRB(26, 18, 26, 22),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(36),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
-          gradient: const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF111B25), Color(0xFF071119), Color(0xFF03080C)],
-          ),
-          boxShadow: const [
-            BoxShadow(color: Color(0x66000000), blurRadius: 40, offset: Offset(0, 18)),
-          ],
-        ),
-        child: Column(
-          children: [
-            Container(
-              width: 42,
-              height: 5,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.18),
-                borderRadius: BorderRadius.circular(99),
-              ),
-            ),
-            const Spacer(),
-            Container(
-              width: 92,
-              height: 92,
-              padding: const EdgeInsets.all(15),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF8F82FF), Color(0xFF3B8CFF)],
-                ),
-                boxShadow: const [
-                  BoxShadow(color: Color(0x664A86FF), blurRadius: 34, spreadRadius: 4),
-                ],
-              ),
-              child: Image.asset('assets/images/ellipse-app-icon.png'),
-            ),
-            const SizedBox(height: 28),
-            Text(
-              'Your workday,\nbeautifully connected.',
-              textAlign: TextAlign.center,
-              style: GoogleFonts.poppins(
-                color: Colors.white,
-                fontSize: 29,
-                height: 1.18,
-                fontWeight: FontWeight.w600,
-                letterSpacing: -0.8,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Ellipse brings your conversations, tasks and AI teammates into one calm workspace.',
-              textAlign: TextAlign.center,
-              style: GoogleFonts.poppins(
-                color: Colors.white.withValues(alpha: 0.62),
-                fontSize: 13,
-                height: 1.55,
-              ),
-            ),
-            const SizedBox(height: 34),
-            const _IntroFeature(
-              icon: Iconsax.message_text,
-              title: 'One intelligent inbox',
-              description: 'Bring email, WhatsApp and customer conversations together.',
-            ),
-            const SizedBox(height: 18),
-            const _IntroFeature(
-              icon: Iconsax.magic_star,
-              title: 'AI that works with you',
-              description: 'Draft replies, create tasks and turn conversations into action.',
-            ),
-            const SizedBox(height: 18),
-            const _IntroFeature(
-              icon: Iconsax.people,
-              title: 'Built for your whole team',
-              description: 'Chat, coordinate approvals and stay aligned wherever work happens.',
-            ),
-            const Spacer(flex: 2),
-            SizedBox(
-              width: double.infinity,
-              height: 58,
-              child: FilledButton(
-                onPressed: onContinue,
-                style: FilledButton.styleFrom(
-                  backgroundColor: Colors.white,
-                  foregroundColor: const Color(0xFF071119),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-                  textStyle: GoogleFonts.poppins(fontSize: 15, fontWeight: FontWeight.w600),
-                ),
-                child: const Text('Continue to Ellipse'),
-              ),
-            ),
-            const SizedBox(height: 10),
-            TextButton(
-              onPressed: () => _learnMore(context),
-              child: Text(
-                'Learn more',
-                style: GoogleFonts.poppins(
-                  color: const Color(0xFF8EABFF),
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _IntroFeature extends StatelessWidget {
-  const _IntroFeature({required this.icon, required this.title, required this.description});
-
-  final IconData icon;
-  final String title;
-  final String description;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            color: const Color(0xFF7A78FF).withValues(alpha: 0.14),
-            borderRadius: BorderRadius.circular(15),
-          ),
-          child: Icon(icon, color: const Color(0xFF9EA7FF), size: 21),
-        ),
-        const SizedBox(width: 15),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: GoogleFonts.poppins(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 3),
-              Text(description, style: GoogleFonts.poppins(color: Colors.white54, fontSize: 12, height: 1.45)),
-            ],
-          ),
-        ),
-      ],
     );
   }
 }
