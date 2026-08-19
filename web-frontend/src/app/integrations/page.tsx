@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { SearchNormal1, TickCircle, CloseCircle } from "iconsax-react";
+import { SearchNormal1, TickCircle, CloseCircle, Lock1, Clock } from "iconsax-react";
 import { httpsCallable } from "firebase/functions";
 import { doc, getDoc, collection, getDocs, query as fsQuery, where } from "firebase/firestore";
 import { integrations as seed } from "@/components/integrations/data";
@@ -40,6 +40,10 @@ export default function IntegrationsPage() {
   const [banner, setBanner] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [employeeChoice, setEmployeeChoice] = useState<{ id: string; name: string } | null>(null);
   const [personalActive, setPersonalActive] = useState<Set<string>>(new Set());
+  const [showAccessRequest, setShowAccessRequest] = useState(false);
+  const [requestedTypes, setRequestedTypes] = useState<string[]>([]);
+  const [requestStatus, setRequestStatus] = useState<string | null>(null);
+  const [requestingAccess, setRequestingAccess] = useState(false);
 
   // Apply a set of active connection types to the UI state.
   const applyActive = useCallback((active: Set<string>, googleEmailValue: string | null) => {
@@ -69,6 +73,9 @@ export default function IntegrationsPage() {
     if (!manager) {
       const g = await getDoc(doc(db, "connection_grants", `${entId}_${user.uid}`));
       setGrantedTypes(new Set(((g.data()?.types as string[] | undefined) ?? [])));
+      const accessRequest = await getDoc(doc(db, "access_requests", `${entId}_${user.uid}`));
+      setRequestedTypes((accessRequest.data()?.types as string[] | undefined) ?? []);
+      setRequestStatus((accessRequest.data()?.status as string | undefined) ?? null);
     }
 
     const snap = await getDocs(fsQuery(collection(db, "connections"), where("enterprise_id", "==", entId)));
@@ -244,10 +251,28 @@ export default function IntegrationsPage() {
 
   const requestAccess = async (type: string) => {
     try {
-      await httpsCallable(functions, "requestSharedAccess")({ types: [type] });
+      const next = Array.from(new Set([...requestedTypes, type]));
+      await httpsCallable(functions, "requestSharedAccess")({ types: next });
+      setRequestedTypes(next);
+      setRequestStatus("pending");
       setBanner({ type: "success", text: "Access requested — pending owner/admin approval." });
     } catch {
       setBanner({ type: "error", text: "Could not send request. Try again." });
+    }
+  };
+
+  const submitAccessRequest = async () => {
+    if (!requestedTypes.length || requestingAccess) return;
+    setRequestingAccess(true);
+    try {
+      await httpsCallable(functions, "requestSharedAccess")({ types: requestedTypes });
+      setRequestStatus("pending");
+      setShowAccessRequest(false);
+      setBanner({ type: "success", text: "Access request sent to your owner and admins." });
+    } catch (error) {
+      setBanner({ type: "error", text: (error as Error).message || "Could not send request. Try again." });
+    } finally {
+      setRequestingAccess(false);
     }
   };
 
@@ -284,7 +309,7 @@ export default function IntegrationsPage() {
   return (
     <main className="p-8 max-w-[1200px]">
       {/* Header */}
-      <div className="flex items-start justify-between mb-8">
+      <div className="flex flex-col items-start justify-between gap-5 mb-8 lg:flex-row">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Integrations &amp; workflows</h1>
           <p className="text-gray-400 mt-2">
@@ -292,21 +317,21 @@ export default function IntegrationsPage() {
           </p>
           {!canManage && (
             <p className="text-xs text-gray-500 mt-2 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 inline-block">
-              View only — only the owner or an admin can connect or disconnect company integrations. Need access?
-              Request it on the Team page.
+              Company integrations are managed by owners and admins. Request access to the ones you need here.
             </p>
           )}
         </div>
-        <div className="relative w-64 shrink-0">
-          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
-            <SearchNormal1 size={18} variant="Linear" />
-          </span>
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search"
-            className="w-full bg-white border border-gray-200 rounded-full pl-11 pr-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-gray-200"
-          />
+        <div className="flex w-full shrink-0 flex-wrap items-center gap-3 lg:w-auto">
+          {!canManage && (
+            <button type="button" onClick={() => setShowAccessRequest(true)} className={`flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold transition ${requestStatus === "pending" ? "border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100" : "bg-black text-white hover:bg-gray-800"}`}>
+              {requestStatus === "pending" ? <Clock size={17} variant="Bold" /> : <Lock1 size={17} variant="Bold" />}
+              {requestStatus === "pending" ? "Pending · Edit request" : "Request access"}
+            </button>
+          )}
+          <div className="relative min-w-56 flex-1 lg:w-64 lg:flex-none">
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"><SearchNormal1 size={18} variant="Linear" /></span>
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" className="w-full bg-white border border-gray-200 rounded-full pl-11 pr-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-gray-200" />
+          </div>
         </div>
       </div>
 
@@ -325,6 +350,38 @@ export default function IntegrationsPage() {
             <CloseCircle size={18} variant="Bold" />
           )}
           {banner.text}
+        </div>
+      )}
+
+      {!canManage && showAccessRequest && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4" onMouseDown={() => setShowAccessRequest(false)}>
+          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Company access</p>
+                <h2 className="mt-1 text-xl font-bold">Request integrations</h2>
+                <p className="mt-2 text-sm leading-6 text-gray-500">Choose the shared connections you need. An owner or admin will review your request.</p>
+              </div>
+              <button type="button" onClick={() => setShowAccessRequest(false)} className="rounded-full bg-gray-100 p-2 text-gray-500 hover:bg-gray-200" aria-label="Close"><CloseCircle size={20} /></button>
+            </div>
+            <div className="mt-5 space-y-2">
+              {[...orgActive].length ? [...orgActive].map((type) => {
+                const integration = items.find((item) => item.id === type);
+                const checked = requestedTypes.includes(type);
+                const granted = grantedTypes.has(type);
+                return (
+                  <label key={type} className={`flex items-center justify-between rounded-2xl border p-4 transition ${granted ? "cursor-default border-green-100 bg-green-50" : checked ? "cursor-pointer border-black bg-gray-50" : "cursor-pointer border-gray-200 hover:bg-gray-50"}`}>
+                    <div><p className="text-sm font-semibold">{integration?.name ?? type}</p><p className={`mt-0.5 text-xs ${granted ? "text-green-700" : "text-gray-400"}`}>{granted ? "Access already approved" : "Use the company’s shared connection"}</p></div>
+                    {granted ? <TickCircle size={20} variant="Bold" className="text-green-600" /> : <input type="checkbox" checked={checked} onChange={() => setRequestedTypes((current) => checked ? current.filter((value) => value !== type) : [...current, type])} className="h-5 w-5 accent-black" />}
+                  </label>
+                );
+              }) : <p className="rounded-2xl bg-gray-50 px-4 py-6 text-center text-sm text-gray-400">Your organization has no active shared integrations yet.</p>}
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button type="button" onClick={() => setShowAccessRequest(false)} className="rounded-full px-5 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-100">Cancel</button>
+              <button type="button" onClick={submitAccessRequest} disabled={requestingAccess || !requestedTypes.some((type) => !grantedTypes.has(type))} className="rounded-full bg-black px-5 py-2.5 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-40">{requestingAccess ? "Sending…" : requestStatus === "pending" ? "Update request" : "Send request"}</button>
+            </div>
+          </div>
         </div>
       )}
 

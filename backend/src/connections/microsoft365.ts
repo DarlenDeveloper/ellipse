@@ -301,7 +301,7 @@ export async function syncAllConnectedOutlook(): Promise<number> {
  */
 export async function sendOutlookReply(
   enterpriseId: string,
-  opts: { conversationId?: string; to?: string; subject?: string; body: string; cc?: string; attachment?: { filename: string; contentType: string; content: Buffer } }
+  opts: { conversationId?: string; to?: string; subject?: string; body: string; bodyHtml?: string; cc?: string; attachment?: { filename: string; contentType: string; content: Buffer } }
 ): Promise<string> {
   const token = await authedTokenFor(enterpriseId);
 
@@ -312,7 +312,7 @@ export async function sendOutlookReply(
   }
 
   if (messageId) {
-    if (opts.attachment || opts.cc) {
+    if (opts.attachment || opts.cc || opts.bodyHtml) {
       if (opts.attachment && opts.attachment.content.length > 3 * 1024 * 1024) {
         throw new Error("Outlook reply attachments over 3 MB require an upload session.");
       }
@@ -326,13 +326,16 @@ export async function sendOutlookReply(
       );
       const draft = (await draftRes.json()) as any;
       if (!draftRes.ok || !draft.id) throw new Error(draft?.error?.message || "Outlook could not create the reply draft");
-      if (opts.cc) {
+      if (opts.cc || opts.bodyHtml) {
         const patchRes = await fetch(`https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(draft.id)}`, {
           method: "PATCH",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ ccRecipients: opts.cc.split(",").map((address) => ({ emailAddress: { address: address.trim() } })).filter((recipient) => recipient.emailAddress.address) }),
+          body: JSON.stringify({
+            ...(opts.cc ? { ccRecipients: opts.cc.split(",").map((address) => ({ emailAddress: { address: address.trim() } })).filter((recipient) => recipient.emailAddress.address) } : {}),
+            ...(opts.bodyHtml ? { body: { contentType: "HTML", content: opts.bodyHtml } } : {}),
+          }),
         });
-        if (!patchRes.ok) throw new Error("Outlook could not add the CC recipients");
+        if (!patchRes.ok) throw new Error("Outlook could not format the reply draft");
       }
       if (opts.attachment) {
         const attachRes = await fetch(
@@ -379,6 +382,7 @@ export async function sendOutlookReply(
     to: opts.to ?? "",
     subject: opts.subject?.toLowerCase().startsWith("re:") ? opts.subject : `Re: ${opts.subject ?? ""}`,
     body: opts.body,
+    bodyHtml: opts.bodyHtml,
     cc: opts.cc,
     attachment: opts.attachment,
   });
@@ -390,12 +394,12 @@ export async function sendOutlookReply(
  */
 export async function sendOutlookEmail(
   enterpriseId: string,
-  opts: { to: string; subject: string; body: string; cc?: string; attachment?: { filename: string; contentType: string; content: Buffer } }
+  opts: { to: string; subject: string; body: string; bodyHtml?: string; cc?: string; attachment?: { filename: string; contentType: string; content: Buffer } }
 ): Promise<string> {
   const token = await authedTokenFor(enterpriseId);
   const message: Record<string, unknown> = {
     subject: opts.subject,
-    body: { contentType: "Text", content: opts.body },
+    body: { contentType: opts.bodyHtml ? "HTML" : "Text", content: opts.bodyHtml || opts.body },
     toRecipients: [{ emailAddress: { address: opts.to } }],
     ccRecipients: opts.cc ? [{ emailAddress: { address: opts.cc } }] : [],
   };

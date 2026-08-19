@@ -244,7 +244,8 @@ export async function sendSmtpReply(
   subject: string,
   body: string,
   attachment?: { filename: string; contentType: string; content: Buffer },
-  cc?: string
+  cc?: string,
+  bodyHtml?: string
 ): Promise<string> {
   const cfg = await loadConfig(enterpriseId);
   const transport = nodemailer.createTransport({
@@ -261,6 +262,7 @@ export async function sendSmtpReply(
     cc: cc || undefined,
     subject: subjectLine,
     text: body,
+    html: bodyHtml || undefined,
     attachments: attachment
       ? [{ filename: attachment.filename, content: attachment.content, contentType: attachment.contentType }]
       : undefined,

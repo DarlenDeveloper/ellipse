@@ -84,7 +84,8 @@ export async function sendGmailReply(
   body: string,
   attachment?: { filename: string; contentType: string; content: Buffer },
   ownerUid?: string,
-  cc?: string
+  cc?: string,
+  bodyHtml?: string
 ): Promise<string> {
   const { client } = await authedClientFor(enterpriseId, ownerUid);
   const gmail = google.gmail({ version: "v1", auth: client });
@@ -127,9 +128,9 @@ export async function sendGmailReply(
       `Content-Type: multipart/mixed; boundary="${boundary}"`,
       "",
       `--${boundary}`,
-      `Content-Type: text/plain; charset="UTF-8"`,
+      `Content-Type: ${bodyHtml ? "text/html" : "text/plain"}; charset="UTF-8"`,
       "",
-      body,
+      bodyHtml || body,
       "",
       `--${boundary}`,
       `Content-Type: ${attachment.contentType}; name="${attachment.filename}"`,
@@ -141,7 +142,7 @@ export async function sendGmailReply(
       `--${boundary}--`,
     ].join("\r\n");
   } else {
-    message = [...headers, `Content-Type: text/plain; charset="UTF-8"`, "", body].join("\r\n");
+    message = [...headers, `Content-Type: ${bodyHtml ? "text/html" : "text/plain"}; charset="UTF-8"`, "", bodyHtml || body].join("\r\n");
   }
 
   const raw = Buffer.from(message)

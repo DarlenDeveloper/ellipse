@@ -6,6 +6,7 @@ import * as logger from "firebase-functions/logger";
 import "./admin";
 import { executeAction, executeAgentAction } from "./executeAgentAction";
 import { ExecuteAgentActionInput } from "./types";
+import { sanitizeEmailHtml } from "./emailHtml";
 
 setGlobalOptions({ region: "us-central1", maxInstances: 10 });
 
@@ -894,6 +895,7 @@ export const sendReply = onCall(
     const enterpriseId = request.data?.enterpriseId as string | undefined;
     const conversationId = request.data?.conversationId as string | undefined;
     const body = (request.data?.body as string | undefined)?.trim();
+    const bodyHtml = sanitizeEmailHtml(request.data?.bodyHtml as string | undefined);
     const cc = (request.data?.cc as string | undefined)?.trim() || undefined;
     const attachment = request.data?.attachment as { documentId?: string; storagePath?: string; fileName?: string; contentType?: string; size?: number } | undefined;
     if (!enterpriseId || !conversationId || !body) {
@@ -945,6 +947,7 @@ export const sendReply = onCall(
         to: conv.customer_ref,
         subject: conv.subject ?? "",
         body,
+        bodyHtml,
         cc,
         attachment,
         connectionOwnerUid: conv.connection_scope === "personal" ? conv.owner_uid : undefined,
@@ -980,7 +983,7 @@ export const sendReply = onCall(
       await db.collection("messages").add({
         conversation_id: conversationId, enterprise_id: enterpriseId, channel,
         sender_type: "us", from: "You", from_email: "", subject: conv.subject ?? "",
-        body, snippet: body.slice(0, 200), timestamp: new Date(), created_at: FieldValue.serverTimestamp(),
+        body, body_html: bodyHtml ?? null, snippet: body.slice(0, 200), timestamp: new Date(), created_at: FieldValue.serverTimestamp(),
         cc: cc ?? null, attachment: attachment ?? null,
         connection_scope: actionParams.connectionScope, owner_uid: actionParams.ownerUid,
       });

@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { DocumentText, Send2, Messages2, Clock, CloseCircle, Paperclip2, Trash, Maximize4, Minus, ArrowUp2 } from "iconsax-react";
 import { httpsCallable } from "firebase/functions";
-import { functions } from "@/lib/firebase";
+import { doc, getDoc, setDoc } from "firebase/firestore";
+import { db, functions } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
 import { MarkdownText } from "@/components/MarkdownText";
 import { useAuth } from "@/lib/auth-context";
@@ -42,6 +43,20 @@ type ProposedTask = {
   add_to_calendar?: boolean;
   saved?: boolean;
 };
+
+type EmailSignature = { id: string; name: string; html: string; plainText: string; createdAt: number };
+
+function sanitizePastedHtml(input: string): string {
+  const document = new DOMParser().parseFromString(input, "text/html");
+  document.querySelectorAll("script,style,iframe,object,embed,form,input,button,meta,link").forEach((node) => node.remove());
+  document.querySelectorAll("*").forEach((node) => {
+    [...node.attributes].forEach((attribute) => {
+      if (/^on/i.test(attribute.name) || ["class", "id"].includes(attribute.name)) node.removeAttribute(attribute.name);
+      if (["href", "src"].includes(attribute.name) && !/^(https?:|mailto:|tel:|data:image\/)/i.test(attribute.value)) node.removeAttribute(attribute.name);
+    });
+  });
+  return document.body.innerHTML;
+}
 
 function fmtFull(ts?: { toDate: () => Date }): string {
   if (!ts) return "";
@@ -151,6 +166,10 @@ export function ReadingPane({
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerMinimized, setComposerMinimized] = useState(false);
   const [composerMaximized, setComposerMaximized] = useState(false);
+  const [bodyHtml, setBodyHtml] = useState("");
+  const [signatures, setSignatures] = useState<EmailSignature[]>([]);
+  const [selectedSignatureId, setSelectedSignatureId] = useState("none");
+  const [pastedSignature, setPastedSignature] = useState<{ html: string; plainText: string } | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sendNotice, setSendNotice] = useState<string | null>(null);
@@ -161,14 +180,15 @@ export function ReadingPane({
   const [aiError, setAiError] = useState<string | null>(null);
   const [proposedTasks, setProposedTasks] = useState<ProposedTask[]>([]);
   const [savingTasks, setSavingTasks] = useState(false);
-  const replyRef = useRef<HTMLTextAreaElement>(null);
   const attachmentRef = useRef<HTMLInputElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
   const canReply = ["google-workspace", "smtp", "microsoft365", "whatsapp"].includes(conversation?.channel ?? "");
   const isEmail = ["google-workspace", "smtp", "microsoft365"].includes(conversation?.channel ?? "");
 
   const draftKey = conversation && user ? `ellipse_reply_draft_${user.uid}_${conversation.id}` : null;
   const updateReply = (value: string) => {
     setReply(value);
+    setBodyHtml(value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>"));
     if (!draftKey) return;
     try {
       if (value) window.localStorage.setItem(draftKey, value);
@@ -194,9 +214,39 @@ export function ReadingPane({
     setComposerOpen(false);
     setComposerMinimized(false);
     setComposerMaximized(false);
+    setBodyHtml(savedDraft.replace(/\n/g, "<br>"));
+    setPastedSignature(null);
     setError(null);
     setSendNotice(null);
   }, [conversation?.id, user]);
+
+  useEffect(() => {
+    if (!user) return;
+    getDoc(doc(db, "users", user.uid)).then((snapshot) => {
+      const saved = (snapshot.data()?.email_signatures as EmailSignature[] | undefined) ?? [];
+      setSignatures(saved);
+      setSelectedSignatureId(saved[0]?.id ?? "none");
+    }).catch(() => setSignatures([]));
+  }, [user]);
+
+  useEffect(() => {
+    if (composerOpen && editorRef.current && editorRef.current.innerHTML !== bodyHtml) editorRef.current.innerHTML = bodyHtml;
+  }, [bodyHtml, composerOpen]);
+
+  const savePastedSignature = async () => {
+    if (!user || !pastedSignature) return;
+    const signature: EmailSignature = {
+      id: crypto.randomUUID(),
+      name: `Signature ${signatures.length + 1}`,
+      html: pastedSignature.html,
+      plainText: pastedSignature.plainText,
+      createdAt: Date.now(),
+    };
+    const next = [signature, ...signatures].slice(0, 10);
+    await setDoc(doc(db, "users", user.uid), { email_signatures: next }, { merge: true });
+    setSignatures(next);
+    setPastedSignature(null);
+  };
 
   // Behave like Reply all: carry the latest inbound message's original CC list
   // into the composer. The user can still edit or remove recipients before send.
@@ -352,13 +402,20 @@ export function ReadingPane({
       }
       const nativeLimitMb = conversation.channel === "microsoft365" ? 3 : conversation.channel === "google-workspace" ? 20 : 25;
       const sendAsLink = uploadedAttachment && uploadedAttachment.size > nativeLimitMb * 1024 * 1024;
+      const selectedSignature = signatures.find((signature) => signature.id === selectedSignatureId);
       const outgoingBody = sendAsLink && uploadedAttachment
         ? `${reply.trim()}\n\nAttachment: ${uploadedAttachment.fileName}\n${uploadedAttachment.url}`
         : reply.trim();
+      const signedBody = selectedSignature ? `${outgoingBody}\n\n${selectedSignature.plainText}` : outgoingBody;
+      const attachmentLink = sendAsLink && uploadedAttachment ? `<p>Attachment: <a href="${uploadedAttachment.url}">${uploadedAttachment.fileName}</a></p>` : "";
+      const outgoingHtml = isEmail
+        ? `${bodyHtml || reply.replace(/\n/g, "<br>")}${attachmentLink}${selectedSignature ? `<br><div data-ellipse-signature="${selectedSignature.id}">${selectedSignature.html}</div>` : ""}`
+        : undefined;
       const response = await httpsCallable(functions, "sendReply")({
         enterpriseId,
         conversationId: conversation.id,
-        body: outgoingBody,
+        body: signedBody,
+        bodyHtml: outgoingHtml,
         cc: isEmail ? cc.trim() || null : null,
         attachment: sendAsLink ? null : uploadedAttachment,
       });
@@ -470,7 +527,7 @@ export function ReadingPane({
                     setAiMode(null);
                     setComposerOpen(true);
                     setComposerMinimized(false);
-                    requestAnimationFrame(() => replyRef.current?.focus());
+                    requestAnimationFrame(() => editorRef.current?.focus());
                   }}
                   className="mt-3 inline-flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold rounded-full px-4 py-2"
                 >
@@ -556,7 +613,7 @@ export function ReadingPane({
           {sendNotice && <p className="mb-2 rounded-xl border border-green-100 bg-green-50 px-3 py-2 text-xs text-green-700">{sendNotice}</p>}
           <button
             type="button"
-            onClick={() => { setComposerOpen(true); setComposerMinimized(false); requestAnimationFrame(() => replyRef.current?.focus()); }}
+            onClick={() => { setComposerOpen(true); setComposerMinimized(false); requestAnimationFrame(() => editorRef.current?.focus()); }}
             className="flex w-full items-center gap-3 rounded-2xl bg-gray-50 px-5 py-4 text-left text-sm text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
           >
             <ArrowUp2 size={18} variant="Linear" />
@@ -575,8 +632,8 @@ export function ReadingPane({
             composerMaximized
               ? "inset-4 rounded-3xl md:left-[250px]"
               : composerMinimized
-              ? "bottom-0 right-4 h-14 w-[min(520px,calc(100vw-2rem))] rounded-t-2xl"
-              : "bottom-0 right-4 h-[min(680px,calc(100vh-5rem))] w-[min(640px,calc(100vw-2rem))] rounded-t-3xl"
+              ? "bottom-4 right-4 h-14 w-[min(520px,calc(100vw-2rem))] rounded-2xl"
+              : "bottom-4 right-4 h-[min(680px,calc(100vh-6rem))] w-[min(640px,calc(100vw-2rem))] rounded-3xl"
           )}
         >
           <header className="flex h-14 shrink-0 cursor-pointer items-center gap-3 bg-[#f2f6ff] px-5 text-[#112d60]" onClick={() => composerMinimized && setComposerMinimized(false)}>
@@ -599,14 +656,48 @@ export function ReadingPane({
 
               <div className="flex min-h-0 flex-1 flex-col px-6 pt-5">
                 {error && <p className="mb-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600">{error}</p>}
-                <textarea
-                  ref={replyRef}
-                  value={reply}
-                  onChange={(e) => updateReply(e.target.value)}
+                <div
+                  ref={editorRef}
+                  contentEditable
+                  suppressContentEditableWarning
+                  data-placeholder="Write your reply…"
+                  onInput={(event) => {
+                    const element = event.currentTarget;
+                    updateReply(element.innerText);
+                    setBodyHtml(element.innerHTML);
+                  }}
+                  onPaste={(event) => {
+                    const clipboardHtml = event.clipboardData.getData("text/html");
+                    if (!clipboardHtml) return;
+                    event.preventDefault();
+                    const clean = sanitizePastedHtml(clipboardHtml);
+                    document.execCommand("insertHTML", false, clean);
+                    const element = event.currentTarget;
+                    requestAnimationFrame(() => {
+                      updateReply(element.innerText);
+                      setBodyHtml(element.innerHTML);
+                    });
+                    const parsed = new DOMParser().parseFromString(clean, "text/html");
+                    setSelectedSignatureId("none");
+                    setPastedSignature({ html: clean, plainText: parsed.body.innerText.trim() });
+                  }}
                   onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }}
-                  placeholder="Write your reply…"
-                  className="min-h-[180px] flex-1 resize-none bg-transparent text-[15px] leading-7 text-gray-800 outline-none placeholder:text-gray-300"
+                  className="min-h-[180px] flex-1 overflow-y-auto bg-transparent text-[15px] leading-7 text-gray-800 outline-none empty:before:pointer-events-none empty:before:text-gray-300 empty:before:content-[attr(data-placeholder)]"
                 />
+                {pastedSignature && isEmail && (
+                  <div className="mb-3 rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                    <p className="text-sm font-semibold text-blue-950">Save this pasted signature?</p>
+                    <p className="mt-1 text-xs text-blue-700">Keep the formatting for future replies, or use it only in this email.</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button type="button" onClick={() => savePastedSignature().catch((e) => setError((e as Error).message))} className="rounded-full bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700">Save as my signature</button>
+                      <button type="button" onClick={() => setPastedSignature(null)} className="rounded-full bg-white px-4 py-2 text-xs font-semibold text-blue-700 ring-1 ring-blue-200 hover:bg-blue-100">Use once</button>
+                      <button type="button" onClick={() => setPastedSignature(null)} className="px-3 py-2 text-xs text-gray-500 hover:text-gray-800">Not a signature</button>
+                    </div>
+                  </div>
+                )}
+                {isEmail && selectedSignatureId !== "none" && signatures.find((item) => item.id === selectedSignatureId) && (
+                  <div className="mb-3 border-t border-gray-100 pt-3 text-sm text-gray-600" dangerouslySetInnerHTML={{ __html: signatures.find((item) => item.id === selectedSignatureId)!.html }} />
+                )}
                 {attachment && (
                   <div className="mb-3 flex items-center justify-between gap-3 rounded-2xl border border-purple-100 bg-purple-50 px-4 py-3">
                     <div className="flex min-w-0 items-center gap-2"><Paperclip2 size={17} className="shrink-0 text-purple-600" /><span className="truncate text-xs font-semibold text-purple-900">{attachment.name}</span><span className="shrink-0 text-[11px] text-purple-500">{attachment.size < 1024 * 1024 ? `${Math.ceil(attachment.size / 1024)} KB` : `${(attachment.size / 1024 / 1024).toFixed(1)} MB`}</span></div>
@@ -615,7 +706,7 @@ export function ReadingPane({
                 )}
               </div>
 
-              <footer className="flex shrink-0 items-center gap-2 border-t border-gray-100 px-6 py-4">
+              <footer className="flex shrink-0 items-center gap-2 border-t border-gray-100 px-6 pb-6 pt-4">
                 <button type="button" onClick={send} disabled={!reply.trim() || sending} className="flex h-11 min-w-28 items-center justify-center gap-2 rounded-full bg-[#155bd7] px-6 text-sm font-semibold text-white transition hover:bg-[#0f4fca] disabled:cursor-not-allowed disabled:opacity-40">
                   {sending ? "Sending…" : <><span>Send</span><Send2 size={17} variant="Bold" color="#ffffff" /></>}
                 </button>
@@ -624,6 +715,12 @@ export function ReadingPane({
                     <input ref={attachmentRef} type="file" className="hidden" onChange={(e) => { const file = e.target.files?.[0] ?? null; e.target.value = ""; if (!file) return; if (file.size > 100 * 1024 * 1024) { setError("Attachments must be 100 MB or smaller."); return; } setError(null); setAttachment(file); }} />
                     <button type="button" onClick={() => attachmentRef.current?.click()} className="rounded-full p-3 text-gray-500 hover:bg-gray-100 hover:text-purple-600" aria-label={attachment ? "Replace attachment" : "Add attachment"} title={attachment ? "Replace attachment" : "Add attachment"}><Paperclip2 size={20} /></button>
                   </>
+                )}
+                {isEmail && (
+                  <select value={selectedSignatureId} onChange={(event) => setSelectedSignatureId(event.target.value)} className="max-w-44 rounded-full border border-gray-200 bg-white px-3 py-2 text-xs text-gray-600 outline-none hover:border-blue-300" title="Signature used when sending">
+                    <option value="none">No saved signature</option>
+                    {signatures.map((signature) => <option key={signature.id} value={signature.id}>{signature.name}</option>)}
+                  </select>
                 )}
                 <span className="ml-auto text-[11px] text-gray-400">{reply.length.toLocaleString()} characters</span>
                 <button type="button" onClick={() => { updateReply(""); setAttachment(null); setError(null); }} disabled={!reply && !attachment} className="rounded-full p-3 text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-30" aria-label="Discard draft" title="Discard draft"><Trash size={19} /></button>
