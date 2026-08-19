@@ -118,6 +118,7 @@ export default function TeamChatPage() {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [attachment, setAttachment] = useState<File | null>(null);
+  const [optimisticAttachment, setOptimisticAttachment] = useState<{ text: string; fileName: string; contentType: string; size: number; url: string; documentId?: string } | null>(null);
   const [pendingChat, setPendingChat] = useState<Chat | null>(null);
   const [pendingChatReady, setPendingChatReady] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
@@ -134,6 +135,18 @@ export default function TeamChatPage() {
   useEffect(() => () => {
     if (attachmentPreviewUrl) URL.revokeObjectURL(attachmentPreviewUrl);
   }, [attachmentPreviewUrl]);
+
+  useEffect(() => {
+    if (!optimisticAttachment?.documentId) return;
+    if (messages.some((message) => message.attachment?.documentId === optimisticAttachment.documentId)) {
+      URL.revokeObjectURL(optimisticAttachment.url);
+      setOptimisticAttachment(null);
+    }
+  }, [messages, optimisticAttachment]);
+
+  useEffect(() => {
+    if (optimisticAttachment) requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }));
+  }, [optimisticAttachment]);
 
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("chat");
@@ -271,6 +284,7 @@ export default function TeamChatPage() {
     const text = draft.trim();
     if (!selectedId || (!text && !attachment) || sending || !selectedIsReady) return;
     const selectedFile = attachment;
+    if (selectedFile) setOptimisticAttachment({ text, fileName: selectedFile.name, contentType: selectedFile.type || "application/octet-stream", size: selectedFile.size, url: URL.createObjectURL(selectedFile) });
     setSending(true); setError(null); setDraft(""); setAttachment(null); setEmojiOpen(false);
     try {
       let uploaded: ChatAttachment | undefined;
@@ -306,6 +320,7 @@ export default function TeamChatPage() {
           throw new Error(callableError(cause, "The uploaded attachment could not be finalized. Please try again."));
         }
         uploaded = finalized.data as ChatAttachment;
+        setOptimisticAttachment((current) => current ? { ...current, documentId: uploaded?.documentId } : current);
       }
       try {
         await httpsCallable(functions, "sendInternalMessage")({ chatId: selectedId, text, attachment: uploaded });
@@ -313,6 +328,7 @@ export default function TeamChatPage() {
         throw new Error(callableError(cause, "The message could not be sent. Please try again."));
       }
     } catch (cause) {
+      setOptimisticAttachment((current) => { if (current) URL.revokeObjectURL(current.url); return null; });
       setDraft(text);
       setAttachment(selectedFile);
       setError(callableError(cause, "Message or attachment could not be sent."));
@@ -399,8 +415,9 @@ export default function TeamChatPage() {
                 {messages.map((message, index) => {
                   const mine = message.sender_uid === user?.uid;
                   const showSender = !mine && (index === 0 || messages[index - 1]?.sender_uid !== message.sender_uid);
-                  return <div key={message.id} className={cn("flex", mine ? "justify-end" : "justify-start")}><div className="max-w-[72%]">{showSender && <p className="mb-1 ml-2 text-[11px] font-semibold text-gray-500">{message.sender_name}</p>}<div className={cn("space-y-2 whitespace-pre-wrap break-words rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm", mine ? "rounded-br-md bg-black text-white" : "rounded-bl-md border border-gray-100 bg-white text-gray-700")}>{message.text && <p>{message.text}</p>}{message.attachment && <a href={message.attachment.url} target="_blank" rel="noreferrer" className={cn("block overflow-hidden rounded-xl border text-xs font-semibold", mine ? "border-white/20 bg-white/10 text-white" : "border-blue-100 bg-blue-50 text-blue-700")}>{isImage(message.attachment.contentType) && <img src={message.attachment.url} alt={message.attachment.fileName} className="max-h-72 w-full bg-black/5 object-contain" loading="lazy" />}<span className="flex items-center gap-2 px-3 py-2"><DocumentDownload size={18} /><span className="min-w-0 flex-1 truncate">{message.attachment.fileName}</span>{message.attachment.size > 0 && <span className="shrink-0 font-normal opacity-70">{fileSizeLabel(message.attachment.size)}</span>}</span></a>}</div><p className={cn("mt-1 text-[10px] text-gray-400", mine ? "text-right" : "ml-2")}>{timeLabel(message.created_at)}</p></div></div>;
+                  return <div key={message.id} className={cn("flex", mine ? "justify-end" : "justify-start")}><div className="max-w-[72%]">{showSender && <p className="mb-1 ml-2 text-[11px] font-semibold text-gray-500">{message.sender_name}</p>}{message.text && <div className={cn("mb-1 whitespace-pre-wrap break-words rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm", mine ? "rounded-br-md bg-black text-white" : "rounded-bl-md border border-gray-100 bg-white text-gray-700")}>{message.text}</div>}{message.attachment && <ChatAttachmentBubble attachment={message.attachment} mine={mine} />}<p className={cn("mt-1 text-[10px] text-gray-400", mine ? "text-right" : "ml-2")}>{timeLabel(message.created_at)}</p></div></div>;
                 })}
+                {optimisticAttachment && <div className="flex justify-end"><div className="max-w-[72%] opacity-75">{optimisticAttachment.text && <div className="mb-1 rounded-2xl rounded-br-md bg-black px-4 py-3 text-sm text-white">{optimisticAttachment.text}</div>}<ChatAttachmentBubble attachment={optimisticAttachment} mine pending /><p className="mt-1 text-right text-[10px] text-gray-400">Sending…</p></div></div>}
                 <div ref={bottomRef} />
               </div>
             </div>
@@ -430,6 +447,13 @@ export default function TeamChatPage() {
       </section>
     </main>
   );
+}
+
+function ChatAttachmentBubble({ attachment, mine, pending = false }: { attachment: { url: string; fileName: string; contentType: string; size: number }; mine: boolean; pending?: boolean }) {
+  if (isImage(attachment.contentType)) {
+    return <a href={pending ? undefined : attachment.url} target={pending ? undefined : "_blank"} rel="noreferrer" className="relative block w-fit max-w-full overflow-hidden rounded-2xl bg-gray-100 shadow-sm"><img src={attachment.url} alt="Shared image" className="block max-h-[320px] max-w-[360px] object-contain sm:max-w-[420px]" loading="lazy" />{pending && <span className="absolute bottom-2 right-2 rounded-full bg-black/65 px-2.5 py-1 text-[10px] font-semibold text-white">Uploading…</span>}</a>;
+  }
+  return <a href={pending ? undefined : attachment.url} target={pending ? undefined : "_blank"} rel="noreferrer" className={cn("flex max-w-sm items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold", mine ? "border-gray-700 bg-gray-900 text-white" : "border-blue-100 bg-blue-50 text-blue-700")}><DocumentDownload size={18} /><span className="min-w-0 flex-1 truncate">{attachment.fileName}</span>{attachment.size > 0 && <span className="shrink-0 font-normal opacity-70">{fileSizeLabel(attachment.size)}</span>}</a>;
 }
 
 function Avatar({ name, group, large, small }: { name: string; group?: boolean; large?: boolean; small?: boolean }) {
