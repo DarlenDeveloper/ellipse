@@ -1,6 +1,6 @@
 import * as logger from "firebase-functions/logger";
 import { callGemini } from "../gemini";
-import { isMercuryConnected, listAllResource } from "../connections/mercury";
+import { getResource, isMercuryConnected, listAllResource } from "../connections/mercury";
 
 const RESEARCH_TOOLS = [
   {
@@ -93,8 +93,19 @@ Never answer the customer and never invent a search result.`,
         { q: query, limit: 100 },
         1000
       );
-      const ranked = relevantProducts(result.items, query);
-      const items = ranked.slice(0, 12);
+      let ranked = relevantProducts(result.items, query);
+      // Some legacy Store records may not yet have specification values in the
+      // upstream q index. Sweep and match the returned normalized fields before
+      // concluding that RAM/CPU/storage searches have no result.
+      if (!ranked.length) {
+        const fallback = await listAllResource(enterpriseId, "products", { limit: 200 }, 1000);
+        ranked = relevantProducts(fallback.items, query);
+      }
+      let items = ranked.slice(0, 12);
+      if (items.length === 1 && (items[0] as any)?.id) {
+        const complete = await getResource(enterpriseId, "products", String((items[0] as any).id));
+        if (complete) items = [complete];
+      }
       logger.info("reply research: Mercury product search", {
         enterpriseId,
         query,

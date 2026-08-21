@@ -905,11 +905,82 @@ async function toolGenerateReport(
 
 // ---- Mercury Store tools ----
 
+const STORE_PRODUCT_INTENT_WORDS = new Set([
+  "a", "an", "the", "for", "with", "and", "or", "product", "products",
+  "computer", "computers", "machine", "machines", "laptop", "laptops",
+  "spec", "specs", "specification", "specifications", "feature", "features",
+  "price", "pricing", "stock", "available", "availability", "show", "find",
+  "have", "does", "what", "which",
+]);
+
+function storeSearchTerms(value: unknown): string[] {
+  return String(value ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").split(" ")
+    .filter((term) => term.length > 1 && !STORE_PRODUCT_INTENT_WORDS.has(term));
+}
+
+function rankStoreProducts(items: any[], terms: string[]): any[] {
+  if (!terms.length) return items;
+  return items
+    .map((item) => {
+      // The Store API guarantees normalized specifications on products. Match
+      // the entire record so RAM/CPU/storage queries work just like model/SKU.
+      const searchable = JSON.stringify(item).toLowerCase().replace(/[^a-z0-9]+/g, " ");
+      const score = terms.filter((term) => searchable.includes(term)).length;
+      return { item, score };
+    })
+    .filter(({ score }) => score === terms.length)
+    .sort((a, b) => b.score - a.score)
+    .map(({ item }) => item);
+}
+
+function invoiceProductDescription(product: Record<string, unknown>, fallback: string): string {
+  const name = String(product.name ?? product.productName ?? product.title ?? fallback).trim() || fallback;
+  const specs = (product.specifications && typeof product.specifications === "object"
+    ? product.specifications
+    : {}) as Record<string, unknown>;
+  const value = (key: string) => String(specs[key] ?? "").trim();
+  const storage = [value("storage"), value("storageType")].filter(Boolean).join(" ");
+  const display = [value("displaySize"), value("displayResolution")].filter(Boolean).join(" · ");
+  const rows = [
+    ["Model", value("model")],
+    ["Processor", value("processor")],
+    ["RAM", value("ram")],
+    ["Storage", storage],
+    ["Display", display],
+    ["Graphics", value("graphics")],
+    ["Operating system", value("operatingSystem")],
+    ["Warranty", value("warranty")],
+  ].filter((entry) => entry[1]);
+  return rows.length ? `${name}\n${rows.map(([label, detail]) => `${label}: ${detail}`).join(" | ")}` : name;
+}
+
+async function resolveInvoiceProductDescription(enterpriseId: string, requested: string): Promise<string> {
+  try {
+    const { getResource, listAllResource } = await import("./connections/mercury");
+    const result = await listAllResource(enterpriseId, "products", { q: requested, limit: 100 }, 1000);
+    let matches = rankStoreProducts(result.items, storeSearchTerms(requested));
+    if (!matches.length) {
+      const fallback = await listAllResource(enterpriseId, "products", { limit: 200 }, 1000);
+      matches = rankStoreProducts(fallback.items, storeSearchTerms(requested));
+    }
+    const normalizedRequested = requested.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const selected = matches.find((item) =>
+      String(item.name ?? item.productName ?? item.title ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() === normalizedRequested
+    ) ?? (matches.length === 1 ? matches[0] : undefined);
+    if (!selected) return requested;
+    const complete = selected.id ? await getResource(enterpriseId, "products", String(selected.id)) : selected;
+    return invoiceProductDescription((complete ?? selected) as Record<string, unknown>, requested);
+  } catch (error) {
+    logger.warn("Invoice product specification lookup failed", { requested, error: (error as Error).message });
+    return requested;
+  }
+}
+
 async function toolStoreList(enterpriseId: string, args: Record<string, unknown>) {
   const resource = String(args.resource ?? "");
   const q = (args.q ?? args.query ?? args.search) as string | undefined;
   try {
-    const { listResource, listAllResource } = await import("./connections/mercury");
+    const { getResource, listResource, listAllResource } = await import("./connections/mercury");
     const opts = {
       status: args.status as string | undefined,
       q: q ? String(q) : undefined,
@@ -921,20 +992,20 @@ async function toolStoreList(enterpriseId: string, args: Record<string, unknown>
     // miss matches beyond the first page (the catalog spans 300+ products).
     if (opts.q || opts.brand || opts.category || opts.categoryId || opts.status) {
       const { items, total } = await listAllResource(enterpriseId, resource, opts, 1000);
-      const queryTerms = String(opts.q ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").split(" ")
-        .filter((term) => term.length > 1 && !["the", "with", "for"].includes(term));
-      const relevantItems = resource === "products" && queryTerms.length
-        ? items
-          .map((item: any) => {
-            const name = String(item.name ?? item.productName ?? item.title ?? "").trim();
-            const searchable = `${name} ${String(item.sku ?? item.code ?? "")}`.toLowerCase().replace(/[^a-z0-9]+/g, " ");
-            const score = queryTerms.filter((term) => searchable.includes(term)).length;
-            return { item, score };
-          })
-          .filter(({ score }) => score === queryTerms.length)
-          .sort((a, b) => b.score - a.score)
-          .map(({ item }) => item)
-        : items;
+      const queryTerms = storeSearchTerms(opts.q);
+      let relevantItems = resource === "products" ? rankStoreProducts(items, queryTerms) : items;
+      // The upstream q index may not yet contain every legacy specification.
+      // Sweep the small catalogue and match locally before reporting no result.
+      if (resource === "products" && opts.q && queryTerms.length && !relevantItems.length) {
+        const fallback = await listAllResource(enterpriseId, resource, { limit: 200 }, 1000);
+        relevantItems = rankStoreProducts(fallback.items, queryTerms);
+      }
+      // A single-item read is the canonical complete record and preserves all
+      // category-specific specifications in addition to normalized fields.
+      if (resource === "products" && relevantItems.length === 1 && relevantItems[0]?.id) {
+        const complete = await getResource(enterpriseId, resource, String(relevantItems[0].id));
+        if (complete) relevantItems = [complete];
+      }
       return JSON.stringify({
         resource,
         query: opts.q,
@@ -1092,7 +1163,7 @@ async function toolCreateZohoQuotation(
     });
   }
   const usdToUgx = 3800;
-  const normalizedItems: Record<string, unknown>[] = (items as Record<string, unknown>[]).map((item) => {
+  const normalizedItems: Record<string, unknown>[] = await Promise.all((items as Record<string, unknown>[]).map(async (item) => {
     const sourceRate = Number(item.rate);
     const sourceCurrency = String(item.rateCurrency ?? "USD").trim().toUpperCase();
     const includesVat = item.rateIncludesVat !== false;
@@ -1100,8 +1171,14 @@ async function toolCreateZohoQuotation(
       ? Math.ceil((sourceRate * usdToUgx) / 1000) * 1000
       : sourceRate;
     const netUgx = includesVat ? grossUgx / 1.18 : grossUgx;
+    const product = String(item.product ?? item.description ?? "").trim();
+    const catalogDescription = await resolveInvoiceProductDescription(enterpriseId, product);
     return {
       ...item,
+      product,
+      // Catalogue specifications are authoritative and are snapshotted into
+      // the document description so historical invoices remain unchanged.
+      description: catalogDescription,
       rate: netUgx,
       rateCurrency: "UGX",
       rateIncludesVat: false,
@@ -1111,7 +1188,7 @@ async function toolCreateZohoQuotation(
       convertedGrossUgx: grossUgx,
       exchangeRate: sourceCurrency === "USD" ? usdToUgx : undefined,
     };
-  });
+  }));
   const workflowKey = randomUUID();
   const params: Record<string, unknown> = {
     workflowKey,
@@ -1670,7 +1747,7 @@ function buildSystem(
     : "";
 
   const quotationRule = connected.has("zoho")
-    ? `\n\nOFFICIAL QUOTATION RULE: For a broad product request, search the Mercury catalogue and present matching exact models with their USD prices, then WAIT for the user to select one. Never select, recommend, substitute or create a quotation from search results on the user's behalf. Only after the user explicitly selects or names one exact model may you use create_zoho_quotation. It immediately captures or reuses the Lead, Account and Contact, creates a FRESH Deal, creates a fresh PDF using Ellipse's fixed template, saves it to Data and returns it in chat; it does not wait for approval. Require a real customer name, valid email, company/account name, exact product description, quantity and unit price. Mercury catalogue prices are USD and already include 18% VAT: pass that USD number as rate with rateCurrency:'USD' and rateIncludesVat:true. The backend converts at USD 1 = UGX 3,800, rounds the VAT-inclusive UGX unit price UP to the next 1,000, removes 18% for the line rate, and adds 18% back in the quotation totals. Never do that arithmetic yourself and never guess a price. Also collect phone, location and TIN when available, but do not invent them. Prepared By is always derived from the signed-in user. Every completed quotation is written as an executed audit record. When the tool returns executed with a real documentId, the file is ready to share.`
+    ? `\n\nOFFICIAL QUOTATION RULE: For a broad product request, search the Mercury catalogue and present matching exact models with their USD prices, then WAIT for the user to select one. Never select, recommend, substitute or create a quotation from search results on the user's behalf. Only after the user explicitly selects or names one exact model may you use create_zoho_quotation. It immediately captures or reuses the Lead, Account and Contact, creates a FRESH Deal, creates a fresh PDF using Ellipse's fixed template, saves it to Data and returns it in chat; it does not wait for approval. Require a real customer name, valid email, company/account name, exact product description, quantity and unit price. Mercury catalogue prices are USD and already include 18% VAT: pass that USD number as rate with rateCurrency:'USD' and rateIncludesVat:true. The backend converts at USD 1 = UGX 3,800, rounds the VAT-inclusive UGX unit price UP to the next 1,000, removes 18% for the line rate, and adds 18% back in the quotation totals. Never do that arithmetic yourself and never guess a price. The backend automatically retrieves and snapshots the selected catalogue product's specifications into the invoice line; do not invent, omit or rewrite them. Also collect phone, location and TIN when available, but do not invent them. Prepared By is always derived from the signed-in user. Every completed quotation is written as an executed audit record. When the tool returns executed with a real documentId, the file is ready to share.`
     : "";
 
   const connectedNames = [...connected].map((t) => CONNECTION_LABEL[t]).filter(Boolean);
