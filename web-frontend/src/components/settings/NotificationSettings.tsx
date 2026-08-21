@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
-import { httpsCallable } from "firebase/functions";
-import { db, functions } from "@/lib/firebase";
+import { db } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
 
 const options = [
@@ -23,8 +22,6 @@ export function NotificationSettings() {
   const { user } = useAuth();
   const [preferences, setPreferences] = useState(defaults);
   const [saved, setSaved] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState("");
 
   useEffect(() => {
     if (!user) return;
@@ -43,26 +40,10 @@ export function NotificationSettings() {
     window.setTimeout(() => setSaved(false), 1800);
   };
 
-  const sendTest = async () => {
-    setTesting(true);
-    setTestResult("");
-    try {
-      await httpsCallable(functions, "sendTestNotification")({});
-      setTestResult("Test sent. Check your browser notifications.");
-    } catch (error) {
-      setTestResult(error instanceof Error ? error.message : "The test notification could not be sent.");
-    } finally {
-      setTesting(false);
-    }
-  };
-
   return (
     <div className="rounded-2xl bg-white p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">
       <div className="mb-4 flex items-center justify-between"><h3 className="text-lg font-bold">Notification preferences</h3><span className={`text-xs font-medium text-green-600 transition-opacity ${saved ? "opacity-100" : "opacity-0"}`}>Saved</span></div>
-      <div className="mb-5 flex items-center justify-between gap-5 rounded-2xl bg-gray-50 p-4">
-        <div><p className="text-sm font-semibold text-gray-900">Browser notifications</p><p className="mt-1 text-xs leading-5 text-gray-500">Ellipse asks for permission automatically after sign-in. Browser-level access remains under this site's permissions.</p>{testResult && <p className="mt-2 text-xs text-gray-600">{testResult}</p>}</div>
-        <button type="button" onClick={sendTest} disabled={testing} className="shrink-0 rounded-full bg-black px-4 py-2 text-xs font-semibold text-white transition hover:bg-gray-800 disabled:cursor-wait disabled:opacity-50">{testing ? "Sending…" : "Send test"}</button>
-      </div>
+      <p className="mb-5 text-xs leading-5 text-gray-500">Ellipse asks for browser notification permission automatically after sign-in. You can change browser-level access at any time from this site's permissions.</p>
       <div className="divide-y divide-gray-100">
         {options.map((item) => {
           const active = preferences[item.key];
