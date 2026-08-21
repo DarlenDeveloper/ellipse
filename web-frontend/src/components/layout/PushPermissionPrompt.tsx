@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Notification as NotificationIcon } from "iconsax-react";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "@/lib/firebase";
 import { enablePushNotifications, refreshPushRegistration } from "@/lib/push-notifications";
 
 const SESSION_KEY = "ellipse_push_permission_prompted_v2";
@@ -45,6 +47,7 @@ export function PushPermissionPrompt() {
     try {
       await enablePushNotifications();
       setOpen(false);
+      await httpsCallable(functions, "sendTestNotification")({});
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Notifications could not be enabled.");
     } finally {
