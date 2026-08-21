@@ -67,6 +67,12 @@ service cloud.firestore {
           && get(/databases/$(database)/documents/enterprises/$(request.resource.data.enterprise_id)).data.owner_id == request.auth.uid)
       );
       allow delete: if false;
+
+      // Device tokens are written and consumed only by trusted Cloud Functions.
+      // Keeping them under the owning user prevents global token ambiguity.
+      match /push_tokens/{tokenId} {
+        allow read, write: if false;
+      }
     }
 
     // ---- Enterprises ----

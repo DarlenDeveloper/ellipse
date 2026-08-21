@@ -8,6 +8,10 @@ import UIKit
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    let launched = super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    // Explicit registration makes APNs token acquisition deterministic in
+    // TestFlight builds instead of relying solely on Firebase swizzling.
+    application.registerForRemoteNotifications()
+    return launched
   }
 }

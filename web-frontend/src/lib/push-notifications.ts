@@ -17,7 +17,7 @@ export async function enablePushNotifications() {
   const { messaging, registration } = await messagingAndWorker();
   const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
   if (!token) throw new Error("Firebase did not return a device token.");
-  await httpsCallable(functions, "registerPushToken")({ token });
+  await httpsCallable(functions, "registerPushToken")({ token, platform: "web" });
   localStorage.setItem("mercury_push_token", token);
   return token;
 }
@@ -28,7 +28,7 @@ export async function refreshPushRegistration() {
   const { messaging, registration } = await messagingAndWorker();
   const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
   if (!token) return null;
-  await httpsCallable(functions, "registerPushToken")({ token });
+  await httpsCallable(functions, "registerPushToken")({ token, platform: "web" });
   localStorage.setItem("mercury_push_token", token);
   return token;
 }

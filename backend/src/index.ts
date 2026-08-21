@@ -1581,7 +1581,14 @@ export const registerPushToken = onCall(async (request) => {
   const user = (await (await import("./admin")).db.doc(`users/${request.auth.uid}`).get()).data();
   if (!user?.enterprise_id) throw new HttpsError("failed-precondition", "You are not part of an organization.");
   const { registerPushToken } = await import("./notifications");
-  await registerPushToken(request.auth.uid, token, user.enterprise_id, request.rawRequest.headers["user-agent"]);
+  const platform = String(request.data?.platform ?? "unknown").trim().toLowerCase();
+  await registerPushToken(
+    request.auth.uid,
+    token,
+    user.enterprise_id,
+    platform,
+    request.rawRequest.headers["user-agent"]
+  );
   return { ok: true };
 });
 
