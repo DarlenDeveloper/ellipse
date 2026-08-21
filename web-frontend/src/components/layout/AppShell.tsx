@@ -9,6 +9,7 @@ import { Sidebar } from "./Sidebar";
 import { IvyBubble } from "@/components/ivy/IvyBubble";
 import { NotificationCenter } from "./NotificationCenter";
 import { PushPermissionPrompt } from "./PushPermissionPrompt";
+import { WhatsNewPopup } from "./WhatsNewPopup";
 
 // Routes that render WITHOUT the app sidebar (pre-login / onboarding)
 const bareRoutes = ["/login", "/signup", "/onboarding", "/terms", "/privacy"];
@@ -37,6 +38,7 @@ function ShellInner({ children }: { children: ReactNode }) {
   return (
     <>
       <Sidebar />
+      <WhatsNewPopup />
       <PushPermissionPrompt />
       {pathname !== "/inbox" && <NotificationCenter />}
       <div
