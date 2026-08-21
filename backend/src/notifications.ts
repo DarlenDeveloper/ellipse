@@ -4,6 +4,7 @@ import { createHash } from "crypto";
 import * as logger from "firebase-functions/logger";
 
 export type NotificationKind =
+  | "test"
   | "new_message"
   | "approval_required"
   | "action_completed"

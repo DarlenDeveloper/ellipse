@@ -1616,6 +1616,23 @@ export const unregisterPushToken = onCall(async (request) => {
   return { ok: true };
 });
 
+/** Sends a real in-app + FCM notification only to the authenticated caller. */
+export const sendTestNotification = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  const user = (await (await import("./admin")).db.doc(`users/${request.auth.uid}`).get()).data();
+  if (!user?.enterprise_id) throw new HttpsError("failed-precondition", "You are not part of an organization.");
+  const { notifyUsers } = await import("./notifications");
+  await notifyUsers({
+    enterpriseId: user.enterprise_id,
+    recipientUids: [request.auth.uid],
+    kind: "test",
+    title: "Notifications are working",
+    body: "Ellipse can now keep you updated when important workspace activity happens.",
+    href: "/dashboard",
+  });
+  return { ok: true };
+});
+
 /** Disconnect an integration and purge all data it produced (analytics, messages, sites). */
 export const disconnectIntegration = onCall(async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");

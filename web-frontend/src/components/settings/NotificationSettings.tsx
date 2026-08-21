@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { httpsCallable } from "firebase/functions";
+import { db, functions } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
-import { disablePushNotifications, enablePushNotifications } from "@/lib/push-notifications";
 
 const options = [
   { key: "newMessage", label: "New message in inbox", description: "Alerts when a new customer message is received." },
@@ -23,9 +23,8 @@ export function NotificationSettings() {
   const { user } = useAuth();
   const [preferences, setPreferences] = useState(defaults);
   const [saved, setSaved] = useState(false);
-  const [pushStatus, setPushStatus] = useState<"checking" | "enabled" | "disabled" | "blocked" | "unsupported">("checking");
-  const [pushBusy, setPushBusy] = useState(false);
-  const [pushError, setPushError] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState("");
 
   useEffect(() => {
     if (!user) return;
@@ -33,31 +32,6 @@ export function NotificationSettings() {
       setPreferences({ ...defaults, ...((snapshot.data()?.notification_preferences ?? {}) as Partial<Preferences>) });
     });
   }, [user]);
-
-  useEffect(() => {
-    if (!("Notification" in window) || !("serviceWorker" in navigator)) return setPushStatus("unsupported");
-    if (Notification.permission === "denied") return setPushStatus("blocked");
-    setPushStatus(Notification.permission === "granted" && Boolean(localStorage.getItem("mercury_push_token")) ? "enabled" : "disabled");
-  }, []);
-
-  const togglePush = async () => {
-    setPushBusy(true);
-    setPushError("");
-    try {
-      if (pushStatus === "enabled") {
-        await disablePushNotifications();
-        setPushStatus("disabled");
-      } else {
-        await enablePushNotifications();
-        setPushStatus("enabled");
-      }
-    } catch (error) {
-      setPushError(error instanceof Error ? error.message : "Could not configure push notifications.");
-      if (Notification.permission === "denied") setPushStatus("blocked");
-    } finally {
-      setPushBusy(false);
-    }
-  };
 
   const toggle = async (key: Key) => {
     if (!user) return;
@@ -69,14 +43,25 @@ export function NotificationSettings() {
     window.setTimeout(() => setSaved(false), 1800);
   };
 
+  const sendTest = async () => {
+    setTesting(true);
+    setTestResult("");
+    try {
+      await httpsCallable(functions, "sendTestNotification")({});
+      setTestResult("Test sent. Check your browser notifications.");
+    } catch (error) {
+      setTestResult(error instanceof Error ? error.message : "The test notification could not be sent.");
+    } finally {
+      setTesting(false);
+    }
+  };
+
   return (
     <div className="rounded-2xl bg-white p-6 shadow-[0_4px_20px_rgba(0,0,0,0.04)]">
       <div className="mb-4 flex items-center justify-between"><h3 className="text-lg font-bold">Notification preferences</h3><span className={`text-xs font-medium text-green-600 transition-opacity ${saved ? "opacity-100" : "opacity-0"}`}>Saved</span></div>
       <div className="mb-5 flex items-center justify-between gap-5 rounded-2xl bg-gray-50 p-4">
-        <div><p className="text-sm font-semibold text-gray-900">Browser push notifications</p><p className="mt-1 text-xs leading-5 text-gray-500">Receive alerts even when Mercury CRM is not open.</p>{pushError && <p className="mt-2 text-xs text-red-600">{pushError}</p>}</div>
-        <button type="button" onClick={togglePush} disabled={pushBusy || pushStatus === "checking" || pushStatus === "unsupported" || pushStatus === "blocked"} className={`shrink-0 rounded-full px-4 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${pushStatus === "enabled" ? "border border-gray-200 bg-white text-gray-700 hover:bg-gray-100" : "bg-black text-white hover:bg-gray-800"}`}>
-          {pushBusy ? "Working…" : pushStatus === "enabled" ? "Disable push" : pushStatus === "blocked" ? "Blocked by browser" : pushStatus === "unsupported" ? "Not supported" : "Enable push"}
-        </button>
+        <div><p className="text-sm font-semibold text-gray-900">Browser notifications</p><p className="mt-1 text-xs leading-5 text-gray-500">Ellipse asks for permission automatically after sign-in. Browser-level access remains under this site's permissions.</p>{testResult && <p className="mt-2 text-xs text-gray-600">{testResult}</p>}</div>
+        <button type="button" onClick={sendTest} disabled={testing} className="shrink-0 rounded-full bg-black px-4 py-2 text-xs font-semibold text-white transition hover:bg-gray-800 disabled:cursor-wait disabled:opacity-50">{testing ? "Sending…" : "Send test"}</button>
       </div>
       <div className="divide-y divide-gray-100">
         {options.map((item) => {

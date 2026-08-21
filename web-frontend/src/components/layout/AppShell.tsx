@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { Sidebar } from "./Sidebar";
 import { IvyBubble } from "@/components/ivy/IvyBubble";
 import { NotificationCenter } from "./NotificationCenter";
+import { PushPermissionPrompt } from "./PushPermissionPrompt";
 
 // Routes that render WITHOUT the app sidebar (pre-login / onboarding)
 const bareRoutes = ["/login", "/signup", "/onboarding", "/terms", "/privacy"];
@@ -36,6 +37,7 @@ function ShellInner({ children }: { children: ReactNode }) {
   return (
     <>
       <Sidebar />
+      <PushPermissionPrompt />
       {pathname !== "/inbox" && <NotificationCenter />}
       <div
         className="min-h-screen transition-all duration-200"

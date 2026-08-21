@@ -6,7 +6,7 @@ import { Notification as NotificationIcon, TickCircle } from "iconsax-react";
 import { useRouter } from "next/navigation";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/lib/auth-context";
-import { listenForForegroundPush, refreshPushRegistration } from "@/lib/push-notifications";
+import { listenForForegroundPush } from "@/lib/push-notifications";
 
 type Notice = {
   id: string;
@@ -49,9 +49,8 @@ export function NotificationCenter() {
   useEffect(() => {
     if (!user) return;
     // FCM automatically displays background notifications, but foreground
-    // messages require an explicit listener. Re-register granted devices too,
-    // which repairs rotated or previously cleaned-up tokens.
-    refreshPushRegistration().catch((error) => console.error("Push registration refresh failed", error));
+    // messages require an explicit listener. Registration is handled once at
+    // the authenticated app-shell level.
     let unsubscribe: () => void = () => undefined;
     listenForForegroundPush((title, body) => {
       if (Notification.permission === "granted") new Notification(title, { body });
