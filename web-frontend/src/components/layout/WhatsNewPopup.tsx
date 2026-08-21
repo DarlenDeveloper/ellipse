@@ -82,7 +82,11 @@ export function WhatsNewPopup() {
       </button>
 
       {open && <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/30 p-5 backdrop-blur-[3px]">
-      <div role="dialog" aria-modal="true" aria-labelledby="whats-new-title" className="relative w-full max-w-[540px] overflow-hidden rounded-[32px] border border-white/70 bg-white shadow-[0_35px_110px_rgba(15,23,42,0.28)]">
+      <div className="relative w-full max-w-[540px] overflow-hidden rounded-[33px] bg-black/90 p-[4px] shadow-[0_35px_110px_rgba(15,23,42,0.32)]">
+        <div aria-hidden="true" className="pointer-events-none absolute left-1/2 top-1/2 h-[165%] w-[165%] -translate-x-1/2 -translate-y-1/2">
+          <div className="h-full w-full origin-center bg-[conic-gradient(from_0deg,transparent_0deg,transparent_304deg,rgba(78,5,10,0.45)_316deg,#7f1018_327deg,#e43b18_338deg,#ff8a1f_348deg,#fff2d6_354deg,transparent_360deg)] animate-[spin_6s_linear_infinite] motion-reduce:animate-none" />
+        </div>
+      <div role="dialog" aria-modal="true" aria-labelledby="whats-new-title" className="relative overflow-hidden rounded-[29px] bg-white">
         <div className="relative overflow-hidden bg-[#0b0b0d] px-8 pb-8 pt-7 text-white">
           <div className="absolute -right-16 -top-20 h-52 w-52 rounded-full bg-blue-500/30 blur-3xl" />
           <div className="absolute -bottom-20 left-24 h-40 w-40 rounded-full bg-violet-500/20 blur-3xl" />
@@ -106,6 +110,7 @@ export function WhatsNewPopup() {
           })}
           <button type="button" onClick={dismiss} className="mt-4 w-full rounded-full bg-black px-5 py-3 text-sm font-semibold text-white transition hover:bg-gray-800">Explore the updates</button>
         </div>
+      </div>
       </div>
     </div>}
     </>
