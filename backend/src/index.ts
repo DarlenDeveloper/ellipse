@@ -736,6 +736,21 @@ export const generateReportsNow = onCall(
   return gen(enterpriseId, period as any);
 });
 
+/** Owner/admin repair tool for a bounded historical report gap. */
+export const backfillReports = onCall(
+  { timeoutSeconds: 540, memory: "1GiB", secrets: [geminiKey, zohoClientId, zohoClientSecret, msClientId, msClientSecret] },
+  async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+    const enterpriseId = String(request.data?.enterpriseId ?? "");
+    const startDate = String(request.data?.startDate ?? "");
+    const endDate = String(request.data?.endDate ?? "");
+    if (!enterpriseId || !startDate || !endDate) throw new HttpsError("invalid-argument", "Missing repair date range.");
+    await requireOrgManager(request.auth.uid, enterpriseId);
+    const { backfillReports: run } = await import("./reports");
+    return run(enterpriseId, startDate, endDate);
+  }
+);
+
 /**
  * Conversational chat with an agent (or Ivy). Ivy can read across all agents and
  * delegate actions; a specific agentId scopes to that connection. Any action the

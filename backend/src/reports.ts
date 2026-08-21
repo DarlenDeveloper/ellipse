@@ -181,6 +181,7 @@ async function gatherActions(enterpriseId: string, agentId: string, w: Window) {
     .where("enterprise_id", "==", enterpriseId)
     .where("created_at", ">=", w.start)
     .where("created_at", "<", w.end)
+    .orderBy("created_at", "desc")
     .get();
   const rows = snap.docs
     .map((d) => d.data() as Record<string, unknown>)
@@ -201,6 +202,7 @@ async function gatherLeads(enterpriseId: string, w: Window, channel?: string): P
     .where("enterprise_id", "==", enterpriseId)
     .where("last_message_at", ">=", w.start)
     .where("last_message_at", "<", w.end)
+    .orderBy("last_message_at", "desc")
     .get();
   return snap.docs
     .map((d) => d.data() as Record<string, unknown>)
@@ -228,6 +230,7 @@ async function gatherWeb(enterpriseId: string, w: Window) {
     .where("workspace_id", "==", enterpriseId)
     .where("timestamp", ">=", w.start)
     .where("timestamp", "<", w.end)
+    .orderBy("timestamp", "desc")
     .get();
   const events = snap.docs
     .map((d) => d.data() as Record<string, unknown>)
@@ -706,4 +709,58 @@ export async function generateReportsNow(
     }
   }
   return { reports: out };
+}
+
+/** Repair a bounded inclusive range of missing daily reports and its roll-ups. */
+export async function backfillReports(
+  enterpriseId: string,
+  startKey: string,
+  endKey: string
+): Promise<{ days: number; created: number; existing: number; errors: string[] }> {
+  const keyPattern = /^\d{4}-\d{2}-\d{2}$/;
+  if (!keyPattern.test(startKey) || !keyPattern.test(endKey)) throw new Error("Dates must use YYYY-MM-DD.");
+  const entSnap = await db.doc(`enterprises/${enterpriseId}`).get();
+  if (!entSnap.exists) throw new Error("Organization not found.");
+  const ent = entSnap.data() ?? {};
+  const timeZone = (ent.timezone as string) || "UTC";
+  const orgName = (ent.name as string) || "the team";
+  const parseKey = (key: string) => {
+    const [year, month, day] = key.split("-").map(Number);
+    return zonedTimeToUtc(year, month, day, 0, 0, timeZone);
+  };
+  let reportDay = parseKey(startKey);
+  const finalDay = parseKey(endKey);
+  if (reportDay.getTime() > finalDay.getTime()) throw new Error("Start date must be before end date.");
+  const span = Math.round((finalDay.getTime() - reportDay.getTime()) / 86400000) + 1;
+  if (span > 62) throw new Error("Backfill is limited to 62 days at a time.");
+
+  const agents = await activeAgents(enterpriseId);
+  let created = 0;
+  let existing = 0;
+  const errors: string[] = [];
+  for (let offset = 0; offset < span; offset++) {
+    const todayStart = localMidnightShift(reportDay, timeZone, 1);
+    for (const period of duePeriods(todayStart, timeZone)) {
+      const window = windowFor(period, todayStart, timeZone);
+      for (const meta of agents) {
+        try {
+          const result = await generateReport(enterpriseId, meta, period, window, orgName);
+          result.created ? created++ : existing++;
+        } catch (error) {
+          errors.push(`${window.key}/${meta.agent}/${period}: ${(error as Error).message}`);
+        }
+      }
+      if (period === "daily") {
+        try {
+          const { generateOrgUsersReport } = await import("./orgUsers");
+          const result = await generateOrgUsersReport(enterpriseId, window, orgName);
+          result.created ? created++ : existing++;
+        } catch (error) {
+          errors.push(`${window.key}/org-users/daily: ${(error as Error).message}`);
+        }
+      }
+    }
+    reportDay = todayStart;
+  }
+  return { days: span, created, existing, errors: errors.slice(0, 100) };
 }

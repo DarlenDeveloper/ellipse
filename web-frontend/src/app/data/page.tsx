@@ -73,6 +73,31 @@ function fmtSize(bytes: number) {
   return kb < 1024 ? `${Math.round(kb)} KB` : `${(kb / 1024).toFixed(1)} MB`;
 }
 
+function inlineMarkdown(text: string) {
+  return text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, index) =>
+    part.startsWith("**") && part.endsWith("**")
+      ? <strong key={index} className="font-semibold text-gray-900">{part.slice(2, -2)}</strong>
+      : <span key={index}>{part}</span>
+  );
+}
+
+function ReportSummary({ text }: { text: string }) {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  return (
+    <div className="space-y-3 text-[15px] leading-7 text-gray-700">
+      {lines.map((raw, index) => {
+        const line = raw.trim();
+        if (!line) return <div key={index} className="h-1" />;
+        const heading = line.match(/^#{1,4}\s+(.+)$/);
+        if (heading) return <h4 key={index} className="pt-2 text-lg font-bold tracking-tight text-gray-950">{inlineMarkdown(heading[1])}</h4>;
+        const bullet = line.match(/^(?:[-*•]|\d+\.)\s+(.+)$/);
+        if (bullet) return <div key={index} className="flex gap-3 pl-1"><span className="mt-[11px] h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" /><p>{inlineMarkdown(bullet[1])}</p></div>;
+        return <p key={index}>{inlineMarkdown(line)}</p>;
+      })}
+    </div>
+  );
+}
+
 export default function DataPage() {
   const { enterpriseId, role, isManager, allowsRecord } = useAccess();
   const isOwner = role === "owner";
@@ -84,12 +109,15 @@ export default function DataPage() {
   const [period, setPeriod] = useState<Period | "all">("all");
   const [selected, setSelected] = useState<Report | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [repairing, setRepairing] = useState(false);
+  const [repairMessage, setRepairMessage] = useState("");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(12);
 
   useEffect(() => {
     if (!enterpriseId) return;
     const unsubReports = onSnapshot(
-      query(collection(db, "reports"), where("enterprise_id", "==", enterpriseId), orderBy("period_start", "desc"), limit(60)),
+      query(collection(db, "reports"), where("enterprise_id", "==", enterpriseId), orderBy("period_start", "desc"), limit(500)),
       (snap) => {
         const rows = snap.docs
           .map((d) => ({ id: d.id, ...(d.data() as Omit<Report, "id">) }))
@@ -107,7 +135,7 @@ export default function DataPage() {
     );
     // Agent-created documents surface here too, as their own "document" entries.
     const unsubDocs = onSnapshot(
-      query(collection(db, "documents"), where("enterprise_id", "==", enterpriseId), orderBy("created_at", "desc"), limit(60)),
+      query(collection(db, "documents"), where("enterprise_id", "==", enterpriseId), orderBy("created_at", "desc"), limit(500)),
       (snap) => {
         const rows: Report[] = snap.docs
           .filter((d) => isManager || allowsRecord(agentToType(d.data().agent as string), d.data().connection_scope, d.data().owner_uid))
@@ -171,11 +199,10 @@ export default function DataPage() {
       return true;
     });
   }, [allItems, activeFolder, period, search]);
-  const pageSize = 12;
   const pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
   const pagedVisible = visible.slice((page - 1) * pageSize, page * pageSize);
 
-  useEffect(() => setPage(1), [activeFolder, period, search]);
+  useEffect(() => setPage(1), [activeFolder, period, search, pageSize]);
   useEffect(() => {
     if (page > pageCount) setPage(pageCount);
   }, [page, pageCount]);
@@ -193,6 +220,27 @@ export default function DataPage() {
     }
   };
 
+  const repairMissing = async () => {
+    if (!enterpriseId || repairing) return;
+    setRepairing(true);
+    setRepairMessage("");
+    try {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const endDate = yesterday.toISOString().slice(0, 10);
+      const fn = httpsCallable(functions, "backfillReports");
+      const response = await fn({ enterpriseId, startDate: "2026-08-03", endDate });
+      const result = response.data as { created?: number; existing?: number; errors?: string[] };
+      setRepairMessage(result.errors?.length
+        ? `Created ${result.created ?? 0}; ${result.errors.length} item(s) need attention.`
+        : `Repair complete: ${result.created ?? 0} created, ${result.existing ?? 0} already present.`);
+    } catch (error) {
+      setRepairMessage(error instanceof Error ? error.message : "Report repair failed.");
+    } finally {
+      setRepairing(false);
+    }
+  };
+
   return (
     <main className="p-8">
       {/* Header */}
@@ -201,14 +249,25 @@ export default function DataPage() {
           <h1 className="text-3xl font-bold tracking-tight">Data</h1>
           <p className="text-gray-400 mt-1">Reports your agents generate — daily, weekly, monthly and beyond.</p>
         </div>
-        <button
-          onClick={generateNow}
-          disabled={generating}
-          className="flex items-center gap-2 bg-black text-white text-sm font-medium rounded-full px-5 py-2.5 hover:bg-gray-800 disabled:opacity-50"
-        >
-          <Refresh size={18} variant="Linear" color="#ffffff" />
-          {generating ? "Generating…" : "Generate now"}
-        </button>
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex items-center gap-2">
+            {isManager && (
+              <button onClick={repairMissing} disabled={repairing} className="flex items-center gap-2 rounded-full border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                <Refresh size={18} variant="Linear" color="#4b5563" />
+                {repairing ? "Repairing history…" : "Repair missing reports"}
+              </button>
+            )}
+            <button
+              onClick={generateNow}
+              disabled={generating}
+              className="flex items-center gap-2 bg-black text-white text-sm font-medium rounded-full px-5 py-2.5 hover:bg-gray-800 disabled:opacity-50"
+            >
+              <Refresh size={18} variant="Linear" color="#ffffff" />
+              {generating ? "Generating…" : "Generate now"}
+            </button>
+          </div>
+          {repairMessage && <p className="max-w-xl text-right text-xs text-gray-500">{repairMessage}</p>}
+        </div>
       </div>
 
       <div className="flex gap-6 items-start">
@@ -367,10 +426,24 @@ export default function DataPage() {
                 </button>
               ))}
               {pageCount > 1 && (
-                <div className="flex items-center justify-between border-t border-gray-100 px-5 py-4">
-                  <span className="text-xs text-gray-400">Page {page} of {pageCount} · 12 per page</span>
-                  <div className="flex gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 px-5 py-4">
+                  <div className="flex items-center gap-3 text-xs text-gray-400">
+                    <span>Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, visible.length)} of {visible.length}</span>
+                    <label className="flex items-center gap-2">
+                      <span>Per page</span>
+                      <select value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))} className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-gray-700 outline-none">
+                        {[12, 25, 50].map((size) => <option key={size} value={size}>{size}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-2">
                     <button onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page === 1} className="rounded-full border border-gray-200 px-4 py-2 text-xs font-semibold disabled:opacity-35">Previous</button>
+                    {Array.from({ length: pageCount }, (_, index) => index + 1).filter((number) => number === 1 || number === pageCount || Math.abs(number - page) <= 1).map((number, index, shown) => (
+                      <span key={number} className="flex items-center gap-2">
+                        {index > 0 && number - shown[index - 1] > 1 && <span className="text-xs text-gray-300">…</span>}
+                        <button onClick={() => setPage(number)} className={cn("h-8 min-w-8 rounded-full px-2 text-xs font-semibold", number === page ? "bg-black text-white" : "border border-gray-200 text-gray-600")}>{number}</button>
+                      </span>
+                    ))}
                     <button onClick={() => setPage((value) => Math.min(pageCount, value + 1))} disabled={page === pageCount} className="rounded-full bg-black px-4 py-2 text-xs font-semibold text-white disabled:opacity-35">Next</button>
                   </div>
                 </div>
@@ -418,9 +491,7 @@ export default function DataPage() {
                 </div>
               )}
               {/* Summary */}
-              <div className="prose prose-sm max-w-none">
-                <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{selected.summary}</p>
-              </div>
+              <ReportSummary text={selected.summary} />
 
               {/* Downloadable files */}
               {selected.files && selected.files.length > 0 && (
