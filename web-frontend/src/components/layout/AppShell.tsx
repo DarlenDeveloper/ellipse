@@ -38,7 +38,7 @@ function ShellInner({ children }: { children: ReactNode }) {
   return (
     <>
       <Sidebar />
-      <WhatsNewPopup />
+      {pathname === "/dashboard" && <WhatsNewPopup />}
       <PushPermissionPrompt />
       {pathname !== "/inbox" && <NotificationCenter />}
       <div

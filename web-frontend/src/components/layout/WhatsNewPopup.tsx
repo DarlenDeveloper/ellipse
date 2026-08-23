@@ -1,34 +1,34 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CloseCircle, MagicStar, Notification, ReceiptItem, TrendUp } from "iconsax-react";
+import { Chart, CloseCircle, DirectInbox, MagicStar, TickCircle } from "iconsax-react";
 import { useAuth } from "@/lib/auth-context";
 
 // Update this ID and the entries whenever a new customer-facing release ships.
 // Each release runs a three-day, twice-daily announcement campaign.
 const RELEASE = {
-  id: "2026-08-21.1",
+  id: "2026-08-23.1",
   label: "August 2026",
-  title: "A smarter, more connected Ellipse",
-  summary: "A quick look at the latest improvements across your workspace.",
+  title: "Your dashboard, redesigned",
+  summary: "A cleaner home for the work, conversations and decisions that need your attention.",
   highlights: [
     {
-      icon: Notification,
-      color: "#2563eb",
-      title: "Timely browser notifications",
-      description: "Enable alerts after sign-in and stay updated on messages, approvals and workspace activity.",
+      icon: Chart,
+      color: "#438ff2",
+      title: "A clearer workspace at a glance",
+      description: "A lighter, more compact overview keeps messages, threads, agents and connected data easy to scan.",
     },
     {
-      icon: ReceiptItem,
-      color: "#7c3aed",
-      title: "Richer product invoices",
-      description: "Ivy now adds verified Mercury Store specifications such as processor, RAM and storage to invoices.",
+      icon: TickCircle,
+      color: "#6e83ed",
+      title: "Your priority queue, front and centre",
+      description: "See agent actions that need a decision and move directly into approval without hunting through the app.",
     },
     {
-      icon: TrendUp,
-      color: "#059669",
-      title: "Restored reports and navigation",
-      description: "Daily reporting is restored with improved report formatting, history and user-controlled pagination.",
+      icon: DirectInbox,
+      color: "#42b3d1",
+      title: "Get back to active work faster",
+      description: "Open your inbox, tasks and recent customer conversations directly from the dashboard.",
     },
   ],
 } as const;
