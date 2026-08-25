@@ -1,6 +1,7 @@
 import { HttpsError } from "firebase-functions/v2/https";
 import { Timestamp } from "firebase-admin/firestore";
 import { db, FieldValue } from "./admin";
+import { notifyUsers, notificationRecipients } from "./notifications";
 
 type AttendanceAction = "clock_in" | "start_field_work" | "return_from_field_work" | "clock_out";
 
@@ -113,6 +114,25 @@ export async function recordAttendanceAction(uid: string, args: Record<string, u
     });
     return { status: nextStatus, sessionId };
   });
+
+  // Notify managers (owner/admins) when an employee clocks in or out.
+  if (action === "clock_in" || action === "clock_out") {
+    const actionLabel = action === "clock_in" ? "clocked in" : "clocked out";
+    const recipients = await notificationRecipients(user.enterpriseId, "managers");
+    // Don't notify the employee about their own action.
+    const filtered = recipients.filter((id) => id !== uid);
+    if (filtered.length) {
+      await notifyUsers({
+        enterpriseId: user.enterpriseId,
+        recipientUids: filtered,
+        kind: "attendance",
+        title: "Attendance",
+        body: `${user.name} has ${actionLabel}.`,
+        href: "/attendance",
+      });
+    }
+  }
+
   return { ok: true, ...result };
 }
 
@@ -150,4 +170,110 @@ export async function getAttendanceDashboard(uid: string, args: Record<string, u
   const recentSessions = sessions.docs.map((d) => ({ id: d.id, ...d.data() })).filter((d: any) => d.started_at?.toMillis?.() >= since.toMillis());
   const recentEvents = events.docs.map((d) => ({ id: d.id, ...d.data() })).filter((d: any) => d.occurred_at?.toMillis?.() >= since.toMillis()).sort((a: any, b: any) => b.occurred_at.toMillis() - a.occurred_at.toMillis()).slice(0, 1000);
   return { current: current.docs.map((d) => ({ id: d.id, ...d.data() })), sessions: recentSessions, events: recentEvents, settings: settings.exists ? settings.data() : DEFAULT_SCHEDULE };
+}
+
+const CLOCK_IN_MESSAGES = [
+  "Hey, lovely morning! Don't forget to clock in 🌅",
+  "Rise and shine! Remember to clock in when you start your day ☀️",
+  "Good morning! A quick tap to clock in and you're all set 🚀",
+  "New day, new hustle! Don't forget to clock in 💪",
+  "Morning! Hit that clock-in button when you're ready to roll 🎯",
+];
+
+const CLOCK_OUT_MESSAGES = [
+  "Crazy work day! Hope you didn't forget to clock out 🌙",
+  "Great job today! Don't forget to clock out before you head off 🏠",
+  "Wrapping up? Remember to clock out so your hours count ⏰",
+  "End of day reminder — clock out when you're done! 🎉",
+  "Hard work pays off! Just don't forget to clock out 😄",
+];
+
+function randomMessage(messages: string[]) {
+  return messages[Math.floor(Math.random() * messages.length)];
+}
+
+/**
+ * Runs every hour. For each enterprise, checks the attendance schedule for
+ * today. Sends clock-in reminders within 2 hours before to 2 hours after the
+ * scheduled start, and clock-out reminders within 2 hours after the scheduled
+ * end. This keeps costs low while covering the relevant window.
+ */
+export async function sendAttendanceReminders() {
+  const eatOffset = 3 * 60 * 60_000;
+  const local = new Date(Date.now() + eatOffset);
+  const currentHour = local.getUTCHours();
+  const currentMinute = local.getUTCMinutes();
+  const nowMinutes = currentHour * 60 + currentMinute;
+  const dayNames = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+  const todayKey = dayNames[local.getUTCDay()];
+
+  // Gather all enterprises
+  const settingsSnap = await db.collection("attendance_settings").get();
+  const enterprises: { id: string; days: Record<string, { enabled: boolean; start: string; end: string }> }[] = [];
+  const coveredIds = new Set<string>();
+
+  for (const doc of settingsSnap.docs) {
+    const data = doc.data();
+    const eid = String(data.enterprise_id ?? "");
+    if (!eid) continue;
+    coveredIds.add(eid);
+    enterprises.push({ id: eid, days: data.days ?? DEFAULT_SCHEDULE.days });
+  }
+
+  const ownersSnap = await db.collection("users").where("role", "==", "owner").get();
+  for (const doc of ownersSnap.docs) {
+    const eid = String(doc.data().enterprise_id ?? "");
+    if (eid && !coveredIds.has(eid)) {
+      enterprises.push({ id: eid, days: DEFAULT_SCHEDULE.days });
+    }
+  }
+
+  let sent = 0;
+  for (const enterprise of enterprises) {
+    const today = enterprise.days[todayKey];
+    if (!today || !today.enabled) continue;
+
+    const [startH, startM] = today.start.split(":").map(Number);
+    const [endH, endM] = today.end.split(":").map(Number);
+    const startMinutes = startH * 60 + startM;
+    const endMinutes = endH * 60 + endM;
+
+    // Clock-in window: from 2hrs before start to 2hrs after start
+    const isClockInWindow = nowMinutes >= (startMinutes - 120) && nowMinutes <= (startMinutes + 120);
+    // Clock-out window: from end time to 2hrs after end
+    const isClockOutWindow = nowMinutes >= endMinutes && nowMinutes <= (endMinutes + 120);
+
+    if (!isClockInWindow && !isClockOutWindow) continue;
+
+    const usersSnap = await db.collection("users").where("enterprise_id", "==", enterprise.id).get();
+    const employees = usersSnap.docs.filter((d) => (d.data().status ?? "active") === "active");
+
+    for (const emp of employees) {
+      const currentSnap = await db.doc(`attendance_current/${enterprise.id}_${emp.id}`).get();
+      const status = String(currentSnap.data()?.status ?? "clocked_out");
+
+      if (isClockInWindow && status === "clocked_out") {
+        await notifyUsers({
+          enterpriseId: enterprise.id,
+          recipientUids: [emp.id],
+          kind: "attendance",
+          title: "Clock In Reminder",
+          body: randomMessage(CLOCK_IN_MESSAGES),
+          href: "/attendance",
+        });
+        sent++;
+      } else if (isClockOutWindow && (status === "working" || status === "field_work")) {
+        await notifyUsers({
+          enterpriseId: enterprise.id,
+          recipientUids: [emp.id],
+          kind: "attendance",
+          title: "Clock Out Reminder",
+          body: randomMessage(CLOCK_OUT_MESSAGES),
+          href: "/attendance",
+        });
+        sent++;
+      }
+    }
+  }
+  return { sent };
 }

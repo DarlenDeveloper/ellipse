@@ -70,6 +70,14 @@ export default function AttendancePage() {
     hours: (data?.sessions.reduce((n, s) => n + (s.worked_seconds ?? 0), 0) ?? 0) / 3600,
   }), [data]);
 
+  const checkInDomain = useMemo(() => {
+    const values = chart.map((r) => r.checkIn).filter((v): v is number => v !== null);
+    if (!values.length) return [6, 12];
+    const min = Math.floor(Math.min(...values)) - 1;
+    const max = Math.ceil(Math.max(...values)) + 1;
+    return [Math.max(0, min), Math.min(24, max)];
+  }, [chart]);
+
   const save = async () => {
     setSaving(true); setError(null);
     try { await httpsCallable(functions, "updateAttendanceSettings")({ days: schedule }); await load(); }
@@ -88,7 +96,7 @@ export default function AttendancePage() {
         {[{ label: "Working now", value: stats.working, icon: People }, { label: "On field work", value: stats.field, icon: Routing }, { label: "Hours · 31 days", value: stats.hours.toFixed(1), icon: Clock }].map((x) => <div key={x.label} className="bg-white rounded-2xl p-5 shadow-sm"><x.icon size={21} /><p className="text-3xl font-bold mt-4">{loading ? "—" : x.value}</p><p className="text-xs text-gray-400 mt-1">{x.label}</p></div>)}
       </div>
       <div className="grid grid-cols-[1.1fr_.9fr] gap-6">
-        <section className="bg-white rounded-3xl p-6 shadow-sm"><h2 className="font-bold text-lg mb-1">Working hours & check-ins</h2><p className="text-xs text-gray-400 mb-5">Bars show total hours; the line shows average check-in time in EAT.</p><div className="h-72"><ResponsiveContainer width="100%" height="100%"><ComposedChart data={chart}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee"/><XAxis dataKey="date" fontSize={11}/><YAxis yAxisId="hours" fontSize={11}/><YAxis yAxisId="time" orientation="right" domain={[6, 12]} fontSize={11} tickFormatter={(v) => `${Math.floor(v)}:00`}/><Tooltip formatter={(value, name) => name === "checkIn" ? [`${Math.floor(Number(value))}:${String(Math.round((Number(value) % 1) * 60)).padStart(2, "0")}`, "Average check-in"] : [`${value} h`, "Hours worked"]}/><Bar yAxisId="hours" dataKey="hours" fill="#1D2825" radius={[7,7,0,0]}/><Line yAxisId="time" dataKey="checkIn" stroke="#f59e0b" strokeWidth={3} connectNulls dot={{ r: 3 }}/></ComposedChart></ResponsiveContainer></div></section>
+        <section className="bg-white rounded-3xl p-6 shadow-sm"><h2 className="font-bold text-lg mb-1">Working hours & check-ins</h2><p className="text-xs text-gray-400 mb-5">Bars show total hours; the line shows average check-in time in EAT.</p><div className="h-72"><ResponsiveContainer width="100%" height="100%"><ComposedChart data={chart}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee"/><XAxis dataKey="date" fontSize={11}/><YAxis yAxisId="hours" fontSize={11}/><YAxis yAxisId="time" orientation="right" domain={checkInDomain} fontSize={11} tickFormatter={(v) => `${Math.floor(v)}:${String(Math.round((v % 1) * 60)).padStart(2, "0")}`}/><Tooltip formatter={(value, name) => name === "checkIn" ? [`${Math.floor(Number(value))}:${String(Math.round((Number(value) % 1) * 60)).padStart(2, "0")}`, "Average check-in"] : [`${value} h`, "Hours worked"]}/><Bar yAxisId="hours" dataKey="hours" fill="#1D2825" radius={[7,7,0,0]}/><Line yAxisId="time" dataKey="checkIn" stroke="#f59e0b" strokeWidth={3} connectNulls dot={{ r: 3 }}/></ComposedChart></ResponsiveContainer></div></section>
         <section className="bg-white rounded-3xl p-6 shadow-sm"><h2 className="font-bold text-lg mb-5">Latest employee location</h2>{loc ? <><iframe title="Employee attendance location" className="w-full h-60 rounded-2xl border-0" src={mapUrl}/><p className="text-sm font-medium mt-3">{selected?.employee_name}</p><p className="text-xs text-gray-400">Captured {time(selected?.last_action_at)}{loc.accuracy ? ` · ±${Math.round(loc.accuracy)} m` : ""}</p></> : <div className="h-60 rounded-2xl bg-gray-50 grid place-items-center text-sm text-gray-400"><Location size={24}/>No location recorded yet</div>}</section>
       </div>
       <div className="grid grid-cols-[1fr_1fr] gap-6">

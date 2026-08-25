@@ -13,7 +13,8 @@ export type NotificationKind =
   | "access_approved"
   | "access_denied"
   | "internal_message"
-  | "daily_report";
+  | "daily_report"
+  | "attendance";
 
 type Recipient = { notification_preferences?: Record<string, boolean> };
 type DeviceToken = {
@@ -34,6 +35,7 @@ const preferenceKey: Partial<Record<NotificationKind, string>> = {
   // who disabled inbox alerts also lost internal messages without realizing it.
   internal_message: "teamChat",
   daily_report: "dailyReport",
+  attendance: "attendance",
 };
 
 export async function notifyUsers(args: {

@@ -40,7 +40,7 @@ export const onMessageCreated = onDocumentCreated(
 
     const recipients = msg.connection_scope === "personal" && msg.owner_uid
       ? [String(msg.owner_uid)]
-      : await notificationRecipients(enterpriseId, "members");
+      : await notificationRecipients(enterpriseId, "managers");
     await notifyUsers({
       enterpriseId,
       recipientUids: recipients,

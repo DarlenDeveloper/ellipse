@@ -3195,6 +3195,17 @@ class _InboxReadingScreenState extends State<_InboxReadingScreen> {
                         final body = _emailBodyToText(
                           '${message['body'] ?? message['snippet'] ?? ''}',
                         );
+                        final attachments =
+                            (message['attachments'] as List? ?? const [])
+                                .whereType<Map>()
+                                .map(
+                                  (item) => Map<String, dynamic>.from(item),
+                                )
+                                .where(
+                                  (item) =>
+                                      '${item['url'] ?? ''}'.isNotEmpty,
+                                )
+                                .toList();
                         return Align(
                           alignment: mine
                               ? Alignment.centerRight
@@ -3222,6 +3233,18 @@ class _InboxReadingScreenState extends State<_InboxReadingScreen> {
                                   ),
                                 const SizedBox(height: 5),
                                 _LinkifiedEmailText(text: body, mine: mine),
+                                if (attachments.isNotEmpty) ...[
+                                  const SizedBox(height: 10),
+                                  ...attachments.map(
+                                    (attachment) => Padding(
+                                      padding: const EdgeInsets.only(bottom: 6),
+                                      child: _EmailAttachmentTile(
+                                        attachment: attachment,
+                                        mine: mine,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                                 const SizedBox(height: 8),
                                 Text(
                                   _date(message['timestamp']),
@@ -3238,6 +3261,122 @@ class _InboxReadingScreenState extends State<_InboxReadingScreen> {
                         );
                       },
                     ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EmailAttachmentTile extends StatelessWidget {
+  const _EmailAttachmentTile({required this.attachment, required this.mine});
+
+  final Map<String, dynamic> attachment;
+  final bool mine;
+
+  String _formatSize(dynamic value) {
+    final bytes = value is num ? value.toInt() : 0;
+    if (bytes <= 0) return '';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).ceil()} KB';
+    return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final url = '${attachment['url'] ?? ''}';
+    final fileName = '${attachment['fileName'] ?? 'Attachment'}';
+    final contentType = '${attachment['contentType'] ?? ''}';
+    final size = _formatSize(attachment['size']);
+    final isImage = _isImageContentType(contentType);
+    final accent = mine ? Colors.white : const Color(0xFF426FA8);
+
+    return InkWell(
+      onTap: () async {
+        final uri = Uri.tryParse(url);
+        if (uri == null) return;
+        final opened = await launchUrl(
+          uri,
+          mode: LaunchMode.externalApplication,
+        );
+        if (!opened && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not open this attachment.')),
+          );
+        }
+      },
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: mine
+              ? Colors.white.withValues(alpha: .12)
+              : const Color(0xFFEAF3FF),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (isImage)
+              Image.network(
+                url,
+                width: 260,
+                height: 200,
+                fit: BoxFit.cover,
+                loadingBuilder: (context, child, loading) => loading == null
+                    ? child
+                    : const SizedBox(
+                        width: 260,
+                        height: 200,
+                        child: Center(
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                errorBuilder: (_, _, _) => const SizedBox(
+                  width: 260,
+                  height: 120,
+                  child: Center(child: Icon(Iconsax.gallery_slash)),
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 9,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Iconsax.document_download, size: 18, color: accent),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          fileName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.poppins(
+                            color: accent,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        if (size.isNotEmpty)
+                          Text(
+                            size,
+                            style: GoogleFonts.poppins(
+                              color: accent.withValues(alpha: 0.7),
+                              fontSize: 8.5,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),

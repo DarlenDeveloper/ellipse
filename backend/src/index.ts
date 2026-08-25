@@ -1675,6 +1675,15 @@ export const attendanceDashboard = onCall(async (request) => {
   return (await import("./attendance")).getAttendanceDashboard(request.auth.uid, request.data ?? {});
 });
 
+export const scheduledAttendanceReminders = onSchedule(
+  { schedule: "every 60 minutes" },
+  async () => {
+    const { sendAttendanceReminders } = await import("./attendance");
+    const result = await sendAttendanceReminders();
+    logger.info("scheduledAttendanceReminders complete", result);
+  }
+);
+
 /** TEMPORARY — generate a detailed CRM report file and return its URL, to inspect contents. Remove before ship. */
 export const reportGenDebug = onRequest(
   { secrets: [zohoClientId, zohoClientSecret] },
