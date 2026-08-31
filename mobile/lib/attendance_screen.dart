@@ -6,6 +6,9 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:iconsax_flutter/iconsax_flutter.dart';
 
+import 'attendance_employee_detail.dart';
+import 'attendance_tracking.dart';
+
 class AttendanceScreen extends StatefulWidget {
   const AttendanceScreen({super.key});
   @override
@@ -493,7 +496,20 @@ class _AttendanceDashboardScreenState extends State<AttendanceDashboardScreen> {
         : status == 'field_work'
         ? const Color(0xFF8B5CF6)
         : const Color(0xFF8991A0);
-    return Container(
+    final outOfOffice = item['out_of_office'] == true;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(19),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => AttendanceEmployeeDetailScreen(
+              employeeUid: '${item['user_id'] ?? ''}',
+              employeeName: '${item['employee_name'] ?? 'Employee'}',
+            ),
+          ),
+        ),
+        child: Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
@@ -534,12 +550,24 @@ class _AttendanceDashboardScreenState extends State<AttendanceDashboardScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  '${item['employee_name'] ?? 'Employee'}',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
-                  ),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        '${item['employee_name'] ?? 'Employee'}',
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                    if (outOfOffice) ...[
+                      const SizedBox(width: 6),
+                      const Icon(Iconsax.location_slash,
+                          size: 13, color: Color(0xFFB77900)),
+                    ],
+                  ],
                 ),
                 const SizedBox(height: 3),
                 Text(
@@ -565,7 +593,12 @@ class _AttendanceDashboardScreenState extends State<AttendanceDashboardScreen> {
               ),
             ],
           ),
+          const SizedBox(width: 6),
+          const Icon(Icons.chevron_right_rounded,
+              size: 20, color: Color(0xFFB9C0CB)),
         ],
+      ),
+        ),
       ),
     );
   }
@@ -971,12 +1004,34 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   Future<void> _act(String action) async {
     final details = await _details(action);
     if (details == null) return;
+
+    // For field work we require tracking consent before starting. Ask first so
+    // we don't record the action then fail to track.
+    if (action == 'start_field_work') {
+      if (!await hasFieldTrackingConsent()) {
+        if (!mounted) return;
+        final consented = await showFieldTrackingConsent(context);
+        if (!consented) return;
+      }
+    }
+
     setState(() {
       _submitting = true;
       _error = null;
     });
     try {
       final position = await _position();
+
+      // Geofence check for clock-in: outside the office zone is allowed but the
+      // user confirms it will be flagged as an out-of-office clock-in.
+      if (action == 'clock_in' && !_withinGeofence(position)) {
+        final proceed = await _confirmOutOfOffice();
+        if (proceed != true) {
+          if (mounted) setState(() => _submitting = false);
+          return;
+        }
+      }
+
       await FirebaseFunctions.instanceFor(
         region: 'us-central1',
       ).httpsCallable('attendanceAction').call({
@@ -991,6 +1046,14 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         },
       });
       await _load();
+
+      // Start / stop the background field-work tracking service.
+      if (action == 'start_field_work') {
+        await startFieldTracking(scheduledEndMillis: _scheduledEndMillis());
+      } else if (action == 'return_from_field_work' || action == 'clock_out') {
+        await stopFieldTracking();
+      }
+
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -1008,6 +1071,84 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       if (mounted) setState(() => _submitting = false);
     }
   }
+
+  /// Reads the office geofence from settings and returns whether [position] is
+  /// inside it. When no geofence is configured or it's disabled, treats the
+  /// position as inside (never flag out-of-office).
+  bool _withinGeofence(Position position) {
+    final geofence = _settings?['geofence'];
+    if (geofence is! Map) return true;
+    if (geofence['enabled'] == false) return true;
+    final lat = (geofence['latitude'] as num?)?.toDouble();
+    final lng = (geofence['longitude'] as num?)?.toDouble();
+    final radius = (geofence['radius_m'] as num?)?.toDouble() ?? 1000;
+    if (lat == null || lng == null) return true;
+    final distance = Geolocator.distanceBetween(
+      lat,
+      lng,
+      position.latitude,
+      position.longitude,
+    );
+    return distance <= radius;
+  }
+
+  /// Today's scheduled end-of-work as UTC millis (the tracking privacy cutoff),
+  /// derived from the weekly schedule in settings. Null when today is disabled.
+  int? _scheduledEndMillis() {
+    final days = _settings?['days'];
+    if (days is! Map) return null;
+    const names = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+    final now = DateTime.now();
+    final today = days[names[now.weekday % 7]];
+    if (today is! Map || today['enabled'] == false) return null;
+    final end = '${today['end'] ?? ''}';
+    final parts = end.split(':');
+    if (parts.length != 2) return null;
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    if (h == null || m == null) return null;
+    return DateTime(now.year, now.month, now.day, h, m)
+        .millisecondsSinceEpoch;
+  }
+
+  Future<bool?> _confirmOutOfOffice() => showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+          ),
+          icon: const Icon(Iconsax.location_slash,
+              color: Color(0xFF1D2825), size: 30),
+          title: Text(
+            'Outside the office',
+            style: GoogleFonts.poppins(fontWeight: FontWeight.w700),
+          ),
+          content: Text(
+            "You're not within the office area. Your clock-in will be flagged "
+            'as an out-of-office clock-in for your manager to review.',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.poppins(fontSize: 13, height: 1.5),
+          ),
+          actionsAlignment: MainAxisAlignment.spaceBetween,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(
+                'Cancel',
+                style: GoogleFonts.poppins(color: const Color(0xFF687080)),
+              ),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF1D2825),
+                shape: const StadiumBorder(),
+              ),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Clock in anyway'),
+            ),
+          ],
+        ),
+      );
 
   String _actionLabel(String value) =>
       {
@@ -1219,9 +1360,9 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                         ],
                         if (_status != 'clocked_out')
                           const SizedBox(height: 24),
-                        if (_role == 'owner') ...[
+                        if (_role == 'owner' || _role == 'admin') ...[
                           _button(
-                            'Owner attendance dashboard',
+                            'Team attendance & monitoring',
                             Iconsax.chart_2,
                             'dashboard',
                             outlined: true,

@@ -21,6 +21,7 @@ import 'firebase_options.dart';
 import 'ivy_screen.dart';
 import 'push_notifications.dart';
 import 'attendance_screen.dart';
+import 'attendance_tracking.dart';
 
 final _navigatorKey = GlobalKey<NavigatorState>();
 
@@ -105,6 +106,8 @@ Future<void> main() async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
   await PushNotifications.instance.initialize(onTap: _openPushNotification);
+  // Prepare (but don't start) the field-work location tracking service.
+  await configureFieldTrackingService();
   runApp(const EllipseDeskApp());
 }
 

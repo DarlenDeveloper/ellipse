@@ -1675,12 +1675,31 @@ export const attendanceDashboard = onCall(async (request) => {
   return (await import("./attendance")).getAttendanceDashboard(request.auth.uid, request.data ?? {});
 });
 
+export const attendancePing = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  return (await import("./attendance")).recordAttendancePings(request.auth.uid, request.data ?? {});
+});
+
+export const attendanceEmployeeDetail = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  return (await import("./attendance")).getAttendanceEmployeeDetail(request.auth.uid, request.data ?? {});
+});
+
 export const scheduledAttendanceReminders = onSchedule(
   { schedule: "every 60 minutes" },
   async () => {
     const { sendAttendanceReminders } = await import("./attendance");
     const result = await sendAttendanceReminders();
     logger.info("scheduledAttendanceReminders complete", result);
+  }
+);
+
+export const scheduledAttendanceAutoClose = onSchedule(
+  { schedule: "every 60 minutes" },
+  async () => {
+    const { autoCloseAttendance } = await import("./attendance");
+    const result = await autoCloseAttendance();
+    logger.info("scheduledAttendanceAutoClose complete", result);
   }
 );
 

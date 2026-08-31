@@ -251,6 +251,14 @@ service cloud.firestore {
       allow update, delete: if signedIn() && resource.data.user_id == request.auth.uid;
     }
 
+    // ---- Attendance (server-gated: all reads/writes via Admin SDK callables) ----
+    // attendance_current, attendance_sessions, attendance_events,
+    // attendance_settings and attendance_tracks (field-work location routes) are
+    // deliberately NOT client-readable. Location tracks are sensitive; owners and
+    // admins read them only through the attendanceEmployeeDetail / attendanceDashboard
+    // callables, which enforce role + tenant checks. The default deny below covers
+    // these collections.
+
     // Deny everything else by default.
     match /{document=**} {
       allow read, write: if false;
