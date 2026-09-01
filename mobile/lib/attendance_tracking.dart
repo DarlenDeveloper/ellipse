@@ -107,6 +107,48 @@ Future<void> stopFieldTracking() async {
   }
 }
 
+/// Starts low-frequency (~30 min) location checks while the employee is simply
+/// clocked in and working (not on field work). Powers the live team map with an
+/// accurate recent position during working hours only. Stops automatically at
+/// the scheduled end-of-work (`scheduledEndMillis`).
+///
+/// Reuses the same background service + consent as field tracking but runs in
+/// 'working' mode: a single fresh fix every 30 minutes via `attendanceLocationPing`.
+Future<bool> startWorkingTracking({required int? scheduledEndMillis}) async {
+  if (kIsWeb) return false;
+  if (!await Geolocator.isLocationServiceEnabled()) return false;
+
+  var permission = await Geolocator.checkPermission();
+  if (permission == LocationPermission.denied) {
+    permission = await Geolocator.requestPermission();
+  }
+  if (permission == LocationPermission.denied ||
+      permission == LocationPermission.deniedForever) {
+    return false;
+  }
+
+  final service = FlutterBackgroundService();
+  if (await service.isRunning()) {
+    service.invoke('stop');
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+  }
+  await service.startService();
+  service.invoke('configure', {
+    'mode': 'working',
+    'scheduledEndMillis': scheduledEndMillis,
+  });
+  return true;
+}
+
+/// Stops working-hours location checks.
+Future<void> stopWorkingTracking() async {
+  if (kIsWeb) return;
+  final service = FlutterBackgroundService();
+  if (await service.isRunning()) {
+    service.invoke('stop');
+  }
+}
+
 /// Whether the tracking service is currently running.
 Future<bool> isFieldTrackingRunning() async {
   if (kIsWeb) return false;
@@ -136,8 +178,12 @@ Future<void> onFieldTrackingStart(ServiceInstance service) async {
 
   final buffer = <Map<String, dynamic>>[];
   int? scheduledEndMillis;
+  String mode = 'field';
   StreamSubscription<Position>? positionSub;
   Timer? flushTimer;
+  Timer? workingTimer;
+  Timer? cutoffTimer;
+  bool started = false;
 
   Future<void> flush() async {
     if (buffer.isEmpty) return;
@@ -160,55 +206,106 @@ Future<void> onFieldTrackingStart(ServiceInstance service) async {
     await flush();
     await positionSub?.cancel();
     flushTimer?.cancel();
+    workingTimer?.cancel();
+    cutoffTimer?.cancel();
     await service.stopSelf();
+  }
+
+  bool pastCutoff() {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    return scheduledEndMillis != null && nowMs >= scheduledEndMillis!;
+  }
+
+  // --- Working mode: one fresh fix every 30 minutes -----------------------
+  Future<void> workingPing() async {
+    if (pastCutoff()) {
+      await shutdown();
+      return;
+    }
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings:
+            const LocationSettings(accuracy: LocationAccuracy.high),
+      );
+      await FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('attendanceLocationPing')
+          .call({
+        'location': {
+          'latitude': pos.latitude,
+          'longitude': pos.longitude,
+          'accuracy': pos.accuracy,
+        },
+      });
+    } catch (_) {
+      // Ignore a single failed check; the next 30-min tick retries.
+    }
+    if (service is AndroidServiceInstance) {
+      service.setForegroundNotificationInfo(
+        title: 'Ellipse',
+        content: 'Sharing your location during working hours',
+      );
+    }
+  }
+
+  // --- Field mode: distance-filtered stream + 2-min flush -----------------
+  void startFieldMode() {
+    positionSub = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 50,
+      ),
+    ).listen((position) {
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      if (pastCutoff()) {
+        shutdown();
+        return;
+      }
+      buffer.add({
+        'latitude': position.latitude,
+        'longitude': position.longitude,
+        'accuracy': position.accuracy,
+        'timestamp': nowMs,
+      });
+      if (service is AndroidServiceInstance) {
+        service.setForegroundNotificationInfo(
+          title: 'Ellipse field work',
+          content: 'Recording your route · stops at end of work',
+        );
+      }
+    });
+    flushTimer = Timer.periodic(const Duration(minutes: 2), (_) => flush());
+  }
+
+  void startWorkingMode() {
+    // Immediate first fix, then every 30 minutes.
+    workingPing();
+    workingTimer =
+        Timer.periodic(const Duration(minutes: 30), (_) => workingPing());
   }
 
   service.on('configure').listen((event) {
     final end = event?['scheduledEndMillis'];
     if (end is int) scheduledEndMillis = end;
+    final m = event?['mode'];
+    if (m is String) mode = m;
+    // Set up the appropriate collector once (configure may fire more than once).
+    if (!started) {
+      started = true;
+      if (mode == 'working') {
+        startWorkingMode();
+      } else {
+        startFieldMode();
+      }
+      // Safety cutoff timer: stop precisely at end-of-work in either mode.
+      cutoffTimer = Timer.periodic(const Duration(seconds: 30), (t) {
+        if (pastCutoff()) {
+          t.cancel();
+          shutdown();
+        }
+      });
+    }
   });
   service.on('stop').listen((_) => shutdown());
-
-  // Distance-filtered stream: a new fix at most every ~50m of movement, which
-  // combined with the 2-minute flush keeps writes and battery low.
-  positionSub = Geolocator.getPositionStream(
-    locationSettings: const LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 50,
-    ),
-  ).listen((position) {
-    final nowMs = DateTime.now().millisecondsSinceEpoch;
-    // Privacy cutoff: stop entirely once end-of-work passes.
-    if (scheduledEndMillis != null && nowMs >= scheduledEndMillis!) {
-      shutdown();
-      return;
-    }
-    buffer.add({
-      'latitude': position.latitude,
-      'longitude': position.longitude,
-      'accuracy': position.accuracy,
-      'timestamp': nowMs,
-    });
-    if (service is AndroidServiceInstance) {
-      service.setForegroundNotificationInfo(
-        title: 'Ellipse field work',
-        content: 'Recording your route · stops at end of work',
-      );
-    }
-  });
-
-  // Flush every 2 minutes.
-  flushTimer = Timer.periodic(const Duration(minutes: 2), (_) => flush());
-
-  // Safety cutoff timer: if we have an end time, stop precisely at it even with
-  // no movement events arriving.
-  Timer.periodic(const Duration(seconds: 30), (t) {
-    final nowMs = DateTime.now().millisecondsSinceEpoch;
-    if (scheduledEndMillis != null && nowMs >= scheduledEndMillis!) {
-      t.cancel();
-      shutdown();
-    }
-  });
 }
 
 /// Consent bottom sheet shown before field-work tracking begins for the first
@@ -257,17 +354,19 @@ Future<bool> showFieldTrackingConsent(BuildContext context) async {
           ),
           const SizedBox(height: 18),
           Text(
-            'While you are on field work, Ellipse records your route so your '
-            'organization can verify client visits and time spent on site.',
+            'During your working hours, Ellipse shares your location with your '
+            'organization so managers can see the team on a live map. While you '
+            'are on field work, it also records your full route to verify client '
+            'visits and time on site.',
             style: GoogleFonts.poppins(fontSize: 13, height: 1.5),
           ),
           const SizedBox(height: 12),
           _consentPoint(Iconsax.clock,
-              'Tracking runs only during field work and stops automatically at your end-of-work time.'),
+              'Location is checked about every 30 minutes while working, and continuously during field work. It stops automatically at your end-of-work time — never after hours.'),
           _consentPoint(Iconsax.notification,
               'A notification stays visible the whole time tracking is active.'),
           _consentPoint(Iconsax.eye,
-              'Only your organization owner and admins can view your routes.'),
+              'Only your organization owner and admins can see your location and routes.'),
           const SizedBox(height: 20),
           SizedBox(
             width: double.infinity,

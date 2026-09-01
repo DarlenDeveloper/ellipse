@@ -218,10 +218,7 @@ class _AttendanceEmployeeDetailScreenState
         ],
       ),
       const SizedBox(height: 24),
-      _sectionHeader('Field-work routes',
-          '${tracks.where((t) => (t['points'] as List? ?? const []).length >= 2).length} recorded'),
-      const SizedBox(height: 12),
-      ..._routeCards(tracks),
+      _routesSection(tracks, sessions),
       const SizedBox(height: 24),
       _analyticsCard(_dailyHours(closed)),
       const SizedBox(height: 24),
@@ -234,195 +231,156 @@ class _AttendanceEmployeeDetailScreenState
 
   // ---- Route rendering --------------------------------------------------
 
-  List<Widget> _routeCards(List<Map<String, dynamic>> tracks) {
-    final withPoints = tracks.where((t) {
-      final pts = (t['points'] as List? ?? const []);
-      return pts.length >= 2;
-    }).toList();
-
-    if (withPoints.isEmpty) {
-      return [
-        Container(
-          padding: const EdgeInsets.all(22),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: const BoxDecoration(
-                  color: Color(0xFFF0F2EF),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Iconsax.map, color: Color(0xFF1D2825)),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Text(
-                  'No routes recorded yet. Field-work routes appear here once '
-                  'the employee starts a field trip with location tracking on.',
-                  style: GoogleFonts.poppins(
-                      fontSize: 12.5,
-                      height: 1.45,
-                      color: const Color(0xFF687080)),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ];
-    }
-
-    return withPoints.map((track) {
-      final points = (track['points'] as List)
-          .map((p) => Map<String, dynamic>.from(p as Map))
+  /// Build an ordered list of route views (most recent first) by joining each
+  /// track to its session for the date/label. Only routes with >= 2 points.
+  List<_RouteView> _routeViews(
+    List<Map<String, dynamic>> tracks,
+    List<Map<String, dynamic>> sessions,
+  ) {
+    final sessionById = {
+      for (final s in sessions) '${s['id'] ?? s['session_id'] ?? ''}': s,
+    };
+    final views = <_RouteView>[];
+    for (final t in tracks) {
+      final rawPts = (t['points'] as List? ?? const []);
+      if (rawPts.length < 2) continue;
+      final points = rawPts
+          .map((p) => LatLng(
+                ((p as Map)['latitude'] as num).toDouble(),
+                (p['longitude'] as num).toDouble(),
+              ))
           .toList();
-      final dwell = (track['dwell'] as List? ?? const [])
+      final dwell = (t['dwell'] as List? ?? const [])
           .map((d) => Map<String, dynamic>.from(d as Map))
           .toList();
-      final latLngs = points
-          .map((p) => LatLng((p['latitude'] as num).toDouble(),
-              (p['longitude'] as num).toDouble()))
-          .toList();
+      final sid = '${t['session_id'] ?? ''}';
+      final session = sessionById[sid];
+      final startedMs = _millis(session?['started_at']);
+      views.add(_RouteView(
+        sessionId: sid,
+        points: points,
+        dwell: dwell,
+        startedMs: startedMs,
+        dateKey: '${session?['date_key'] ?? t['date_key'] ?? ''}',
+      ));
+    }
+    // Most recent first: by session start, then by first-point timestamp.
+    views.sort((a, b) => b.startedMs.compareTo(a.startedMs));
+    return views;
+  }
 
-      final markers = <Marker>[
-        _pinMarker(latLngs.first, const Color(0xFF16A77A), Iconsax.location),
-        _pinMarker(latLngs.last, const Color(0xFFD64545), Iconsax.location_tick),
-        for (final d in dwell)
-          _dwellMarker(
-            LatLng((d['latitude'] as num).toDouble(),
-                (d['longitude'] as num).toDouble()),
-            _durationLabel((d['seconds'] as num?)?.toInt() ?? 0),
-          ),
-      ];
+  Widget _routesSection(
+    List<Map<String, dynamic>> tracks,
+    List<Map<String, dynamic>> sessions,
+  ) {
+    final views = _routeViews(tracks, sessions);
 
-      return Container(
-        margin: const EdgeInsets.only(bottom: 16),
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(24),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              height: 240,
-              child: FlutterMap(
-                options: MapOptions(
-                  initialCameraFit: CameraFit.bounds(
-                    bounds: _bounds(latLngs),
-                    padding: const EdgeInsets.all(36),
+    if (views.isEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _sectionHeader('Field-work routes', '0 recorded'),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(22),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFF0F2EF),
+                    shape: BoxShape.circle,
                   ),
-                  interactionOptions: const InteractionOptions(
-                    flags: InteractiveFlag.pinchZoom | InteractiveFlag.drag,
+                  child: const Icon(Iconsax.map, color: Color(0xFF1D2825)),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    'No routes recorded yet. Field-work routes appear here once '
+                    'the employee starts a field trip with location tracking on.',
+                    style: GoogleFonts.poppins(
+                        fontSize: 12.5,
+                        height: 1.45,
+                        color: const Color(0xFF687080)),
                   ),
                 ),
-                children: [
-                  TileLayer(
-                    urlTemplate:
-                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName: 'com.ellipse.ellipse_companion',
-                  ),
-                  PolylineLayer(
-                    polylines: [
-                      Polyline(
-                        points: latLngs,
-                        color: _dark,
-                        strokeWidth: 4,
-                      ),
-                    ],
-                  ),
-                  MarkerLayer(markers: markers),
-                ],
-              ),
+              ],
             ),
-            Padding(
-              padding: const EdgeInsets.all(14),
-              child: Row(
-                children: [
-                  const Icon(Iconsax.routing, size: 18, color: _dark),
-                  const SizedBox(width: 8),
-                  Text(
-                    '${latLngs.length} points',
-                    style: GoogleFonts.poppins(
-                        fontSize: 12.5, fontWeight: FontWeight.w600),
-                  ),
-                  const Spacer(),
-                  if (dwell.isNotEmpty)
-                    Text(
-                      '${dwell.length} stop${dwell.length == 1 ? '' : 's'}',
-                      style: GoogleFonts.poppins(
-                          fontSize: 12, color: const Color(0xFF687080)),
-                    ),
-                ],
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       );
-    }).toList();
-  }
+    }
 
-  Marker _pinMarker(LatLng point, Color color, IconData icon) => Marker(
-        point: point,
-        width: 34,
-        height: 34,
-        alignment: Alignment.topCenter,
-        child: Icon(icon, color: color, size: 30),
-      );
-
-  Marker _dwellMarker(LatLng point, String label) => Marker(
-        point: point,
-        width: 64,
-        height: 46,
-        alignment: Alignment.topCenter,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+    final recent = views.take(3).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
           children: [
-            const Icon(Iconsax.clock, color: Color(0xFFB77900), size: 22),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-              decoration: BoxDecoration(
-                color: const Color(0xFFB77900),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                label,
+            Text('Field-work routes',
                 style: GoogleFonts.poppins(
-                    fontSize: 9,
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600),
-              ),
-            ),
+                    fontSize: 17, fontWeight: FontWeight.w700)),
+            const Spacer(),
+            if (views.length > recent.length)
+              GestureDetector(
+                onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => _AllRoutesScreen(
+                    employeeName: widget.employeeName,
+                    routes: views,
+                  ),
+                )),
+                child: Row(
+                  children: [
+                    Text('View all ${views.length}',
+                        style: GoogleFonts.poppins(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFF3566F6))),
+                    const Icon(Iconsax.arrow_right_3,
+                        size: 14, color: Color(0xFF3566F6)),
+                  ],
+                ),
+              )
+            else
+              Text('${views.length} recorded',
+                  style:
+                      const TextStyle(fontSize: 10, color: Color(0xFF8991A0))),
           ],
         ),
-      );
-
-  LatLngBounds _bounds(List<LatLng> points) {
-    var minLat = points.first.latitude, maxLat = points.first.latitude;
-    var minLng = points.first.longitude, maxLng = points.first.longitude;
-    for (final p in points) {
-      minLat = math.min(minLat, p.latitude);
-      maxLat = math.max(maxLat, p.latitude);
-      minLng = math.min(minLng, p.longitude);
-      maxLng = math.max(maxLng, p.longitude);
-    }
-    // Guard against a zero-area bounds (single stationary cluster) which some
-    // fit algorithms dislike.
-    if ((maxLat - minLat).abs() < 0.0005) {
-      minLat -= 0.0025;
-      maxLat += 0.0025;
-    }
-    if ((maxLng - minLng).abs() < 0.0005) {
-      minLng -= 0.0025;
-      maxLng += 0.0025;
-    }
-    return LatLngBounds(LatLng(minLat, minLng), LatLng(maxLat, maxLng));
+        const SizedBox(height: 12),
+        ...recent.map((r) => Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: _RouteCard(
+                route: r,
+                subtitle: _routeSubtitle(r),
+                onOpen: () => _openRoute(r),
+              ),
+            )),
+      ],
+    );
   }
+
+  String _routeSubtitle(_RouteView r) {
+    final when =
+        r.startedMs > 0 ? _shortWhen(DateTime.fromMillisecondsSinceEpoch(r.startedMs)) : r.dateKey;
+    final stops = r.dwell.isEmpty
+        ? 'no stops'
+        : '${r.dwell.length} stop${r.dwell.length == 1 ? '' : 's'}';
+    return '$when · ${r.points.length} points · $stops';
+  }
+
+  void _openRoute(_RouteView r) => Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => _RouteMapScreen(
+          employeeName: widget.employeeName,
+          route: r,
+          subtitle: _routeSubtitle(r),
+        ),
+      ));
 
   // ---- Charts -----------------------------------------------------------
 
@@ -708,21 +666,503 @@ class _AttendanceEmployeeDetailScreenState
     final ampm = d.hour < 12 ? 'AM' : 'PM';
     return '${d.month}/${d.day} $hour:${d.minute.toString().padLeft(2, '0')} $ampm';
   }
-
-  String _durationLabel(int seconds) {
-    if (seconds < 60) return '${seconds}s';
-    final minutes = seconds ~/ 60;
-    if (minutes < 60) return '${minutes}m';
-    final hours = minutes ~/ 60;
-    final rem = minutes % 60;
-    return rem == 0 ? '${hours}h' : '${hours}h ${rem}m';
-  }
 }
 
 class _Bar {
   const _Bar({required this.label, required this.value});
   final String label;
   final double value;
+}
+
+// ===========================================================================
+// Field-work route views (recent thumbnails, full-screen zoom, view-all page)
+// ===========================================================================
+
+const _routeDark = Color(0xFF1D2825);
+
+/// A single field-work route (one session's polyline + dwell stops).
+class _RouteView {
+  const _RouteView({
+    required this.sessionId,
+    required this.points,
+    required this.dwell,
+    required this.startedMs,
+    required this.dateKey,
+  });
+
+  final String sessionId;
+  final List<LatLng> points;
+  final List<Map<String, dynamic>> dwell;
+  final int startedMs;
+  final String dateKey;
+}
+
+LatLngBounds _routeBounds(List<LatLng> points) {
+  var minLat = points.first.latitude, maxLat = points.first.latitude;
+  var minLng = points.first.longitude, maxLng = points.first.longitude;
+  for (final p in points) {
+    minLat = math.min(minLat, p.latitude);
+    maxLat = math.max(maxLat, p.latitude);
+    minLng = math.min(minLng, p.longitude);
+    maxLng = math.max(maxLng, p.longitude);
+  }
+  if ((maxLat - minLat).abs() < 0.0005) {
+    minLat -= 0.0025;
+    maxLat += 0.0025;
+  }
+  if ((maxLng - minLng).abs() < 0.0005) {
+    minLng -= 0.0025;
+    maxLng += 0.0025;
+  }
+  return LatLngBounds(LatLng(minLat, minLng), LatLng(maxLat, maxLng));
+}
+
+Marker _routePin(LatLng point, Color color, IconData icon, {bool big = false}) {
+  final size = big ? 40.0 : 32.0;
+  return Marker(
+    point: point,
+    width: size + 8,
+    height: size + 8,
+    alignment: Alignment.center,
+    child: Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: .45),
+            blurRadius: 8,
+            spreadRadius: 1,
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(3),
+      child: Container(
+        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        child: Icon(icon, color: Colors.white, size: size * 0.55),
+      ),
+    ),
+  );
+}
+
+String _routeDwellLabel(int seconds) {
+  if (seconds < 60) return '${seconds}s';
+  final minutes = seconds ~/ 60;
+  if (minutes < 60) return '${minutes}m';
+  final hours = minutes ~/ 60;
+  final rem = minutes % 60;
+  return rem == 0 ? '${hours}h' : '${hours}h ${rem}m';
+}
+
+Marker _routeDwellMarker(LatLng point, String label) => Marker(
+      point: point,
+      width: 64,
+      height: 46,
+      alignment: Alignment.topCenter,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Iconsax.clock, color: Color(0xFFB77900), size: 22),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+            decoration: BoxDecoration(
+              color: const Color(0xFFB77900),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(label,
+                style: GoogleFonts.poppins(
+                    fontSize: 9,
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+
+/// The shared route map. `interactive` enables full pinch-zoom / drag / rotate
+/// (used full-screen); when false it renders a static preview thumbnail.
+class _RouteMap extends StatelessWidget {
+  const _RouteMap({required this.route, this.interactive = false});
+
+  final _RouteView route;
+  final bool interactive;
+
+  @override
+  Widget build(BuildContext context) {
+    final pts = route.points;
+    final markers = <Marker>[
+      for (final d in route.dwell)
+        _routeDwellMarker(
+          LatLng((d['latitude'] as num).toDouble(),
+              (d['longitude'] as num).toDouble()),
+          _routeDwellLabel((d['seconds'] as num?)?.toInt() ?? 0),
+        ),
+      // Start / end drawn last so they sit above dwell markers.
+      _routePin(pts.first, const Color(0xFF16A77A), Iconsax.location, big: interactive),
+      _routePin(pts.last, const Color(0xFFD64545), Iconsax.location_tick, big: interactive),
+    ];
+
+    // Cased polyline: bold blue core with a white outline so the route reads
+    // clearly on any map tile (the standard navigation look). Thicker when
+    // interactive/full-screen.
+    final coreWidth = interactive ? 6.0 : 4.0;
+
+    return FlutterMap(
+      options: MapOptions(
+        initialCameraFit: CameraFit.bounds(
+          bounds: _routeBounds(pts),
+          padding: EdgeInsets.all(interactive ? 48 : 26),
+        ),
+        interactionOptions: InteractionOptions(
+          flags: interactive ? InteractiveFlag.all : InteractiveFlag.none,
+        ),
+      ),
+      children: [
+        TileLayer(
+          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+          userAgentPackageName: 'com.ellipse.ellipse_companion',
+        ),
+        PolylineLayer(
+          polylines: [
+            Polyline(
+              points: pts,
+              color: const Color(0xFF3566F6),
+              strokeWidth: coreWidth,
+              borderColor: Colors.white,
+              borderStrokeWidth: 3,
+            ),
+          ],
+        ),
+        MarkerLayer(markers: markers),
+      ],
+    );
+  }
+}
+
+/// Tappable route thumbnail: static map preview + label + "tap to expand" hint.
+class _RouteCard extends StatelessWidget {
+  const _RouteCard({
+    required this.route,
+    required this.subtitle,
+    required this.onOpen,
+  });
+
+  final _RouteView route;
+  final String subtitle;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onOpen,
+      child: Container(
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+              color: _routeDark.withValues(alpha: .05),
+              blurRadius: 14,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Stack(
+              children: [
+                // AbsorbPointer so the thumbnail scrolls with the list instead
+                // of eating drags; the whole card is tappable to expand.
+                SizedBox(
+                  height: 168,
+                  width: double.infinity,
+                  child: AbsorbPointer(
+                    child: _RouteMap(route: route),
+                  ),
+                ),
+                Positioned(
+                  right: 10,
+                  top: 10,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 9, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: .92),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Iconsax.maximize_4,
+                            size: 13, color: _routeDark),
+                        const SizedBox(width: 5),
+                        Text('Expand',
+                            style: GoogleFonts.poppins(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w600,
+                                color: _routeDark)),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                children: [
+                  const Icon(Iconsax.routing, size: 18, color: _routeDark),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.poppins(
+                            fontSize: 12.5, fontWeight: FontWeight.w600)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Full-screen, fully zoomable/pannable route viewer.
+class _RouteMapScreen extends StatelessWidget {
+  const _RouteMapScreen({
+    required this.employeeName,
+    required this.route,
+    required this.subtitle,
+  });
+
+  final String employeeName;
+  final _RouteView route;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Stack(
+        children: [
+          Positioned.fill(child: _RouteMap(route: route, interactive: true)),
+          // Back button + title card, pinned to the top (Align keeps this row
+          // at its intrinsic height so the card can't stretch down the screen).
+          SafeArea(
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _circleButton(
+                      icon: Iconsax.arrow_left_2,
+                      onTap: () => Navigator.of(context).pop(),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: .94),
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: [
+                            BoxShadow(
+                              color: _routeDark.withValues(alpha: .08),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(employeeName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: GoogleFonts.poppins(
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w700)),
+                            Text(subtitle,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: GoogleFonts.poppins(
+                                    fontSize: 10.5,
+                                    color: const Color(0xFF687080))),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // Legend, pinned bottom-left inside the safe area.
+          SafeArea(
+            child: Align(
+              alignment: Alignment.bottomLeft,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 0, 14, 16),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: .94),
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: _routeDark.withValues(alpha: .08),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      _LegendRow(
+                          color: Color(0xFF16A77A),
+                          icon: Iconsax.location,
+                          label: 'Start'),
+                      SizedBox(height: 4),
+                      _LegendRow(
+                          color: Color(0xFFD64545),
+                          icon: Iconsax.location_tick,
+                          label: 'End'),
+                      SizedBox(height: 4),
+                      _LegendRow(
+                          color: Color(0xFFB77900),
+                          icon: Iconsax.clock,
+                          label: 'Stop (dwell)'),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _circleButton({required IconData icon, required VoidCallback onTap}) =>
+      GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: .94),
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: _routeDark.withValues(alpha: .12),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Icon(icon, color: _routeDark, size: 20),
+        ),
+      );
+}
+
+class _LegendRow extends StatelessWidget {
+  const _LegendRow(
+      {required this.color, required this.icon, required this.label});
+  final Color color;
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 6),
+          Text(label,
+              style: GoogleFonts.poppins(
+                  fontSize: 11, fontWeight: FontWeight.w500)),
+        ],
+      );
+}
+
+/// "View all" page: every recorded route as a tappable thumbnail.
+class _AllRoutesScreen extends StatelessWidget {
+  const _AllRoutesScreen({required this.employeeName, required this.routes});
+
+  final String employeeName;
+  final List<_RouteView> routes;
+
+  String _subtitle(_RouteView r) {
+    final when = r.startedMs > 0
+        ? _shortWhen(DateTime.fromMillisecondsSinceEpoch(r.startedMs))
+        : r.dateKey;
+    final stops = r.dwell.isEmpty
+        ? 'no stops'
+        : '${r.dwell.length} stop${r.dwell.length == 1 ? '' : 's'}';
+    return '$when · ${r.points.length} points · $stops';
+  }
+
+  String _shortWhen(DateTime d) {
+    final hour = d.hour % 12 == 0 ? 12 : d.hour % 12;
+    final ampm = d.hour < 12 ? 'AM' : 'PM';
+    return '${d.month}/${d.day} $hour:${d.minute.toString().padLeft(2, '0')} $ampm';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _fill,
+      appBar: AppBar(
+        backgroundColor: _fill,
+        elevation: 0,
+        centerTitle: false,
+        iconTheme: const IconThemeData(color: _routeDark),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Field-work routes',
+                style: GoogleFonts.poppins(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: _routeDark)),
+            Text('$employeeName · ${routes.length} routes',
+                style: GoogleFonts.poppins(
+                    fontSize: 11, color: const Color(0xFF687080))),
+          ],
+        ),
+      ),
+      body: ListView.separated(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+        itemCount: routes.length,
+        separatorBuilder: (context, index) => const SizedBox(height: 14),
+        itemBuilder: (context, i) {
+          final r = routes[i];
+          return _RouteCard(
+            route: r,
+            subtitle: _subtitle(r),
+            onOpen: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => _RouteMapScreen(
+                employeeName: employeeName,
+                route: r,
+                subtitle: _subtitle(r),
+              ),
+            )),
+          );
+        },
+      ),
+    );
+  }
 }
 
 /// Shimmering skeleton shown while the employee detail loads. Mirrors the

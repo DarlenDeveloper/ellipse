@@ -475,10 +475,10 @@ class _SignInScreenState extends State<SignInScreen> {
               ),
               child: ConstrainedBox(
                 constraints: BoxConstraints(
-                  minHeight:
-                      MediaQuery.sizeOf(context).height -
-                      MediaQuery.paddingOf(context).vertical -
-                      46,
+                  minHeight: (MediaQuery.sizeOf(context).height -
+                          MediaQuery.paddingOf(context).vertical -
+                          46)
+                      .clamp(0.0, double.infinity),
                 ),
                 child: Column(
                   children: [

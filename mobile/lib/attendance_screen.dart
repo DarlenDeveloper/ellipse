@@ -8,6 +8,7 @@ import 'package:iconsax_flutter/iconsax_flutter.dart';
 
 import 'attendance_employee_detail.dart';
 import 'attendance_tracking.dart';
+import 'live_team_map.dart';
 
 class AttendanceScreen extends StatefulWidget {
   const AttendanceScreen({super.key});
@@ -144,7 +145,20 @@ class _AttendanceDashboardScreenState extends State<AttendanceDashboardScreen> {
                         ],
                       ),
                       const Spacer(),
-                      _iconButton(Iconsax.export_1),
+                      _iconButton(
+                        Iconsax.location,
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => LiveTeamMapScreen(
+                              current: current,
+                              settings: _data?['settings'] is Map
+                                  ? Map<String, dynamic>.from(
+                                      _data!['settings'] as Map)
+                                  : null,
+                            ),
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 22),
@@ -221,16 +235,19 @@ class _AttendanceDashboardScreenState extends State<AttendanceDashboardScreen> {
     );
   }
 
-  Widget _iconButton(IconData icon) => Container(
-    width: 42,
-    height: 42,
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: const Color(0xFFE7EAF0)),
-    ),
-    child: Icon(icon, size: 20),
-  );
+  Widget _iconButton(IconData icon, {VoidCallback? onTap}) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFE7EAF0)),
+          ),
+          child: Icon(icon, size: 20),
+        ),
+      );
 
   Widget _metric(
     String value,
@@ -1047,10 +1064,16 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       });
       await _load();
 
-      // Start / stop the background field-work tracking service.
+      // Start / stop the background tracking service by resulting status.
+      //  • clock_in / return_from_field_work -> working: 30-min location check
+      //  • start_field_work -> field: fine-grained route recording
+      //  • clock_out -> stop everything
       if (action == 'start_field_work') {
         await startFieldTracking(scheduledEndMillis: _scheduledEndMillis());
-      } else if (action == 'return_from_field_work' || action == 'clock_out') {
+      } else if (action == 'clock_in' ||
+          action == 'return_from_field_work') {
+        await startWorkingTracking(scheduledEndMillis: _scheduledEndMillis());
+      } else if (action == 'clock_out') {
         await stopFieldTracking();
       }
 

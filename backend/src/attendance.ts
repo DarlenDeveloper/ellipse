@@ -446,6 +446,56 @@ export async function recordAttendancePings(uid: string, args: Record<string, un
 }
 
 /**
+ * Records a single periodic location ping for an employee who is clocked in and
+ * "working" (not on field work). Used by the ~30-minute working-hours location
+ * check that powers the live team map. Updates `last_location` on the
+ * employee's attendance_current doc so owners/admins see an accurate, recent
+ * position during working hours only.
+ *
+ * Privacy: rejected unless the caller is currently `working`, and silently
+ * dropped once today's scheduled end-of-work has passed (the same cutoff the
+ * field-work tracking uses). No history is kept — only the latest point is
+ * stored — so this is deliberately less granular than field-work routes.
+ */
+export async function recordWorkingLocation(uid: string, args: Record<string, unknown>) {
+  const user = await caller(uid);
+  const loc = (args.location ?? {}) as Record<string, unknown>;
+  const latitude = Number(loc.latitude);
+  const longitude = Number(loc.longitude);
+  const accuracy = Number(loc.accuracy);
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90
+    || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    throw new HttpsError("invalid-argument", "A valid location is required.");
+  }
+
+  const currentRef = db.doc(`attendance_current/${user.enterpriseId}_${uid}`);
+  const currentSnap = await currentRef.get();
+  const current = currentSnap.data();
+  // Only accept pings while actually working. field_work uses attendancePing;
+  // clocked_out must never be tracked.
+  if (String(current?.status ?? "") !== "working") {
+    return { ok: true, stored: 0, cutoff: false, reason: "not_working" };
+  }
+
+  // Privacy cutoff: drop pings at/after today's scheduled end-of-work.
+  const settingsSnap = await db.doc(`attendance_settings/${user.enterpriseId}`).get();
+  const days = (settingsSnap.data()?.days ?? DEFAULT_SCHEDULE.days) as Record<string, { enabled: boolean; start: string; end: string }>;
+  const endMs = scheduledEndMillis(days);
+  if (endMs !== null && Date.now() >= endMs) {
+    return { ok: true, stored: 0, cutoff: true };
+  }
+
+  const now = Timestamp.now();
+  const location = { latitude, longitude, accuracy: Number.isFinite(accuracy) ? Math.max(0, accuracy) : null };
+  await currentRef.set({
+    last_location: location,
+    last_location_at: now,
+    location_source: "working_ping",
+  }, { merge: true });
+  return { ok: true, stored: 1, cutoff: false };
+}
+
+/**
  * Scheduled sweep (hourly). Auto clock-out and auto-end field trips for anyone
  * still clocked in more than one hour after their scheduled end-of-work.
  * Writes events flagged `auto: true` so the UI can show "auto clock-out due to

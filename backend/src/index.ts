@@ -1680,6 +1680,11 @@ export const attendancePing = onCall(async (request) => {
   return (await import("./attendance")).recordAttendancePings(request.auth.uid, request.data ?? {});
 });
 
+export const attendanceLocationPing = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  return (await import("./attendance")).recordWorkingLocation(request.auth.uid, request.data ?? {});
+});
+
 export const attendanceEmployeeDetail = onCall(async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
   return (await import("./attendance")).getAttendanceEmployeeDetail(request.auth.uid, request.data ?? {});
