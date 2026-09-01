@@ -43,3 +43,11 @@ body {
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+
+/* ---- Attendance live map pins ---- */
+@keyframes ping {
+  75%, 100% { transform: scale(2); opacity: 0; }
+}
+/* Keep Leaflet panes/controls below app overlays (modals, search dropdown). */
+.leaflet-container { z-index: 0; }
+.leaflet-pane, .leaflet-top, .leaflet-bottom { z-index: 1 !important; }
