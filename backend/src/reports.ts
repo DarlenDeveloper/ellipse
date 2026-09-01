@@ -600,10 +600,16 @@ export async function generateDueReports(now = new Date()): Promise<{ enterprise
 
     for (const period of periods) {
       const w = windowFor(period, todayStart, timeZone);
+      let periodReports = 0;
+      const agentLabels: string[] = [];
       for (const meta of agents) {
         try {
           const r = await generateReport(doc.id, meta, period, w, orgName);
-          if (r.created) reports++;
+          if (r.created) {
+            reports++;
+            periodReports++;
+            agentLabels.push(meta.label);
+          }
         } catch (e) {
           logger.error("generateReport failed", { enterprise: doc.id, agent: meta.agent, period, error: (e as Error).message });
         }
@@ -618,9 +624,75 @@ export async function generateDueReports(now = new Date()): Promise<{ enterprise
           logger.error("org-users report failed", { enterprise: doc.id, error: (e as Error).message });
         }
       }
+
+      // Notify owners once per period when agent reports are ready. A single
+      // digest per (enterprise, period) keeps this from spamming per-agent.
+      // Idempotent via a delivery marker so hourly re-runs don't re-notify.
+      // Note: the daily *team* report has its own 07:00 notification
+      // (notifyDueOwnerReports); this digest covers the agent/channel reports
+      // (Zoho, Gmail, weekly roll-ups, etc.) that previously notified nobody.
+      if (periodReports > 0) {
+        try {
+          await notifyDigest(doc.id, period, w, orgName, agentLabels);
+        } catch (e) {
+          logger.error("report digest notify failed", { enterprise: doc.id, period, error: (e as Error).message });
+        }
+      }
     }
   }
   return { enterprises, reports };
+}
+
+/**
+ * Sends one owner notification summarising the agent reports that just became
+ * available for a period. Idempotent per (enterprise, period, period-key).
+ */
+async function notifyDigest(
+  enterpriseId: string,
+  period: Period,
+  w: Window,
+  orgName: string,
+  agentLabels: string[]
+): Promise<void> {
+  const marker = db.doc(`notification_deliveries/${enterpriseId}_owner_${period}_${w.key}`);
+  if ((await marker.get()).exists) return;
+
+  const owners = await db.collection("users")
+    .where("enterprise_id", "==", enterpriseId)
+    .where("role", "==", "owner")
+    .get();
+  const recipientUids = owners.docs
+    .filter((owner) => (owner.data().status ?? "active") !== "disabled")
+    .map((owner) => owner.id);
+  if (!recipientUids.length) return;
+
+  // De-duplicate and format the channel list for the body.
+  const labels = Array.from(new Set(agentLabels));
+  const channelList = labels.length === 0
+    ? "your connected channels"
+    : labels.length <= 3
+      ? labels.join(", ")
+      : `${labels.slice(0, 3).join(", ")} +${labels.length - 3} more`;
+  const periodName = periodTitle(period).toLowerCase();
+
+  const { notifyUsers } = await import("./notifications");
+  await notifyUsers({
+    enterpriseId,
+    recipientUids,
+    kind: "agent_report",
+    title: `${periodTitle(period)} reports are ready`,
+    body: `${orgName}'s ${periodName} reports for ${channelList} are ready for ${w.label}.`,
+    href: "/data",
+  });
+
+  await marker.set({
+    enterprise_id: enterpriseId,
+    period,
+    period_key: w.key,
+    recipient_uids: recipientUids,
+    agent_labels: labels,
+    delivered_at: FieldValue.serverTimestamp(),
+  });
 }
 
 /** Send the completed team digest to organisation owners at 07:00 local time. */

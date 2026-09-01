@@ -14,6 +14,7 @@ export type NotificationKind =
   | "access_denied"
   | "internal_message"
   | "daily_report"
+  | "agent_report"
   | "attendance";
 
 type Recipient = { notification_preferences?: Record<string, boolean> };
@@ -35,6 +36,7 @@ const preferenceKey: Partial<Record<NotificationKind, string>> = {
   // who disabled inbox alerts also lost internal messages without realizing it.
   internal_message: "teamChat",
   daily_report: "dailyReport",
+  agent_report: "dailyReport",
   attendance: "attendance",
 };
 
