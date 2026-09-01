@@ -1022,6 +1022,18 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     final details = await _details(action);
     if (details == null) return;
 
+    // Ensure location access up front (prompts + guides to settings if needed).
+    // Required for the attendance action itself and any tracking it starts.
+    if (!mounted) return;
+    final hasLocation = await ensureLocationPermission(context);
+    if (!hasLocation) {
+      if (mounted) {
+        setState(() => _error =
+            'Location access is required to record attendance.');
+      }
+      return;
+    }
+
     // For field work we require tracking consent before starting. Ask first so
     // we don't record the action then fail to track.
     if (action == 'start_field_work') {

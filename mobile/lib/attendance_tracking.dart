@@ -30,6 +30,138 @@ import 'firebase_options.dart';
 const _kConsentKey = 'attendance_field_tracking_consent_v1';
 const _kServiceNotificationId = 4412;
 
+/// Result of a location-permission check.
+enum LocationAccessResult {
+  granted,
+  servicesOff,
+  denied,
+  deniedForever,
+  unsupported,
+}
+
+/// Checks location services + permission without prompting. Use to decide
+/// whether to show UI before triggering a request.
+Future<LocationAccessResult> checkLocationAccess() async {
+  if (kIsWeb) return LocationAccessResult.unsupported;
+  if (!await Geolocator.isLocationServiceEnabled()) {
+    return LocationAccessResult.servicesOff;
+  }
+  final permission = await Geolocator.checkPermission();
+  switch (permission) {
+    case LocationPermission.always:
+    case LocationPermission.whileInUse:
+      return LocationAccessResult.granted;
+    case LocationPermission.deniedForever:
+      return LocationAccessResult.deniedForever;
+    case LocationPermission.denied:
+    case LocationPermission.unableToDetermine:
+      return LocationAccessResult.denied;
+  }
+}
+
+/// Ensures the app can access location, prompting the user as needed:
+///  • services off  -> dialog with a button to open location settings
+///  • denied        -> requests the OS permission
+///  • deniedForever -> dialog with a button to open app settings
+///
+/// Returns true only when access is granted. Safe to call before clock-in or
+/// before starting tracking. No-op returns false on web.
+Future<bool> ensureLocationPermission(BuildContext context) async {
+  if (kIsWeb) return false;
+
+  if (!await Geolocator.isLocationServiceEnabled()) {
+    if (!context.mounted) return false;
+    final open = await _permissionDialog(
+      context,
+      title: 'Turn on location',
+      message:
+          'Location services are turned off on your device. Turn them on so '
+          'Ellipse can record your attendance and field-work location.',
+      actionLabel: 'Open location settings',
+    );
+    if (open == true) await Geolocator.openLocationSettings();
+    return await Geolocator.isLocationServiceEnabled() &&
+        await _hasPermission();
+  }
+
+  var permission = await Geolocator.checkPermission();
+  if (permission == LocationPermission.denied) {
+    permission = await Geolocator.requestPermission();
+  }
+
+  if (permission == LocationPermission.deniedForever) {
+    if (!context.mounted) return false;
+    final open = await _permissionDialog(
+      context,
+      title: 'Location access needed',
+      message:
+          'Ellipse needs location access for attendance. You’ve blocked it, so '
+          'please enable location for Ellipse in your device settings.',
+      actionLabel: 'Open app settings',
+    );
+    if (open == true) await Geolocator.openAppSettings();
+    return await _hasPermission();
+  }
+
+  return permission == LocationPermission.always ||
+      permission == LocationPermission.whileInUse;
+}
+
+Future<bool> _hasPermission() async {
+  final p = await Geolocator.checkPermission();
+  return p == LocationPermission.always || p == LocationPermission.whileInUse;
+}
+
+Future<bool?> _permissionDialog(
+  BuildContext context, {
+  required String title,
+  required String message,
+  required String actionLabel,
+}) {
+  return showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      backgroundColor: Colors.white,
+      shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: const BoxDecoration(
+                color: Color(0xFFF0F2EF), shape: BoxShape.circle),
+            child: const Icon(Iconsax.location, color: Color(0xFF1D2825)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(title,
+                style: GoogleFonts.poppins(
+                    fontSize: 16, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+      content: Text(message,
+          style: GoogleFonts.poppins(fontSize: 13, height: 1.5)),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: Text('Not now',
+              style: GoogleFonts.poppins(color: const Color(0xFF687080))),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFF1D2825),
+            shape: const StadiumBorder(),
+          ),
+          onPressed: () => Navigator.pop(context, true),
+          child: Text(actionLabel),
+        ),
+      ],
+    ),
+  );
+}
+
 /// Whether the employee has previously granted field-work tracking consent.
 Future<bool> hasFieldTrackingConsent() async {
   final prefs = await SharedPreferences.getInstance();
