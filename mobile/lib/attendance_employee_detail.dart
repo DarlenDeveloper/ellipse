@@ -8,10 +8,9 @@ import 'dart:math' as math;
 
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:iconsax_flutter/iconsax_flutter.dart';
-import 'package:latlong2/latlong.dart';
 
 const _dark = Color(0xFF1D2825);
 const _fill = Color(0xFFF4F4F1);
@@ -714,36 +713,24 @@ LatLngBounds _routeBounds(List<LatLng> points) {
     minLng -= 0.0025;
     maxLng += 0.0025;
   }
-  return LatLngBounds(LatLng(minLat, minLng), LatLng(maxLat, maxLng));
-}
-
-Marker _routePin(LatLng point, Color color, IconData icon, {bool big = false}) {
-  final size = big ? 40.0 : 32.0;
-  return Marker(
-    point: point,
-    width: size + 8,
-    height: size + 8,
-    alignment: Alignment.center,
-    child: Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: color.withValues(alpha: .45),
-            blurRadius: 8,
-            spreadRadius: 1,
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.all(3),
-      child: Container(
-        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-        child: Icon(icon, color: Colors.white, size: size * 0.55),
-      ),
-    ),
+  return LatLngBounds(
+    southwest: LatLng(minLat, minLng),
+    northeast: LatLng(maxLat, maxLng),
   );
 }
+
+Marker _routePin(
+  String id,
+  LatLng point,
+  double hue,
+  String title,
+) =>
+    Marker(
+      markerId: MarkerId(id),
+      position: point,
+      icon: BitmapDescriptor.defaultMarkerWithHue(hue),
+      infoWindow: InfoWindow(title: title),
+    );
 
 String _routeDwellLabel(int seconds) {
   if (seconds < 60) return '${seconds}s';
@@ -754,87 +741,88 @@ String _routeDwellLabel(int seconds) {
   return rem == 0 ? '${hours}h' : '${hours}h ${rem}m';
 }
 
-Marker _routeDwellMarker(LatLng point, String label) => Marker(
-      point: point,
-      width: 64,
-      height: 46,
-      alignment: Alignment.topCenter,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Iconsax.clock, color: Color(0xFFB77900), size: 22),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-            decoration: BoxDecoration(
-              color: const Color(0xFFB77900),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(label,
-                style: GoogleFonts.poppins(
-                    fontSize: 9,
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600)),
-          ),
-        ],
-      ),
+Marker _routeDwellMarker(int index, LatLng point, String label) => Marker(
+      markerId: MarkerId('dwell-$index'),
+      position: point,
+      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow),
+      infoWindow: InfoWindow(title: 'Stopped for $label'),
     );
 
 /// The shared route map. `interactive` enables full pinch-zoom / drag / rotate
 /// (used full-screen); when false it renders a static preview thumbnail.
-class _RouteMap extends StatelessWidget {
+class _RouteMap extends StatefulWidget {
   const _RouteMap({required this.route, this.interactive = false});
 
   final _RouteView route;
   final bool interactive;
 
   @override
+  State<_RouteMap> createState() => _RouteMapState();
+}
+
+class _RouteMapState extends State<_RouteMap> {
+  GoogleMapController? _controller;
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final pts = route.points;
+    final pts = widget.route.points;
     final markers = <Marker>[
-      for (final d in route.dwell)
+      for (final entry in widget.route.dwell.asMap().entries)
         _routeDwellMarker(
-          LatLng((d['latitude'] as num).toDouble(),
-              (d['longitude'] as num).toDouble()),
-          _routeDwellLabel((d['seconds'] as num?)?.toInt() ?? 0),
+          entry.key,
+          LatLng((entry.value['latitude'] as num).toDouble(),
+              (entry.value['longitude'] as num).toDouble()),
+          _routeDwellLabel((entry.value['seconds'] as num?)?.toInt() ?? 0),
         ),
-      // Start / end drawn last so they sit above dwell markers.
-      _routePin(pts.first, const Color(0xFF16A77A), Iconsax.location, big: interactive),
-      _routePin(pts.last, const Color(0xFFD64545), Iconsax.location_tick, big: interactive),
+      _routePin('start', pts.first, BitmapDescriptor.hueGreen, 'Route start'),
+      _routePin('end', pts.last, BitmapDescriptor.hueRed, 'Route end'),
     ];
 
     // Cased polyline: bold blue core with a white outline so the route reads
     // clearly on any map tile (the standard navigation look). Thicker when
     // interactive/full-screen.
-    final coreWidth = interactive ? 6.0 : 4.0;
+    final coreWidth = widget.interactive ? 6.0 : 4.0;
 
-    return FlutterMap(
-      options: MapOptions(
-        initialCameraFit: CameraFit.bounds(
-          bounds: _routeBounds(pts),
-          padding: EdgeInsets.all(interactive ? 48 : 26),
+    return GoogleMap(
+      initialCameraPosition: CameraPosition(target: pts.first, zoom: 14),
+      markers: markers.toSet(),
+      polylines: {
+        Polyline(
+          polylineId: const PolylineId('field-route'),
+          points: pts,
+          color: const Color(0xFF3566F6),
+          width: coreWidth.round(),
+          geodesic: true,
+          startCap: Cap.roundCap,
+          endCap: Cap.roundCap,
         ),
-        interactionOptions: InteractionOptions(
-          flags: interactive ? InteractiveFlag.all : InteractiveFlag.none,
-        ),
-      ),
-      children: [
-        TileLayer(
-          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-          userAgentPackageName: 'com.ellipse.ellipse_companion',
-        ),
-        PolylineLayer(
-          polylines: [
-            Polyline(
-              points: pts,
-              color: const Color(0xFF3566F6),
-              strokeWidth: coreWidth,
-              borderColor: Colors.white,
-              borderStrokeWidth: 3,
+      },
+      mapType: MapType.normal,
+      mapToolbarEnabled: false,
+      zoomControlsEnabled: false,
+      myLocationButtonEnabled: false,
+      compassEnabled: widget.interactive,
+      rotateGesturesEnabled: widget.interactive,
+      scrollGesturesEnabled: widget.interactive,
+      zoomGesturesEnabled: widget.interactive,
+      tiltGesturesEnabled: widget.interactive,
+      onMapCreated: (controller) {
+        _controller = controller;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          controller.animateCamera(
+            CameraUpdate.newLatLngBounds(
+              _routeBounds(pts),
+              widget.interactive ? 48 : 26,
             ),
-          ],
-        ),
-        MarkerLayer(markers: markers),
-      ],
+          );
+        });
+      },
     );
   }
 }

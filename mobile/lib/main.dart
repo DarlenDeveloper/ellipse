@@ -4689,50 +4689,6 @@ class _ProfileScreenState extends State<_ProfileScreen> {
                           ),
                         ],
                         const SizedBox(height: 30),
-                        const _ProfileSectionTitle(title: 'Work'),
-                        const SizedBox(height: 10),
-                        Material(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(22),
-                          child: ListTile(
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 18,
-                              vertical: 8,
-                            ),
-                            leading: const CircleAvatar(
-                              backgroundColor: Color(0xFF1D2825),
-                              child: Icon(
-                                Iconsax.clock,
-                                color: Colors.white,
-                                size: 20,
-                              ),
-                            ),
-                            title: Text(
-                              'Attendance & field work',
-                              style: GoogleFonts.poppins(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            subtitle: Text(
-                              'Clock in, clock out, and record client visits',
-                              style: GoogleFonts.poppins(
-                                fontSize: 11,
-                                color: const Color(0xFF999994),
-                              ),
-                            ),
-                            trailing: const Icon(
-                              Icons.arrow_forward_ios_rounded,
-                              size: 16,
-                            ),
-                            onTap: () => Navigator.of(context).push(
-                              MaterialPageRoute<void>(
-                                builder: (_) => const AttendanceScreen(),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 26),
                         SizedBox(
                           width: double.infinity,
                           height: 52,
@@ -4753,20 +4709,6 @@ class _ProfileScreenState extends State<_ProfileScreen> {
                 ],
               ),
       ),
-    );
-  }
-}
-
-class _ProfileSectionTitle extends StatelessWidget {
-  const _ProfileSectionTitle({required this.title});
-
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      title,
-      style: GoogleFonts.poppins(fontSize: 15, fontWeight: FontWeight.w600),
     );
   }
 }
@@ -5059,7 +5001,66 @@ class _HomeDashboardState extends State<_HomeDashboard> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 32),
+                  const SizedBox(height: 26),
+                  Row(
+                    children: [
+                      Text(
+                        'Quick actions',
+                        style: GoogleFonts.poppins(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: -0.2,
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        'Shortcuts',
+                        style: GoogleFonts.poppins(
+                          color: const Color(0xFFAAA9A5),
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 11),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _QuickActionButton(
+                          label: 'Clock in',
+                          caption: 'Attendance',
+                          icon: Iconsax.timer_start,
+                          accent: const Color(0xFF438FF2),
+                          active: true,
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const AttendanceScreen(),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 9),
+                      const Expanded(
+                        child: _QuickActionButton(
+                          accent: Color(0xFF42B3D1),
+                        ),
+                      ),
+                      const SizedBox(width: 9),
+                      const Expanded(
+                        child: _QuickActionButton(
+                          accent: Color(0xFF6E83ED),
+                        ),
+                      ),
+                      const SizedBox(width: 9),
+                      const Expanded(
+                        child: _QuickActionButton(
+                          accent: Color(0xFF9575D8),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 30),
                   Row(
                     children: [
                       Text(
@@ -5288,6 +5289,111 @@ class _DashboardListSkeleton extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _QuickActionButton extends StatelessWidget {
+  const _QuickActionButton({
+    this.label = 'Soon',
+    this.caption = 'Reserved',
+    this.icon = Iconsax.add_circle,
+    this.accent = const Color(0xFF438FF2),
+    this.active = false,
+    this.onTap,
+  });
+
+  final String label;
+  final String caption;
+  final IconData icon;
+  final Color accent;
+  final bool active;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    const foreground = Color(0xFF17233A);
+    final content = Container(
+      height: 94,
+      padding: const EdgeInsets.fromLTRB(11, 12, 9, 10),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color.lerp(Colors.white, accent, active ? .22 : .16)!,
+            Color.lerp(Colors.white, accent, active ? .08 : .055)!,
+          ],
+        ),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: Colors.white.withValues(alpha: .72)),
+        boxShadow: [
+          BoxShadow(
+            color: accent.withValues(alpha: active ? .10 : .065),
+            blurRadius: 16,
+            offset: const Offset(0, 7),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 21, color: foreground),
+              const Spacer(),
+              if (active)
+                Icon(Iconsax.arrow_right_3, size: 13, color: accent)
+              else
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: .58),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+            ],
+          ),
+          const Spacer(),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.poppins(
+              color: foreground,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+              letterSpacing: -0.15,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            caption,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.poppins(
+              color: const Color(0xFF66758C),
+              fontSize: 8.5,
+              fontWeight: FontWeight.w400,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    return Semantics(
+      button: active,
+      enabled: active,
+      label: active ? label : 'Reserved quick action',
+      child: active
+          ? Material(
+              color: Colors.transparent,
+              borderRadius: BorderRadius.circular(22),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(onTap: onTap, child: content),
+            )
+          : content,
     );
   }
 }

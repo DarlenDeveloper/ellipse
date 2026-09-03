@@ -13,6 +13,7 @@ setGlobalOptions({ region: "us-central1", maxInstances: 10 });
 const geminiKey = defineSecret("GEMINI_API_KEY");
 const googleClientId = defineSecret("GOOGLE_OAUTH_CLIENT_ID");
 const googleClientSecret = defineSecret("GOOGLE_OAUTH_CLIENT_SECRET");
+const googleMapsApiKey = defineSecret("MAPS_KEY");
 const zohoClientId = defineSecret("ZOHO_CLIENT_ID");
 const zohoClientSecret = defineSecret("ZOHO_CLIENT_SECRET");
 const whatsappVerifyToken = defineSecret("WHATSAPP_VERIFY_TOKEN");
@@ -1663,6 +1664,36 @@ export const attendanceStatus = onCall(async (request) => {
 export const attendanceAction = onCall(async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
   return (await import("./attendance")).recordAttendanceAction(request.auth.uid, request.data ?? {});
+});
+
+export const saveFieldWorkLocation = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  return (await import("./attendance")).saveFieldWorkLocation(request.auth.uid, request.data ?? {});
+});
+
+export const deleteFieldWorkLocation = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  return (await import("./attendance")).deleteFieldWorkLocation(request.auth.uid, request.data ?? {});
+});
+
+export const setAttendanceAutoClockIn = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  return (await import("./attendance")).setAttendanceAutoClockIn(request.auth.uid, request.data ?? {});
+});
+
+export const attendanceAutoClockIn = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  return (await import("./attendance")).automaticClockIn(request.auth.uid, request.data ?? {});
+});
+
+export const placesAutocomplete = onCall({ secrets: [googleMapsApiKey] }, async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  return (await import("./places")).autocompletePlaces(googleMapsApiKey.value(), request.data ?? {});
+});
+
+export const placeDetails = onCall({ secrets: [googleMapsApiKey] }, async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  return (await import("./places")).getPlaceDetails(googleMapsApiKey.value(), request.data ?? {});
 });
 
 export const updateAttendanceSettings = onCall(async (request) => {

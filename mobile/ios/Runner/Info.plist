@@ -8,7 +8,9 @@
 	<string>With your consent, Ellipse records your route during field work so your organization can verify visits. Tracking runs only while you are on field work and stops automatically at your end-of-work time.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
 	<string>With your consent, Ellipse records your route during field work and stops automatically at your end-of-work time.</string>
-		<key>CFBundleDevelopmentRegion</key>
+	<key>GOOGLE_MAPS_API_KEY</key>
+	<string>$(GOOGLE_MAPS_API_KEY)</string>
+	<key>CFBundleDevelopmentRegion</key>
 		<string>$(DEVELOPMENT_LANGUAGE)</string>
 		<key>CFBundleDisplayName</key>
 		<string>Ellipse Desk</string>

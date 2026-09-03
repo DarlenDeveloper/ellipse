@@ -12,10 +12,9 @@
 // the status list, not on the map.
 
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:iconsax_flutter/iconsax_flutter.dart';
-import 'package:latlong2/latlong.dart';
 
 const _dark = Color(0xFF1D2825);
 const _fill = Color(0xFFF4F4F1);
@@ -44,7 +43,7 @@ class LiveTeamMapScreen extends StatefulWidget {
 
 class _LiveTeamMapScreenState extends State<LiveTeamMapScreen> {
   final _searchController = TextEditingController();
-  final _mapController = MapController();
+  GoogleMapController? _mapController;
   String _query = '';
 
   List<Map<String, dynamic>> get current => widget.current;
@@ -52,6 +51,7 @@ class _LiveTeamMapScreenState extends State<LiveTeamMapScreen> {
 
   @override
   void dispose() {
+    _mapController?.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -161,7 +161,9 @@ class _LiveTeamMapScreenState extends State<LiveTeamMapScreen> {
                   child: plottable.isEmpty
                       ? _NoLocations(hasOnDuty: onDuty.isNotEmpty)
                       : _TeamMap(
-                          points: plottable, controller: _mapController),
+                          points: plottable,
+                          onMapCreated: (controller) => _mapController = controller,
+                        ),
                 ),
 
                 // Floating top: back button + search bar (transparent bg).
@@ -343,7 +345,9 @@ class _LiveTeamMapScreenState extends State<LiveTeamMapScreen> {
     return InkWell(
       onTap: locatable
           ? () {
-              _mapController.move(hit.point!, 16);
+              _mapController?.animateCamera(
+                CameraUpdate.newLatLngZoom(hit.point!, 16),
+              );
               _searchController.clear();
               setState(() => _query = '');
             }
@@ -452,15 +456,21 @@ class _SearchHit {
   final LatLng? point;
 }
 
-class _TeamMap extends StatelessWidget {
-  const _TeamMap({required this.points, required this.controller});
+class _TeamMap extends StatefulWidget {
+  const _TeamMap({required this.points, required this.onMapCreated});
   final List<_TeamPoint> points;
-  final MapController controller;
+  final ValueChanged<GoogleMapController> onMapCreated;
+
+  @override
+  State<_TeamMap> createState() => _TeamMapState();
+}
+
+class _TeamMapState extends State<_TeamMap> {
 
   LatLngBounds _bounds() {
-    var minLat = points.first.point.latitude, maxLat = minLat;
-    var minLng = points.first.point.longitude, maxLng = minLng;
-    for (final p in points) {
+    var minLat = widget.points.first.point.latitude, maxLat = minLat;
+    var minLng = widget.points.first.point.longitude, maxLng = minLng;
+    for (final p in widget.points) {
       if (p.point.latitude < minLat) minLat = p.point.latitude;
       if (p.point.latitude > maxLat) maxLat = p.point.latitude;
       if (p.point.longitude < minLng) minLng = p.point.longitude;
@@ -474,90 +484,51 @@ class _TeamMap extends StatelessWidget {
       minLng -= 0.01;
       maxLng += 0.01;
     }
-    return LatLngBounds(LatLng(minLat, minLng), LatLng(maxLat, maxLng));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FlutterMap(
-      mapController: controller,
-      options: MapOptions(
-        initialCameraFit: CameraFit.bounds(
-          bounds: _bounds(),
-          padding: const EdgeInsets.all(64),
-        ),
-        interactionOptions:
-            const InteractionOptions(flags: InteractiveFlag.all),
-      ),
-      children: [
-        TileLayer(
-          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-          userAgentPackageName: 'com.ellipse.ellipse_companion',
-        ),
-        MarkerLayer(
-          markers: [
-            for (final p in points)
-              Marker(
-                point: p.point,
-                width: 120,
-                height: 62,
-                alignment: Alignment.topCenter,
-                child: _PersonPin(point: p),
-              ),
-          ],
-        ),
-      ],
+    return LatLngBounds(
+      southwest: LatLng(minLat, minLng),
+      northeast: LatLng(maxLat, maxLng),
     );
   }
-}
-
-class _PersonPin extends StatelessWidget {
-  const _PersonPin({required this.point});
-  final _TeamPoint point;
 
   @override
   Widget build(BuildContext context) {
-    final first = point.name.split(' ').first;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(
-                  color: point.color.withValues(alpha: .35), blurRadius: 6),
-            ],
+    return GoogleMap(
+      initialCameraPosition: CameraPosition(
+        target: widget.points.first.point,
+        zoom: 13,
+      ),
+      markers: {
+        for (var index = 0; index < widget.points.length; index++)
+          Marker(
+            markerId: MarkerId('team-$index'),
+            position: widget.points[index].point,
+            infoWindow: InfoWindow(
+              title: widget.points[index].name,
+              snippet: widget.points[index].live
+                  ? 'On field work · live'
+                  : 'Working · last known location',
+            ),
+            icon: BitmapDescriptor.defaultMarkerWithHue(
+              widget.points[index].live
+                  ? BitmapDescriptor.hueViolet
+                  : BitmapDescriptor.hueAzure,
+            ),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(point.live ? Iconsax.routing : Iconsax.user,
-                  size: 12, color: point.color),
-              const SizedBox(width: 4),
-              Text(first,
-                  style: GoogleFonts.poppins(
-                      fontSize: 10.5, fontWeight: FontWeight.w600)),
-            ],
-          ),
-        ),
-        Container(
-          margin: const EdgeInsets.only(top: 2),
-          width: 16,
-          height: 16,
-          decoration: BoxDecoration(
-            color: point.color,
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 2.5),
-            boxShadow: [
-              BoxShadow(
-                  color: point.color.withValues(alpha: .5), blurRadius: 4),
-            ],
-          ),
-        ),
-      ],
+      },
+      mapType: MapType.normal,
+      mapToolbarEnabled: false,
+      zoomControlsEnabled: false,
+      myLocationButtonEnabled: false,
+      compassEnabled: true,
+      buildingsEnabled: true,
+      onMapCreated: (controller) {
+        widget.onMapCreated(controller);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          controller.animateCamera(
+            CameraUpdate.newLatLngBounds(_bounds(), 72),
+          );
+        });
+      },
     );
   }
 }

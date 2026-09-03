@@ -5,6 +5,16 @@ import { notifyUsers, notificationRecipients } from "./notifications";
 
 type AttendanceAction = "clock_in" | "start_field_work" | "return_from_field_work" | "clock_out";
 
+type FieldWorkLocation = {
+  id: string | null;
+  place_id: string | null;
+  label: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+  radius_m: number;
+};
+
 // Default office geofence. A single circular zone; clock-ins outside it are
 // allowed but flagged `out_of_office` so managers can see remote clock-ins.
 const DEFAULT_GEOFENCE = {
@@ -99,24 +109,155 @@ function validLocation(input: unknown) {
   return { latitude, longitude, accuracy: Number.isFinite(accuracy) ? Math.max(0, accuracy) : null };
 }
 
+function normalizeFieldWorkLocations(input: unknown): FieldWorkLocation[] {
+  if (!Array.isArray(input)) return [];
+  if (input.length > 8) {
+    throw new HttpsError("invalid-argument", "A field trip can include up to 8 locations.");
+  }
+  return input.map((raw, index) => {
+    const value = (raw ?? {}) as Record<string, unknown>;
+    const latitude = Number(value.latitude);
+    const longitude = Number(value.longitude);
+    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90
+      || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+      throw new HttpsError("invalid-argument", `Field-work location ${index + 1} is invalid.`);
+    }
+    const label = String(value.label ?? "").trim().slice(0, 120);
+    if (!label) throw new HttpsError("invalid-argument", "Every field-work location needs a name.");
+    const radius = Number(value.radius_m);
+    return {
+      id: value.id ? String(value.id).slice(0, 160) : null,
+      place_id: value.place_id || value.placeId ? String(value.place_id ?? value.placeId).slice(0, 256) : null,
+      label,
+      address: String(value.address ?? "").trim().slice(0, 300),
+      latitude,
+      longitude,
+      radius_m: Number.isFinite(radius) ? Math.min(5000, Math.max(50, Math.round(radius))) : 150,
+    };
+  });
+}
+
 export async function getAttendanceStatus(uid: string) {
   const user = await caller(uid);
-  const [current, settings, sessions, events] = await Promise.all([
+  const [current, settings, sessions, events, savedLocationDocs, autoClockIn] = await Promise.all([
     db.doc(`attendance_current/${user.enterpriseId}_${uid}`).get(),
     db.doc(`attendance_settings/${user.enterpriseId}`).get(),
     db.collection("attendance_sessions").where("user_id", "==", uid).get(),
     db.collection("attendance_events").where("user_id", "==", uid).get(),
+    db.collection("field_work_locations").where("user_id", "==", uid).get(),
+    db.doc(`attendance_auto_clock_in/${user.enterpriseId}_${uid}`).get(),
   ]);
   const recentSessions = sessions.docs.map((d) => ({ id: d.id, ...d.data() }))
     .sort((a: any, b: any) => (b.started_at?.toMillis?.() ?? 0) - (a.started_at?.toMillis?.() ?? 0)).slice(0, 14);
   const recentFieldWork = events.docs.map((d) => ({ id: d.id, ...d.data() }))
     .filter((d: any) => d.type === "return_from_field_work")
     .sort((a: any, b: any) => (b.occurred_at?.toMillis?.() ?? 0) - (a.occurred_at?.toMillis?.() ?? 0)).slice(0, 14);
+  const savedLocations = savedLocationDocs.docs
+    .filter((doc) => doc.data().enterprise_id === user.enterpriseId && doc.data().active !== false)
+    .map((doc) => ({ id: doc.id, ...doc.data() }))
+    .sort((a: any, b: any) => String(a.label ?? "").localeCompare(String(b.label ?? "")));
   return {
     current: current.exists ? current.data() : null,
     settings: settings.exists ? settings.data() : DEFAULT_SCHEDULE,
     dateKey: eatDateKey(), role: user.role, recentSessions, recentFieldWork,
+    savedLocations,
+    autoClockIn: { enabled: autoClockIn.data()?.enabled === true },
   };
+}
+
+export async function saveFieldWorkLocation(uid: string, args: Record<string, unknown>) {
+  const user = await caller(uid);
+  const [location] = normalizeFieldWorkLocations([args.location ?? args]);
+  const requestedId = String(args.id ?? location.id ?? "").trim();
+  const ref = requestedId
+    ? db.doc(`field_work_locations/${requestedId}`)
+    : db.collection("field_work_locations").doc();
+  if (requestedId) {
+    const existing = await ref.get();
+    if (!existing.exists
+      || existing.data()?.enterprise_id !== user.enterpriseId
+      || existing.data()?.user_id !== uid) {
+      throw new HttpsError("not-found", "Saved location not found.");
+    }
+  }
+  await ref.set({
+    enterprise_id: user.enterpriseId,
+    user_id: uid,
+    place_id: location.place_id,
+    label: location.label,
+    address: location.address,
+    latitude: location.latitude,
+    longitude: location.longitude,
+    radius_m: location.radius_m,
+    active: true,
+    updated_at: FieldValue.serverTimestamp(),
+    ...(requestedId ? {} : { created_at: FieldValue.serverTimestamp() }),
+  }, { merge: true });
+  return { ok: true, location: { ...location, id: ref.id } };
+}
+
+export async function deleteFieldWorkLocation(uid: string, args: Record<string, unknown>) {
+  const user = await caller(uid);
+  const id = String(args.id ?? "").trim();
+  if (!id) throw new HttpsError("invalid-argument", "A saved location is required.");
+  const ref = db.doc(`field_work_locations/${id}`);
+  const existing = await ref.get();
+  if (!existing.exists
+    || existing.data()?.enterprise_id !== user.enterpriseId
+    || existing.data()?.user_id !== uid) {
+    throw new HttpsError("not-found", "Saved location not found.");
+  }
+  await ref.set({ active: false, updated_at: FieldValue.serverTimestamp() }, { merge: true });
+  return { ok: true };
+}
+
+export async function setAttendanceAutoClockIn(uid: string, args: Record<string, unknown>) {
+  const user = await caller(uid);
+  const enabled = args.enabled === true;
+  await db.doc(`attendance_auto_clock_in/${user.enterpriseId}_${uid}`).set({
+    enterprise_id: user.enterpriseId,
+    user_id: uid,
+    enabled,
+    updated_at: FieldValue.serverTimestamp(),
+  }, { merge: true });
+  return { ok: true, enabled };
+}
+
+function insideAutoClockInWindow(
+  days: Record<string, { enabled: boolean; start: string; end: string }>,
+  atMs = Date.now(),
+) {
+  const local = new Date(atMs + EAT_OFFSET_MS);
+  const key = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"][local.getUTCDay()];
+  const day = days?.[key];
+  if (!day?.enabled) return false;
+  const toMinutes = (value: string) => {
+    const [hour, minute] = value.split(":").map(Number);
+    return hour * 60 + minute;
+  };
+  const nowMinutes = local.getUTCHours() * 60 + local.getUTCMinutes();
+  // Permit normal early arrivals, but never auto-clock employees in overnight.
+  return nowMinutes >= toMinutes(day.start) - 90 && nowMinutes < toMinutes(day.end);
+}
+
+export async function automaticClockIn(uid: string, args: Record<string, unknown>) {
+  const user = await caller(uid);
+  const [preference, settings] = await Promise.all([
+    db.doc(`attendance_auto_clock_in/${user.enterpriseId}_${uid}`).get(),
+    db.doc(`attendance_settings/${user.enterpriseId}`).get(),
+  ]);
+  if (preference.data()?.enabled !== true) {
+    throw new HttpsError("failed-precondition", "Automatic clock-in is not enabled.");
+  }
+  const schedule = (settings.data()?.days ?? DEFAULT_SCHEDULE.days) as Record<string, { enabled: boolean; start: string; end: string }>;
+  if (!insideAutoClockInWindow(schedule)) {
+    throw new HttpsError("failed-precondition", "Outside your automatic clock-in window.");
+  }
+  return recordAttendanceAction(uid, {
+    action: "clock_in",
+    location: args.location,
+    source: "geofence_auto",
+  });
 }
 
 export async function recordAttendanceAction(uid: string, args: Record<string, unknown>) {
@@ -129,7 +270,11 @@ export async function recordAttendanceAction(uid: string, args: Record<string, u
   const reason = String(args.reason ?? "").trim().slice(0, 500);
   const client = String(args.client ?? "").trim().slice(0, 160);
   const outcome = String(args.outcome ?? "").trim().slice(0, 1000);
+  const fieldLocations = normalizeFieldWorkLocations(args.field_locations ?? args.fieldLocations);
+  const source = String(args.source ?? "manual") === "geofence_auto" ? "geofence_auto" : "manual";
+  const automatic = action === "clock_in" && source === "geofence_auto";
   if (action === "start_field_work" && !reason) throw new HttpsError("invalid-argument", "A field-work reason is required.");
+  if (action === "start_field_work" && !fieldLocations.length) throw new HttpsError("invalid-argument", "Choose at least one field-work location.");
   if (action === "return_from_field_work" && !outcome) throw new HttpsError("invalid-argument", "A field-work outcome is required.");
   const currentRef = db.doc(`attendance_current/${user.enterpriseId}_${uid}`);
   const eventRef = db.collection("attendance_events").doc();
@@ -142,6 +287,9 @@ export async function recordAttendanceAction(uid: string, args: Record<string, u
     const settingsSnap = await db.doc(`attendance_settings/${user.enterpriseId}`).get();
     const geofence = normalizeGeofence(settingsSnap.data()?.geofence ?? DEFAULT_GEOFENCE);
     geo = evaluateGeofence(geofence, location.latitude, location.longitude);
+    if (automatic && (!geofence.enabled || !geo.inside)) {
+      throw new HttpsError("failed-precondition", "You have not reached the office clock-in radius yet.");
+    }
   }
   const outOfOffice = action === "clock_in" ? !geo.inside : false;
 
@@ -157,7 +305,7 @@ export async function recordAttendanceAction(uid: string, args: Record<string, u
 
     const sessionRef = action === "clock_in" ? db.collection("attendance_sessions").doc() : db.doc(`attendance_sessions/${current?.session_id}`);
     if (action === "clock_in") {
-      tx.set(sessionRef, { enterprise_id: user.enterpriseId, user_id: uid, employee_name: user.name, date_key: eatDateKey(), started_at: now, ended_at: null, status: "open", clock_in_location: location, out_of_office: outOfOffice, clock_in_distance_m: geo.distance_m, created_at: now });
+      tx.set(sessionRef, { enterprise_id: user.enterpriseId, user_id: uid, employee_name: user.name, date_key: eatDateKey(), started_at: now, ended_at: null, status: "open", clock_in_location: location, out_of_office: outOfOffice, clock_in_distance_m: geo.distance_m, automatic_clock_in: automatic, clock_in_source: source, created_at: now });
     } else if (action === "clock_out") {
       const startedAt = current?.clocked_in_at as Timestamp | undefined;
       tx.set(sessionRef, { ended_at: now, status: "closed", clock_out_location: location, worked_seconds: startedAt ? Math.max(0, Math.floor((now.toMillis() - startedAt.toMillis()) / 1000)) : 0, updated_at: now }, { merge: true });
@@ -170,6 +318,8 @@ export async function recordAttendanceAction(uid: string, args: Record<string, u
       session_id: sessionId, date_key: eatDateKey(), type: action, occurred_at: now,
       location, reason: reason || current?.field_reason || null,
       client: client || current?.field_client || null, outcome: outcome || null,
+      field_locations: action === "start_field_work" ? fieldLocations : current?.field_locations ?? null,
+      source, auto: automatic,
       out_of_office: action === "clock_in" ? outOfOffice : null,
       distance_m: action === "clock_in" ? geo.distance_m : null,
       field_started_at: action === "return_from_field_work" ? current?.field_started_at ?? null : null,
@@ -181,7 +331,12 @@ export async function recordAttendanceAction(uid: string, args: Record<string, u
       status: nextStatus, clocked_in_at: action === "clock_in" ? now : current?.clocked_in_at ?? null,
       last_action: action, last_action_at: now, last_location: location,
       out_of_office: action === "clock_in" ? outOfOffice : current?.out_of_office ?? false,
+      automatic_clock_in: action === "clock_in" ? automatic : current?.automatic_clock_in ?? false,
+      clock_in_source: action === "clock_in" ? source : current?.clock_in_source ?? "manual",
       field_reason: nextStatus === "field_work" ? reason : null, field_client: nextStatus === "field_work" ? client || null : null,
+      field_locations: nextStatus === "field_work"
+        ? (action === "start_field_work" ? fieldLocations : current?.field_locations ?? [])
+        : null,
       field_started_at: action === "start_field_work" ? now : nextStatus === "field_work" ? current?.field_started_at ?? now : null,
     });
     return { status: nextStatus, sessionId, outOfOffice, distanceM: geo.distance_m };
