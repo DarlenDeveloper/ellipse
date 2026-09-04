@@ -135,10 +135,7 @@ class _AttendanceEmployeeDetailScreenState
                     ],
                   ),
                   const SizedBox(height: 22),
-                  if (_error != null)
-                    _errorCard(_error!)
-                  else
-                    ..._content(),
+                  if (_error != null) _errorCard(_error!) else ..._content(),
                 ],
               ),
             ),
@@ -146,24 +143,23 @@ class _AttendanceEmployeeDetailScreenState
   }
 
   Widget _errorCard(String text) => Container(
-        margin: const EdgeInsets.only(bottom: 16),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: const Color(0xFFFFE9E7),
-          borderRadius: BorderRadius.circular(16),
+    margin: const EdgeInsets.only(bottom: 16),
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: const Color(0xFFFFE9E7),
+      borderRadius: BorderRadius.circular(16),
+    ),
+    child: Row(
+      children: [
+        const Icon(Iconsax.warning_2, color: Color(0xFF9D2922), size: 20),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(text, style: const TextStyle(color: Color(0xFF9D2922))),
         ),
-        child: Row(
-          children: [
-            const Icon(Iconsax.warning_2, color: Color(0xFF9D2922), size: 20),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(text,
-                  style: const TextStyle(color: Color(0xFF9D2922))),
-            ),
-            TextButton(onPressed: _load, child: const Text('Retry')),
-          ],
-        ),
-      );
+        TextButton(onPressed: _load, child: const Text('Retry')),
+      ],
+    ),
+  );
 
   List<Widget> _content() {
     final sessions = _list('sessions');
@@ -175,28 +171,39 @@ class _AttendanceEmployeeDetailScreenState
       0,
       (sum, s) => sum + ((s['worked_seconds'] as num?)?.toInt() ?? 0),
     );
-    final fieldEvents =
-        events.where((e) => e['type'] == 'return_from_field_work').toList();
+    final fieldEvents = events
+        .where((e) => e['type'] == 'return_from_field_work')
+        .toList();
     final fieldSeconds = fieldEvents.fold<int>(
       0,
       (sum, e) => sum + ((e['duration_seconds'] as num?)?.toInt() ?? 0),
     );
     final autoClosed = sessions.where((s) => s['auto_closed'] == true).length;
-    final outOfOffice = sessions.where((s) => s['out_of_office'] == true).length;
+    final outOfOffice = sessions
+        .where((s) => s['out_of_office'] == true)
+        .length;
 
     return [
       Row(
         children: [
           Expanded(
-            child: _metric('${closed.length}', 'Days worked',
-                Iconsax.calendar_tick, const Color(0xFF16A77A),
-                outOfOffice > 0 ? '$outOfOffice out-of-office' : 'Last 14 days'),
+            child: _metric(
+              '${closed.length}',
+              'Days worked',
+              Iconsax.calendar_tick,
+              const Color(0xFF16A77A),
+              outOfOffice > 0 ? '$outOfOffice out-of-office' : 'Last 14 days',
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: _metric((totalSeconds / 3600).toStringAsFixed(1),
-                'Total hours', Iconsax.clock, const Color(0xFF3566F6),
-                '${closed.length} sessions'),
+            child: _metric(
+              (totalSeconds / 3600).toStringAsFixed(1),
+              'Total hours',
+              Iconsax.clock,
+              const Color(0xFF3566F6),
+              '${closed.length} sessions',
+            ),
           ),
         ],
       ),
@@ -204,15 +211,23 @@ class _AttendanceEmployeeDetailScreenState
       Row(
         children: [
           Expanded(
-            child: _metric('${fieldEvents.length}', 'Field trips',
-                Iconsax.routing, const Color(0xFF8B5CF6),
-                '${(fieldSeconds / 3600).toStringAsFixed(1)}h on site'),
+            child: _metric(
+              '${fieldEvents.length}',
+              'Field trips',
+              Iconsax.routing,
+              const Color(0xFF8B5CF6),
+              '${(fieldSeconds / 3600).toStringAsFixed(1)}h on site',
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: _metric('$autoClosed', 'Auto clock-outs',
-                Iconsax.timer_pause, const Color(0xFFF29B43),
-                autoClosed > 0 ? 'Needs review' : 'All on time'),
+            child: _metric(
+              '$autoClosed',
+              'Auto clock-outs',
+              Iconsax.timer_pause,
+              const Color(0xFFF29B43),
+              autoClosed > 0 ? 'Needs review' : 'All on time',
+            ),
           ),
         ],
       ),
@@ -244,10 +259,12 @@ class _AttendanceEmployeeDetailScreenState
       final rawPts = (t['points'] as List? ?? const []);
       if (rawPts.length < 2) continue;
       final points = rawPts
-          .map((p) => LatLng(
-                ((p as Map)['latitude'] as num).toDouble(),
-                (p['longitude'] as num).toDouble(),
-              ))
+          .map(
+            (p) => LatLng(
+              ((p as Map)['latitude'] as num).toDouble(),
+              (p['longitude'] as num).toDouble(),
+            ),
+          )
           .toList();
       final dwell = (t['dwell'] as List? ?? const [])
           .map((d) => Map<String, dynamic>.from(d as Map))
@@ -255,13 +272,15 @@ class _AttendanceEmployeeDetailScreenState
       final sid = '${t['session_id'] ?? ''}';
       final session = sessionById[sid];
       final startedMs = _millis(session?['started_at']);
-      views.add(_RouteView(
-        sessionId: sid,
-        points: points,
-        dwell: dwell,
-        startedMs: startedMs,
-        dateKey: '${session?['date_key'] ?? t['date_key'] ?? ''}',
-      ));
+      views.add(
+        _RouteView(
+          sessionId: sid,
+          points: points,
+          dwell: dwell,
+          startedMs: startedMs,
+          dateKey: '${session?['date_key'] ?? t['date_key'] ?? ''}',
+        ),
+      );
     }
     // Most recent first: by session start, then by first-point timestamp.
     views.sort((a, b) => b.startedMs.compareTo(a.startedMs));
@@ -303,9 +322,10 @@ class _AttendanceEmployeeDetailScreenState
                     'No routes recorded yet. Field-work routes appear here once '
                     'the employee starts a field trip with location tracking on.',
                     style: GoogleFonts.poppins(
-                        fontSize: 12.5,
-                        height: 1.45,
-                        color: const Color(0xFF687080)),
+                      fontSize: 12.5,
+                      height: 1.45,
+                      color: const Color(0xFF687080),
+                    ),
                   ),
                 ),
               ],
@@ -321,65 +341,83 @@ class _AttendanceEmployeeDetailScreenState
       children: [
         Row(
           children: [
-            Text('Field-work routes',
-                style: GoogleFonts.poppins(
-                    fontSize: 17, fontWeight: FontWeight.w700)),
+            Text(
+              'Field-work routes',
+              style: GoogleFonts.poppins(
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
             const Spacer(),
             if (views.length > recent.length)
               GestureDetector(
-                onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => _AllRoutesScreen(
-                    employeeName: widget.employeeName,
-                    routes: views,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => _AllRoutesScreen(
+                      employeeName: widget.employeeName,
+                      routes: views,
+                    ),
                   ),
-                )),
+                ),
                 child: Row(
                   children: [
-                    Text('View all ${views.length}',
-                        style: GoogleFonts.poppins(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: const Color(0xFF3566F6))),
-                    const Icon(Iconsax.arrow_right_3,
-                        size: 14, color: Color(0xFF3566F6)),
+                    Text(
+                      'View all ${views.length}',
+                      style: GoogleFonts.poppins(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: const Color(0xFF3566F6),
+                      ),
+                    ),
+                    const Icon(
+                      Iconsax.arrow_right_3,
+                      size: 14,
+                      color: Color(0xFF3566F6),
+                    ),
                   ],
                 ),
               )
             else
-              Text('${views.length} recorded',
-                  style:
-                      const TextStyle(fontSize: 10, color: Color(0xFF8991A0))),
+              Text(
+                '${views.length} recorded',
+                style: const TextStyle(fontSize: 10, color: Color(0xFF8991A0)),
+              ),
           ],
         ),
         const SizedBox(height: 12),
-        ...recent.map((r) => Padding(
-              padding: const EdgeInsets.only(bottom: 14),
-              child: _RouteCard(
-                route: r,
-                subtitle: _routeSubtitle(r),
-                onOpen: () => _openRoute(r),
-              ),
-            )),
+        ...recent.map(
+          (r) => Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: _RouteCard(
+              route: r,
+              subtitle: _routeSubtitle(r),
+              onOpen: () => _openRoute(r),
+            ),
+          ),
+        ),
       ],
     );
   }
 
   String _routeSubtitle(_RouteView r) {
-    final when =
-        r.startedMs > 0 ? _shortWhen(DateTime.fromMillisecondsSinceEpoch(r.startedMs)) : r.dateKey;
+    final when = r.startedMs > 0
+        ? _shortWhen(DateTime.fromMillisecondsSinceEpoch(r.startedMs))
+        : r.dateKey;
     final stops = r.dwell.isEmpty
         ? 'no stops'
         : '${r.dwell.length} stop${r.dwell.length == 1 ? '' : 's'}';
     return '$when · ${r.points.length} points · $stops';
   }
 
-  void _openRoute(_RouteView r) => Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => _RouteMapScreen(
-          employeeName: widget.employeeName,
-          route: r,
-          subtitle: _routeSubtitle(r),
-        ),
-      ));
+  void _openRoute(_RouteView r) => Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => _RouteMapScreen(
+        employeeName: widget.employeeName,
+        route: r,
+        subtitle: _routeSubtitle(r),
+      ),
+    ),
+  );
 
   // ---- Charts -----------------------------------------------------------
 
@@ -393,8 +431,10 @@ class _AttendanceEmployeeDetailScreenState
     }
     final keys = byDay.keys.toList()..sort();
     return keys
-        .map((k) =>
-            _Bar(label: k.length >= 5 ? k.substring(5) : k, value: byDay[k]!))
+        .map(
+          (k) =>
+              _Bar(label: k.length >= 5 ? k.substring(5) : k, value: byDay[k]!),
+        )
         .toList();
   }
 
@@ -406,97 +446,95 @@ class _AttendanceEmployeeDetailScreenState
     IconData icon,
     Color color,
     String note,
-  ) =>
-      Container(
-        height: 166,
-        padding: const EdgeInsets.all(17),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Color.lerp(Colors.white, color, .20)!,
-              Color.lerp(Colors.white, color, .07)!,
-            ],
-          ),
-          borderRadius: BorderRadius.circular(28),
-          border: Border.all(color: Colors.white.withValues(alpha: .65)),
-          boxShadow: [
-            BoxShadow(
-              color: color.withValues(alpha: .08),
-              blurRadius: 18,
-              offset: const Offset(0, 6),
-            ),
-          ],
+  ) => Container(
+    height: 166,
+    padding: const EdgeInsets.all(17),
+    decoration: BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          Color.lerp(Colors.white, color, .20)!,
+          Color.lerp(Colors.white, color, .07)!,
+        ],
+      ),
+      borderRadius: BorderRadius.circular(28),
+      border: Border.all(color: Colors.white.withValues(alpha: .65)),
+      boxShadow: [
+        BoxShadow(
+          color: color.withValues(alpha: .08),
+          blurRadius: 18,
+          offset: const Offset(0, 6),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      ],
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
           children: [
-            Row(
-              children: [
-                Icon(icon, size: 21, color: const Color(0xFF17233A)),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.poppins(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: const Color(0xFF17233A),
-                    ),
-                  ),
+            Icon(icon, size: 21, color: const Color(0xFF17233A)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.poppins(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: const Color(0xFF17233A),
                 ),
-              ],
-            ),
-            const Spacer(),
-            Text(
-              value,
-              style: const TextStyle(
-                fontSize: 27,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF17233A),
-              ),
-            ),
-            const SizedBox(height: 3),
-            Text(
-              note,
-              style: TextStyle(
-                fontSize: 9,
-                color: color,
-                fontWeight: FontWeight.w600,
               ),
             ),
           ],
         ),
-      );
+        const Spacer(),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 27,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF17233A),
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          note,
+          style: TextStyle(
+            fontSize: 9,
+            color: color,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    ),
+  );
 
   Widget _sectionHeader(String title, String trailing) => Row(
-        children: [
-          Text(
-            title,
-            style:
-                GoogleFonts.poppins(fontSize: 17, fontWeight: FontWeight.w700),
-          ),
-          const Spacer(),
-          Text(
-            trailing,
-            style: const TextStyle(fontSize: 10, color: Color(0xFF8991A0)),
-          ),
-        ],
-      );
+    children: [
+      Text(
+        title,
+        style: GoogleFonts.poppins(fontSize: 17, fontWeight: FontWeight.w700),
+      ),
+      const Spacer(),
+      Text(
+        trailing,
+        style: const TextStyle(fontSize: 10, color: Color(0xFF8991A0)),
+      ),
+    ],
+  );
 
   Widget _empty(String text) => Container(
-        margin: const EdgeInsets.only(bottom: 6),
-        padding: const EdgeInsets.all(20),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Text(text, style: const TextStyle(color: Color(0xFF777772))),
-      );
+    margin: const EdgeInsets.only(bottom: 6),
+    padding: const EdgeInsets.all(20),
+    alignment: Alignment.center,
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(20),
+    ),
+    child: Text(text, style: const TextStyle(color: Color(0xFF777772))),
+  );
 
   Widget _analyticsCard(List<_Bar> bars) {
     final maxValue = bars.isEmpty
@@ -517,8 +555,10 @@ class _AttendanceEmployeeDetailScreenState
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 24),
               child: Center(
-                child: Text('No completed sessions yet.',
-                    style: TextStyle(color: Color(0xFF9299A5))),
+                child: Text(
+                  'No completed sessions yet.',
+                  style: TextStyle(color: Color(0xFF9299A5)),
+                ),
               ),
             )
           else
@@ -537,7 +577,9 @@ class _AttendanceEmployeeDetailScreenState
                             Text(
                               bars[i].value.toStringAsFixed(1),
                               style: const TextStyle(
-                                  fontSize: 9, color: Color(0xFF8991A0)),
+                                fontSize: 9,
+                                color: Color(0xFF8991A0),
+                              ),
                             ),
                             const SizedBox(height: 5),
                             AnimatedContainer(
@@ -548,7 +590,8 @@ class _AttendanceEmployeeDetailScreenState
                                     ? const Color(0xFF3566F6)
                                     : const Color(0xFFDDE5FF),
                                 borderRadius: const BorderRadius.vertical(
-                                    top: Radius.circular(8)),
+                                  top: Radius.circular(8),
+                                ),
                               ),
                             ),
                             const SizedBox(height: 8),
@@ -557,7 +600,9 @@ class _AttendanceEmployeeDetailScreenState
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                  fontSize: 9, color: Color(0xFF7C8493)),
+                                fontSize: 9,
+                                color: Color(0xFF7C8493),
+                              ),
                             ),
                           ],
                         ),
@@ -625,8 +670,11 @@ class _AttendanceEmployeeDetailScreenState
         children: [
           CircleAvatar(
             backgroundColor: _fill,
-            child: Icon(icon,
-                size: 18, color: auto ? const Color(0xFFB77900) : _dark),
+            child: Icon(
+              icon,
+              size: 18,
+              color: auto ? const Color(0xFFB77900) : _dark,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -636,7 +684,9 @@ class _AttendanceEmployeeDetailScreenState
                 Text(
                   title,
                   style: GoogleFonts.poppins(
-                      fontSize: 13.5, fontWeight: FontWeight.w600),
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 if (subtitleParts.isNotEmpty)
                   Text(
@@ -644,7 +694,9 @@ class _AttendanceEmployeeDetailScreenState
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: GoogleFonts.poppins(
-                        fontSize: 11.5, color: const Color(0xFF687080)),
+                      fontSize: 11.5,
+                      color: const Color(0xFF687080),
+                    ),
                   ),
               ],
             ),
@@ -653,7 +705,9 @@ class _AttendanceEmployeeDetailScreenState
             Text(
               _shortWhen(when),
               style: GoogleFonts.poppins(
-                  fontSize: 11, color: const Color(0xFF9299A5)),
+                fontSize: 11,
+                color: const Color(0xFF9299A5),
+              ),
             ),
         ],
       ),
@@ -719,18 +773,12 @@ LatLngBounds _routeBounds(List<LatLng> points) {
   );
 }
 
-Marker _routePin(
-  String id,
-  LatLng point,
-  double hue,
-  String title,
-) =>
-    Marker(
-      markerId: MarkerId(id),
-      position: point,
-      icon: BitmapDescriptor.defaultMarkerWithHue(hue),
-      infoWindow: InfoWindow(title: title),
-    );
+Marker _routePin(String id, LatLng point, double hue, String title) => Marker(
+  markerId: MarkerId(id),
+  position: point,
+  icon: BitmapDescriptor.defaultMarkerWithHue(hue),
+  infoWindow: InfoWindow(title: title),
+);
 
 String _routeDwellLabel(int seconds) {
   if (seconds < 60) return '${seconds}s';
@@ -742,14 +790,123 @@ String _routeDwellLabel(int seconds) {
 }
 
 Marker _routeDwellMarker(int index, LatLng point, String label) => Marker(
-      markerId: MarkerId('dwell-$index'),
-      position: point,
-      icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow),
-      infoWindow: InfoWindow(title: 'Stopped for $label'),
+  markerId: MarkerId('dwell-$index'),
+  position: point,
+  icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow),
+  infoWindow: InfoWindow(title: 'Stopped for $label'),
+);
+
+class _RoutePreview extends StatelessWidget {
+  const _RoutePreview({required this.route});
+
+  final _RouteView route;
+
+  @override
+  Widget build(BuildContext context) => CustomPaint(
+    painter: _RoutePreviewPainter(route.points),
+    child: const SizedBox.expand(),
+  );
+}
+
+class _RoutePreviewPainter extends CustomPainter {
+  const _RoutePreviewPainter(this.points);
+
+  final List<LatLng> points;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = const Color(0xFFF0F4F3),
+    );
+    final grid = Paint()
+      ..color = const Color(0xFFDDE6E3)
+      ..strokeWidth = 1;
+    for (var x = 18.0; x < size.width; x += 32) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), grid);
+    }
+    for (var y = 16.0; y < size.height; y += 28) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
+    }
+    if (points.length < 2) return;
+
+    var minLat = points.first.latitude, maxLat = minLat;
+    var minLng = points.first.longitude, maxLng = minLng;
+    for (final point in points) {
+      minLat = math.min(minLat, point.latitude);
+      maxLat = math.max(maxLat, point.latitude);
+      minLng = math.min(minLng, point.longitude);
+      maxLng = math.max(maxLng, point.longitude);
+    }
+    final latSpan = math.max(0.00001, maxLat - minLat);
+    final lngSpan = math.max(0.00001, maxLng - minLng);
+    const padding = 18.0;
+    Offset project(LatLng point) => Offset(
+      padding +
+          ((point.longitude - minLng) / lngSpan) * (size.width - padding * 2),
+      padding +
+          ((maxLat - point.latitude) / latSpan) * (size.height - padding * 2),
     );
 
-/// The shared route map. `interactive` enables full pinch-zoom / drag / rotate
-/// (used full-screen); when false it renders a static preview thumbnail.
+    final path = Path()
+      ..moveTo(project(points.first).dx, project(points.first).dy);
+    for (final point in points.skip(1)) {
+      final offset = project(point);
+      path.lineTo(offset.dx, offset.dy);
+    }
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = Colors.white
+        ..strokeWidth = 8
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..style = PaintingStyle.stroke,
+    );
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = const Color(0xFF3566F6)
+        ..strokeWidth = 4.5
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..style = PaintingStyle.stroke,
+    );
+    canvas.drawCircle(
+      project(points.first),
+      7,
+      Paint()..color = const Color(0xFF16A77A),
+    );
+    canvas.drawCircle(
+      project(points.last),
+      7,
+      Paint()..color = const Color(0xFFD64545),
+    );
+    canvas.drawCircle(
+      project(points.first),
+      7,
+      Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    );
+    canvas.drawCircle(
+      project(points.last),
+      7,
+      Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _RoutePreviewPainter oldDelegate) =>
+      oldDelegate.points != points;
+}
+
+/// The shared route map. This widget is only used full-screen on iOS so a
+/// single native platform view exists at a time.
 class _RouteMap extends StatefulWidget {
   const _RouteMap({required this.route, this.interactive = false});
 
@@ -761,14 +918,6 @@ class _RouteMap extends StatefulWidget {
 }
 
 class _RouteMapState extends State<_RouteMap> {
-  GoogleMapController? _controller;
-
-  @override
-  void dispose() {
-    _controller?.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     final pts = widget.route.points;
@@ -776,8 +925,10 @@ class _RouteMapState extends State<_RouteMap> {
       for (final entry in widget.route.dwell.asMap().entries)
         _routeDwellMarker(
           entry.key,
-          LatLng((entry.value['latitude'] as num).toDouble(),
-              (entry.value['longitude'] as num).toDouble()),
+          LatLng(
+            (entry.value['latitude'] as num).toDouble(),
+            (entry.value['longitude'] as num).toDouble(),
+          ),
           _routeDwellLabel((entry.value['seconds'] as num?)?.toInt() ?? 0),
         ),
       _routePin('start', pts.first, BitmapDescriptor.hueGreen, 'Route start'),
@@ -813,7 +964,6 @@ class _RouteMapState extends State<_RouteMap> {
       zoomGesturesEnabled: widget.interactive,
       tiltGesturesEnabled: widget.interactive,
       onMapCreated: (controller) {
-        _controller = controller;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           controller.animateCamera(
             CameraUpdate.newLatLngBounds(
@@ -861,35 +1011,39 @@ class _RouteCard extends StatelessWidget {
           children: [
             Stack(
               children: [
-                // AbsorbPointer so the thumbnail scrolls with the list instead
-                // of eating drags; the whole card is tappable to expand.
                 SizedBox(
                   height: 168,
                   width: double.infinity,
-                  child: AbsorbPointer(
-                    child: _RouteMap(route: route),
-                  ),
+                  child: _RoutePreview(route: route),
                 ),
                 Positioned(
                   right: 10,
                   top: 10,
                   child: Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 9, vertical: 6),
+                      horizontal: 9,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.white.withValues(alpha: .92),
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Row(
                       children: [
-                        const Icon(Iconsax.maximize_4,
-                            size: 13, color: _routeDark),
+                        const Icon(
+                          Iconsax.maximize_4,
+                          size: 13,
+                          color: _routeDark,
+                        ),
                         const SizedBox(width: 5),
-                        Text('Expand',
-                            style: GoogleFonts.poppins(
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w600,
-                                color: _routeDark)),
+                        Text(
+                          'Expand',
+                          style: GoogleFonts.poppins(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w600,
+                            color: _routeDark,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -903,11 +1057,15 @@ class _RouteCard extends StatelessWidget {
                   const Icon(Iconsax.routing, size: 18, color: _routeDark),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text(subtitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.poppins(
-                            fontSize: 12.5, fontWeight: FontWeight.w600)),
+                    child: Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.poppins(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -955,7 +1113,9 @@ class _RouteMapScreen extends StatelessWidget {
                     Expanded(
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 10),
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.white.withValues(alpha: .94),
                           borderRadius: BorderRadius.circular(16),
@@ -971,18 +1131,24 @@ class _RouteMapScreen extends StatelessWidget {
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(employeeName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: GoogleFonts.poppins(
-                                    fontSize: 13.5,
-                                    fontWeight: FontWeight.w700)),
-                            Text(subtitle,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: GoogleFonts.poppins(
-                                    fontSize: 10.5,
-                                    color: const Color(0xFF687080))),
+                            Text(
+                              employeeName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.poppins(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            Text(
+                              subtitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.poppins(
+                                fontSize: 10.5,
+                                color: const Color(0xFF687080),
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -1000,7 +1166,9 @@ class _RouteMapScreen extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(14, 0, 14, 16),
                 child: Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 10),
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: .94),
                     borderRadius: BorderRadius.circular(14),
@@ -1017,19 +1185,22 @@ class _RouteMapScreen extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: const [
                       _LegendRow(
-                          color: Color(0xFF16A77A),
-                          icon: Iconsax.location,
-                          label: 'Start'),
+                        color: Color(0xFF16A77A),
+                        icon: Iconsax.location,
+                        label: 'Start',
+                      ),
                       SizedBox(height: 4),
                       _LegendRow(
-                          color: Color(0xFFD64545),
-                          icon: Iconsax.location_tick,
-                          label: 'End'),
+                        color: Color(0xFFD64545),
+                        icon: Iconsax.location_tick,
+                        label: 'End',
+                      ),
                       SizedBox(height: 4),
                       _LegendRow(
-                          color: Color(0xFFB77900),
-                          icon: Iconsax.clock,
-                          label: 'Stop (dwell)'),
+                        color: Color(0xFFB77900),
+                        icon: Iconsax.clock,
+                        label: 'Stop (dwell)',
+                      ),
                     ],
                   ),
                 ),
@@ -1064,23 +1235,27 @@ class _RouteMapScreen extends StatelessWidget {
 }
 
 class _LegendRow extends StatelessWidget {
-  const _LegendRow(
-      {required this.color, required this.icon, required this.label});
+  const _LegendRow({
+    required this.color,
+    required this.icon,
+    required this.label,
+  });
   final Color color;
   final IconData icon;
   final String label;
 
   @override
   Widget build(BuildContext context) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: color),
-          const SizedBox(width: 6),
-          Text(label,
-              style: GoogleFonts.poppins(
-                  fontSize: 11, fontWeight: FontWeight.w500)),
-        ],
-      );
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Icon(icon, size: 14, color: color),
+      const SizedBox(width: 6),
+      Text(
+        label,
+        style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.w500),
+      ),
+    ],
+  );
 }
 
 /// "View all" page: every recorded route as a tappable thumbnail.
@@ -1119,14 +1294,21 @@ class _AllRoutesScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Field-work routes',
-                style: GoogleFonts.poppins(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: _routeDark)),
-            Text('$employeeName · ${routes.length} routes',
-                style: GoogleFonts.poppins(
-                    fontSize: 11, color: const Color(0xFF687080))),
+            Text(
+              'Field-work routes',
+              style: GoogleFonts.poppins(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: _routeDark,
+              ),
+            ),
+            Text(
+              '$employeeName · ${routes.length} routes',
+              style: GoogleFonts.poppins(
+                fontSize: 11,
+                color: const Color(0xFF687080),
+              ),
+            ),
           ],
         ),
       ),
@@ -1139,13 +1321,15 @@ class _AllRoutesScreen extends StatelessWidget {
           return _RouteCard(
             route: r,
             subtitle: _subtitle(r),
-            onOpen: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => _RouteMapScreen(
-                employeeName: employeeName,
-                route: r,
-                subtitle: _subtitle(r),
+            onOpen: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => _RouteMapScreen(
+                  employeeName: employeeName,
+                  route: r,
+                  subtitle: _subtitle(r),
+                ),
               ),
-            )),
+            ),
           );
         },
       ),
@@ -1177,88 +1361,83 @@ class _EmployeeDetailSkeletonState extends State<_EmployeeDetailSkeleton>
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
-        animation: _controller,
-        builder: (context, _) {
-          final color = Color.lerp(
-            const Color(0xFFE6E9EF),
-            const Color(0xFFF2F4F7),
-            _controller.value,
-          )!;
-          Widget block({
-            double? width,
-            double height = 18,
-            double radius = 10,
-          }) =>
-              Container(
-                width: width,
-                height: height,
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(radius),
-                ),
-              );
-          Widget card({double height = 166, double radius = 28}) => Container(
-                height: height,
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(radius),
-                ),
-              );
-          return ListView(
-            padding: EdgeInsets.fromLTRB(
-              20,
-              MediaQuery.paddingOf(context).top + 8,
-              20,
-              38,
+    animation: _controller,
+    builder: (context, _) {
+      final color = Color.lerp(
+        const Color(0xFFE6E9EF),
+        const Color(0xFFF2F4F7),
+        _controller.value,
+      )!;
+      Widget block({double? width, double height = 18, double radius = 10}) =>
+          Container(
+            width: width,
+            height: height,
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(radius),
             ),
-            children: [
-              Row(
-                children: [
-                  block(width: 42, height: 42, radius: 14),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        block(width: 190, height: 21),
-                        const SizedBox(height: 7),
-                        block(width: 140, height: 10),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 26),
-              Row(
-                children: [
-                  Expanded(child: card()),
-                  const SizedBox(width: 12),
-                  Expanded(child: card()),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(child: card()),
-                  const SizedBox(width: 12),
-                  Expanded(child: card()),
-                ],
-              ),
-              const SizedBox(height: 26),
-              block(width: 170, height: 17),
-              const SizedBox(height: 14),
-              card(height: 240, radius: 24),
-              const SizedBox(height: 24),
-              card(height: 190, radius: 24),
-              const SizedBox(height: 24),
-              block(width: 150, height: 17),
-              const SizedBox(height: 14),
-              card(height: 66, radius: 16),
-              const SizedBox(height: 10),
-              card(height: 66, radius: 16),
-            ],
           );
-        },
+      Widget card({double height = 166, double radius = 28}) => Container(
+        height: height,
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(radius),
+        ),
       );
+      return ListView(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          MediaQuery.paddingOf(context).top + 8,
+          20,
+          38,
+        ),
+        children: [
+          Row(
+            children: [
+              block(width: 42, height: 42, radius: 14),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    block(width: 190, height: 21),
+                    const SizedBox(height: 7),
+                    block(width: 140, height: 10),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 26),
+          Row(
+            children: [
+              Expanded(child: card()),
+              const SizedBox(width: 12),
+              Expanded(child: card()),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(child: card()),
+              const SizedBox(width: 12),
+              Expanded(child: card()),
+            ],
+          ),
+          const SizedBox(height: 26),
+          block(width: 170, height: 17),
+          const SizedBox(height: 14),
+          card(height: 240, radius: 24),
+          const SizedBox(height: 24),
+          card(height: 190, radius: 24),
+          const SizedBox(height: 24),
+          block(width: 150, height: 17),
+          const SizedBox(height: 14),
+          card(height: 66, radius: 16),
+          const SizedBox(height: 10),
+          card(height: 66, radius: 16),
+        ],
+      );
+    },
+  );
 }
-
