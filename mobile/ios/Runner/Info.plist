@@ -61,5 +61,15 @@
 		<true/>
 		<key>UIStatusBarHidden</key>
 		<false/>
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>Ellipse Desk needs access to your photo library so you can attach images to messages.</string>
+		<key>NSPhotoLibraryAddUsageDescription</key>
+		<string>Ellipse Desk needs permission to save images you attach or capture for messages.</string>
+		<key>NSCameraUsageDescription</key>
+		<string>Ellipse Desk needs camera access so you can take photos to attach to messages.</string>
+		<key>NSMicrophoneUsageDescription</key>
+		<string>Ellipse Desk needs microphone access when you record video attachments for messages.</string>
+		<key>NSAppleMusicUsageDescription</key>
+		<string>Ellipse Desk needs access to your media library so you can attach audio files to messages.</string>
 	</dict>
 </plist>
