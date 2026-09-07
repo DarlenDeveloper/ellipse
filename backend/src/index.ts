@@ -1706,6 +1706,11 @@ export const attendanceLocationPing = onCall(async (request) => {
   return (await import("./attendance")).recordWorkingLocation(request.auth.uid, request.data ?? {});
 });
 
+export const reportLocationStatus = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
+  return (await import("./attendance")).reportLocationStatus(request.auth.uid, request.data ?? {});
+});
+
 export const attendanceEmployeeDetail = onCall(async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
   return (await import("./attendance")).getAttendanceEmployeeDetail(request.auth.uid, request.data ?? {});
@@ -1726,6 +1731,15 @@ export const scheduledAttendanceAutoClose = onSchedule(
     const { autoCloseAttendance } = await import("./attendance");
     const result = await autoCloseAttendance();
     logger.info("scheduledAttendanceAutoClose complete", result);
+  }
+);
+
+export const scheduledLocationOffWatchdog = onSchedule(
+  { schedule: "every 5 minutes" },
+  async () => {
+    const { watchdogLocationOff } = await import("./attendance");
+    const result = await watchdogLocationOff();
+    logger.info("scheduledLocationOffWatchdog complete", result);
   }
 );
 

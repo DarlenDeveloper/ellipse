@@ -68,14 +68,10 @@ export async function autocompletePlaces(
         radius: 50000,
       },
     };
-  } else {
-    payload.locationBias = {
-      circle: {
-        center: { latitude: 1.3733, longitude: 32.2903 },
-        radius: 350000,
-      },
-    };
   }
+  // No device location: rely on includedRegionCodes ("ug") to keep results in
+  // Uganda. We intentionally omit locationBias here — the Places API (New)
+  // caps circle.radius at 50,000 m, so a countrywide radius is invalid.
 
   const data = await googleRequest(
     `${PLACES_BASE}/places:autocomplete`,

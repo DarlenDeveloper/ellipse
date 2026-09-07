@@ -239,13 +239,13 @@ Future<void> stopFieldTracking() async {
   }
 }
 
-/// Starts low-frequency (~30 min) location checks while the employee is simply
+/// Starts low-frequency (~5 min) location checks while the employee is simply
 /// clocked in and working (not on field work). Powers the live team map with an
 /// accurate recent position during working hours only. Stops automatically at
 /// the scheduled end-of-work (`scheduledEndMillis`).
 ///
 /// Reuses the same background service + consent as field tracking but runs in
-/// 'working' mode: a single fresh fix every 30 minutes via `attendanceLocationPing`.
+/// 'working' mode: a single fresh fix every 5 minutes via `attendanceLocationPing`.
 Future<bool> startWorkingTracking({required int? scheduledEndMillis}) async {
   if (kIsWeb) return false;
   if (!await Geolocator.isLocationServiceEnabled()) return false;
@@ -315,7 +315,11 @@ Future<void> onFieldTrackingStart(ServiceInstance service) async {
   Timer? flushTimer;
   Timer? workingTimer;
   Timer? cutoffTimer;
+  Timer? locationWatchTimer;
   bool started = false;
+  // Local de-dup mirror of the backend flag: only call reportLocationStatus on
+  // a state change, so we don't spam the callable every tick.
+  bool reportedOff = false;
 
   Future<void> flush() async {
     if (buffer.isEmpty) return;
@@ -340,6 +344,7 @@ Future<void> onFieldTrackingStart(ServiceInstance service) async {
     flushTimer?.cancel();
     workingTimer?.cancel();
     cutoffTimer?.cancel();
+    locationWatchTimer?.cancel();
     await service.stopSelf();
   }
 
@@ -348,10 +353,58 @@ Future<void> onFieldTrackingStart(ServiceInstance service) async {
     return scheduledEndMillis != null && nowMs >= scheduledEndMillis!;
   }
 
-  // --- Working mode: one fresh fix every 30 minutes -----------------------
+  /// Reports location on/off transitions to the backend so managers are
+  /// notified once when location drops and once when it recovers. Only fires on
+  /// a state change (local de-dup); the backend also de-dups defensively.
+  Future<void> reportLocationStatus(String status) async {
+    try {
+      await FirebaseFunctions.instanceFor(region: 'us-central1')
+          .httpsCallable('reportLocationStatus')
+          .call({'status': status});
+    } catch (_) {
+      // Best-effort; the scheduled watchdog covers a persistent failure.
+    }
+  }
+
+  /// Checks whether location services + permission are currently usable and, on
+  /// a transition, reports "off"/"on" to the backend. Returns true when usable.
+  Future<bool> checkAndReportLocation() async {
+    bool usable;
+    try {
+      final servicesOn = await Geolocator.isLocationServiceEnabled();
+      final permission = await Geolocator.checkPermission();
+      usable = servicesOn &&
+          (permission == LocationPermission.always ||
+              permission == LocationPermission.whileInUse);
+    } catch (_) {
+      usable = false;
+    }
+    if (!usable && !reportedOff) {
+      reportedOff = true;
+      await reportLocationStatus('off');
+    } else if (usable && reportedOff) {
+      reportedOff = false;
+      await reportLocationStatus('on');
+    }
+    return usable;
+  }
+
+  // --- Working mode: one fresh fix every 5 minutes ------------------------
   Future<void> workingPing() async {
     if (pastCutoff()) {
       await shutdown();
+      return;
+    }
+    // Detect location off/on and report transitions to managers.
+    if (!await checkAndReportLocation()) {
+      // Location unusable right now — skip this fix; the transition to "off"
+      // has been reported. The next tick will report "on" when it recovers.
+      if (service is AndroidServiceInstance) {
+        service.setForegroundNotificationInfo(
+          title: 'Ellipse',
+          content: 'Location is off — turn it on to share your location',
+        );
+      }
       return;
     }
     try {
@@ -369,7 +422,7 @@ Future<void> onFieldTrackingStart(ServiceInstance service) async {
         },
       });
     } catch (_) {
-      // Ignore a single failed check; the next 30-min tick retries.
+      // Ignore a single failed check; the next 5-min tick retries.
     }
     if (service is AndroidServiceInstance) {
       service.setForegroundNotificationInfo(
@@ -406,13 +459,20 @@ Future<void> onFieldTrackingStart(ServiceInstance service) async {
       }
     });
     flushTimer = Timer.periodic(const Duration(minutes: 2), (_) => flush());
+    // The position stream simply goes quiet when location drops, so poll every
+    // 2 minutes to detect off/on and report the transition to managers.
+    checkAndReportLocation();
+    locationWatchTimer = Timer.periodic(
+      const Duration(minutes: 2),
+      (_) => checkAndReportLocation(),
+    );
   }
 
   void startWorkingMode() {
-    // Immediate first fix, then every 30 minutes.
+    // Immediate first fix, then every 5 minutes.
     workingPing();
     workingTimer =
-        Timer.periodic(const Duration(minutes: 30), (_) => workingPing());
+        Timer.periodic(const Duration(minutes: 5), (_) => workingPing());
   }
 
   service.on('configure').listen((event) {
@@ -494,7 +554,7 @@ Future<bool> showFieldTrackingConsent(BuildContext context) async {
           ),
           const SizedBox(height: 12),
           _consentPoint(Iconsax.clock,
-              'Location is checked about every 30 minutes while working, and continuously during field work. It stops automatically at your end-of-work time — never after hours.'),
+              'Location is checked about every 5 minutes while working, and continuously during field work. It stops automatically at your end-of-work time — never after hours.'),
           _consentPoint(Iconsax.notification,
               'A notification stays visible the whole time tracking is active.'),
           _consentPoint(Iconsax.eye,

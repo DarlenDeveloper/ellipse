@@ -87,6 +87,116 @@ function evaluateGeofence(geofence: Geofence, latitude: number, longitude: numbe
   return { inside: distance <= geofence.radius_m, distance_m: Math.round(distance) };
 }
 
+/**
+ * Notify the organization managers (owner + admins), excluding the acting
+ * employee. Best-effort: never throws so a notification hiccup can't break the
+ * underlying location ping.
+ */
+async function notifyManagers(enterpriseId: string, excludeUid: string, title: string, body: string) {
+  try {
+    const managers = (await notificationRecipients(enterpriseId, "managers")).filter((id) => id !== excludeUid);
+    if (!managers.length) return;
+    await notifyUsers({
+      enterpriseId,
+      recipientUids: managers,
+      kind: "attendance",
+      title,
+      body,
+      href: "/attendance",
+    });
+  } catch { /* notifications are best-effort */ }
+}
+
+/**
+ * Shared per-ping location-event detection. Called by both the working-hours
+ * ping (recordWorkingLocation) and the field-work ping batch
+ * (recordAttendancePings) with the freshest known position.
+ *
+ * Detects, and notifies managers once per transition, for:
+ *   • Office geofence enter/leave  (entered / left the office area)
+ *   • Field-work destination arrival (once per destination in a trip)
+ *   • Back-online after a location-off report (clears the off flag)
+ *
+ * All de-dup state lives on the employee's attendance_current doc:
+ *   • geo_inside_office: boolean | null   — last known office in/out state
+ *   • arrived_destinations: string[]      — destination keys already notified
+ *   • location_reported_off: boolean      — off notification already sent
+ *
+ * Returns the field patch to merge onto attendance_current (the caller writes
+ * it alongside last_location so we do a single write).
+ */
+async function detectLocationEvents(params: {
+  enterpriseId: string;
+  uid: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  status: string; // "working" | "field_work"
+  current: FirebaseFirestore.DocumentData | undefined;
+  settings: FirebaseFirestore.DocumentData | undefined;
+}): Promise<Record<string, unknown>> {
+  const { enterpriseId, uid, name, latitude, longitude, status, current, settings } = params;
+  const patch: Record<string, unknown> = {};
+
+  // --- Back online: a ping arrived, so location is on again. --------------
+  if (current?.location_reported_off === true) {
+    patch.location_reported_off = false;
+    patch.location_off_at = null;
+    let where = status === "field_work" ? "on field work" : "working";
+    // If we can place them at the office, say so.
+    const geofence = normalizeGeofence(settings?.geofence ?? DEFAULT_GEOFENCE);
+    if (geofence.enabled && evaluateGeofence(geofence, latitude, longitude).inside) {
+      where = "at the office";
+    }
+    await notifyManagers(enterpriseId, uid, "Attendance", `${name} is back online (${where}).`);
+  }
+
+  // --- Office geofence enter/leave ---------------------------------------
+  const geofence = normalizeGeofence(settings?.geofence ?? DEFAULT_GEOFENCE);
+  if (geofence.enabled) {
+    const inside = evaluateGeofence(geofence, latitude, longitude).inside;
+    const prev = current?.geo_inside_office;
+    if (prev !== inside) {
+      patch.geo_inside_office = inside;
+      // Only notify on a real transition (prev was a known boolean), not on the
+      // first-ever ping where we simply record the baseline.
+      if (prev === true && inside === false) {
+        await notifyManagers(enterpriseId, uid, "Attendance", `${name} has left the ${geofence.label} area.`);
+      } else if (prev === false && inside === true) {
+        await notifyManagers(enterpriseId, uid, "Attendance", `${name} has entered the ${geofence.label} area.`);
+      }
+    }
+  }
+
+  // --- Field-work destination arrival ------------------------------------
+  if (status === "field_work" && Array.isArray(current?.field_locations)) {
+    const already: string[] = Array.isArray(current?.arrived_destinations)
+      ? (current!.arrived_destinations as string[]).map(String)
+      : [];
+    const arrived = new Set(already);
+    for (let i = 0; i < current!.field_locations.length; i++) {
+      const dest = current!.field_locations[i] as Record<string, unknown>;
+      const dLat = Number(dest.latitude);
+      const dLng = Number(dest.longitude);
+      if (!Number.isFinite(dLat) || !Number.isFinite(dLng)) continue;
+      const radius = Number.isFinite(Number(dest.radius_m)) ? Math.max(50, Number(dest.radius_m)) : 150;
+      const key = String(dest.id ?? dest.place_id ?? `${dest.label ?? "dest"}_${i}`);
+      if (arrived.has(key)) continue;
+      const distance = haversineMeters(dLat, dLng, latitude, longitude);
+      if (distance <= radius) {
+        arrived.add(key);
+        const label = String(dest.label ?? "their destination");
+        await notifyManagers(enterpriseId, uid, "Attendance", `${name} has arrived at ${label}.`);
+      }
+    }
+    if (arrived.size !== already.length) {
+      patch.arrived_destinations = Array.from(arrived);
+    }
+  }
+
+  return patch;
+}
+
 async function caller(uid: string) {
   const snap = await db.doc(`users/${uid}`).get();
   const data = snap.data();
@@ -287,6 +397,13 @@ export async function recordAttendanceAction(uid: string, args: Record<string, u
         ? (action === "start_field_work" ? fieldLocations : current?.field_locations ?? [])
         : null,
       field_started_at: action === "start_field_work" ? now : nextStatus === "field_work" ? current?.field_started_at ?? now : null,
+      // Location-event de-dup state. Clock-in starts a clean slate; starting a
+      // new field trip resets destination arrivals; clock-out clears the
+      // location-off gate so a stale flag never blocks the next session.
+      geo_inside_office: action === "clock_in" ? geo.inside : current?.geo_inside_office ?? null,
+      arrived_destinations: action === "clock_in" || action === "start_field_work" ? [] : current?.arrived_destinations ?? [],
+      location_reported_off: action === "clock_out" ? false : current?.location_reported_off ?? false,
+      location_off_at: action === "clock_out" ? null : current?.location_off_at ?? null,
     });
     return { status: nextStatus, sessionId, outOfOffice, distanceM: geo.distance_m };
   });
@@ -545,6 +662,27 @@ export async function recordAttendancePings(uid: string, args: Record<string, un
       points,
       created_at: Timestamp.fromMillis(nowMs),
     });
+
+    // Use the most recent point in the batch for live position + event
+    // detection (geofence enter/leave, destination arrival, back-online).
+    const latest = points[points.length - 1];
+    const location = { latitude: latest.latitude, longitude: latest.longitude, accuracy: latest.accuracy };
+    const eventPatch = await detectLocationEvents({
+      enterpriseId: user.enterpriseId,
+      uid,
+      name: user.name,
+      latitude: latest.latitude,
+      longitude: latest.longitude,
+      status: "field_work",
+      current,
+      settings: settingsSnap.data(),
+    });
+    await db.doc(`attendance_current/${user.enterpriseId}_${uid}`).set({
+      last_location: location,
+      last_location_at: Timestamp.fromMillis(nowMs),
+      location_source: "field_ping",
+      ...eventPatch,
+    }, { merge: true });
   }
   return { ok: true, stored: points.length, cutoff };
 }
@@ -591,12 +729,115 @@ export async function recordWorkingLocation(uid: string, args: Record<string, un
 
   const now = Timestamp.now();
   const location = { latitude, longitude, accuracy: Number.isFinite(accuracy) ? Math.max(0, accuracy) : null };
+  const eventPatch = await detectLocationEvents({
+    enterpriseId: user.enterpriseId,
+    uid,
+    name: user.name,
+    latitude,
+    longitude,
+    status: "working",
+    current,
+    settings: settingsSnap.data(),
+  });
   await currentRef.set({
     last_location: location,
     last_location_at: now,
     location_source: "working_ping",
+    ...eventPatch,
   }, { merge: true });
   return { ok: true, stored: 1, cutoff: false };
+}
+
+/**
+ * Called by the mobile tracking isolate when it detects that location services
+ * or permission dropped while the employee is still on the clock. Notifies the
+ * managers exactly once ("<name>'s location is off"); the matching "back
+ * online" notification is emitted by detectLocationEvents on the next ping.
+ *
+ * De-dup: guarded by the `location_reported_off` flag so repeated reports (the
+ * isolate may retry) never spam managers.
+ */
+export async function reportLocationStatus(uid: string, args: Record<string, unknown>) {
+  const user = await caller(uid);
+  const status = String(args.status ?? "").trim();
+  const currentRef = db.doc(`attendance_current/${user.enterpriseId}_${uid}`);
+  const currentSnap = await currentRef.get();
+  const current = currentSnap.data();
+  const liveStatus = String(current?.status ?? "");
+
+  // Only meaningful while on the clock. Ignore otherwise.
+  if (liveStatus !== "working" && liveStatus !== "field_work") {
+    return { ok: true, notified: false, reason: "not_on_duty" };
+  }
+
+  if (status === "off") {
+    // Already reported off -> de-dup, do nothing.
+    if (current?.location_reported_off === true) {
+      return { ok: true, notified: false, reason: "already_off" };
+    }
+    await currentRef.set({
+      location_reported_off: true,
+      location_off_at: Timestamp.now(),
+    }, { merge: true });
+    await notifyManagers(user.enterpriseId, uid, "Attendance", `${user.name}'s location is off.`);
+    return { ok: true, notified: true };
+  }
+
+  // status === "on": clear the flag if set. The descriptive "back online"
+  // message is normally sent from the next ping (which knows where they are),
+  // but if pings are not flowing we still clear the gate here.
+  if (current?.location_reported_off === true) {
+    await currentRef.set({ location_reported_off: false, location_off_at: null }, { merge: true });
+  }
+  return { ok: true, notified: false };
+}
+
+/**
+ * Scheduled watchdog. Catches the case where the app is *killed* (so it cannot
+ * self-report location-off). For every employee currently working / on field
+ * work, if their last location ping is older than STALE_MS and we have not
+ * already flagged them off, notify managers once and set the off flag. The
+ * matching "back online" is emitted by detectLocationEvents when pings resume.
+ */
+export async function watchdogLocationOff() {
+  const STALE_MS = 12 * 60_000; // ~2.4 missed 5-min pings before we alert
+  const nowMs = Date.now();
+
+  const activeSnap = await db.collection("attendance_current")
+    .where("status", "in", ["working", "field_work"]).get();
+
+  // Honor the end-of-work privacy cutoff: don't alert once tracking should have
+  // stopped for the day.
+  const settingsSnap = await db.collection("attendance_settings").get();
+  const scheduleByEid = new Map<string, Record<string, { enabled: boolean; start: string; end: string }>>();
+  for (const doc of settingsSnap.docs) {
+    scheduleByEid.set(String(doc.data().enterprise_id ?? doc.id), (doc.data().days ?? DEFAULT_SCHEDULE.days));
+  }
+
+  let flagged = 0;
+  for (const doc of activeSnap.docs) {
+    const cur = doc.data();
+    if (cur.location_reported_off === true) continue; // already off
+    const eid = String(cur.enterprise_id ?? "");
+    const uid = String(cur.user_id ?? "");
+    if (!eid || !uid) continue;
+
+    const days = scheduleByEid.get(eid) ?? DEFAULT_SCHEDULE.days;
+    const endMs = scheduledEndMillis(days, nowMs);
+    if (endMs !== null && nowMs >= endMs) continue; // past cutoff — tracking should be off anyway
+
+    const lastPingMs = (cur.last_location_at as Timestamp | undefined)?.toMillis?.()
+      ?? (cur.clocked_in_at as Timestamp | undefined)?.toMillis?.()
+      ?? 0;
+    if (lastPingMs === 0) continue; // never had a fix yet — give it time
+    if (nowMs - lastPingMs < STALE_MS) continue; // pings are fresh
+
+    await doc.ref.set({ location_reported_off: true, location_off_at: Timestamp.now() }, { merge: true });
+    const name = String(cur.employee_name ?? "Employee");
+    await notifyManagers(eid, uid, "Attendance", `${name}'s location is off.`);
+    flagged++;
+  }
+  return { flagged };
 }
 
 /**

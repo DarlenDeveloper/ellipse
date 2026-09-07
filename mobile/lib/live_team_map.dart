@@ -11,6 +11,8 @@
 // which is shown as approximate. Off-duty and location-off employees appear in
 // the status list, not on the map.
 
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -23,6 +25,84 @@ const _cField = Color(0xFF8B5CF6); // on field work (live)
 const _cWorking = Color(0xFF3566F6); // working (last known)
 const _cOff = Color(0xFF9299A5); // off duty
 const _cNoLoc = Color(0xFFF29B43); // location off / unknown
+
+/// Derives up to two uppercase initials from a display name.
+String _initialsFor(String name) {
+  final parts = name
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((p) => p.isNotEmpty)
+      .toList();
+  if (parts.isEmpty) return '?';
+  if (parts.length == 1) {
+    final p = parts.first;
+    return p.substring(0, p.length >= 2 ? 2 : 1).toUpperCase();
+  }
+  return (parts.first[0] + parts.last[0]).toUpperCase();
+}
+
+/// Draws a circular profile marker (colored disc + white initials + a small
+/// pointer) to a [BitmapDescriptor] for use as a Google Maps marker icon.
+/// Google Maps markers require a bitmap, so we render one with Canvas.
+Future<BitmapDescriptor> _profileMarker({
+  required String initials,
+  required Color color,
+  double size = 132,
+}) async {
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  final double diameter = size;
+  final double radius = diameter / 2;
+  final double pointerHeight = diameter * 0.28;
+  final double totalHeight = diameter + pointerHeight;
+
+  final center = Offset(radius, radius);
+  final circlePaint = Paint()..color = color;
+  final borderPaint = Paint()
+    ..color = Colors.white
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = diameter * 0.08;
+  final shadowPaint = Paint()
+    ..color = Colors.black.withValues(alpha: 0.18)
+    ..maskFilter = const ui.MaskFilter.blur(ui.BlurStyle.normal, 6);
+
+  // Pointer (small triangle) beneath the circle.
+  final pointer = Path()
+    ..moveTo(radius - diameter * 0.16, diameter * 0.86)
+    ..lineTo(radius, totalHeight)
+    ..lineTo(radius + diameter * 0.16, diameter * 0.86)
+    ..close();
+  canvas.drawPath(pointer, shadowPaint);
+  canvas.drawPath(pointer, circlePaint);
+
+  // Circle with subtle shadow + white border.
+  canvas.drawCircle(center.translate(0, 2), radius - borderPaint.strokeWidth, shadowPaint);
+  canvas.drawCircle(center, radius - borderPaint.strokeWidth, circlePaint);
+  canvas.drawCircle(center, radius - borderPaint.strokeWidth, borderPaint);
+
+  // Initials, centered.
+  final textPainter = TextPainter(
+    text: TextSpan(
+      text: initials,
+      style: TextStyle(
+        color: Colors.white,
+        fontSize: diameter * (initials.length > 1 ? 0.38 : 0.46),
+        fontWeight: FontWeight.w700,
+      ),
+    ),
+    textDirection: TextDirection.ltr,
+  )..layout();
+  textPainter.paint(
+    canvas,
+    Offset(radius - textPainter.width / 2, radius - textPainter.height / 2),
+  );
+
+  final image = await recorder
+      .endRecording()
+      .toImage(diameter.ceil(), totalHeight.ceil());
+  final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+  return BitmapDescriptor.bytes(bytes!.buffer.asUint8List());
+}
 
 class LiveTeamMapScreen extends StatefulWidget {
   const LiveTeamMapScreen({
@@ -503,6 +583,47 @@ class _TeamMap extends StatefulWidget {
 }
 
 class _TeamMapState extends State<_TeamMap> {
+  Set<Marker> _markers = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _buildMarkers();
+  }
+
+  @override
+  void didUpdateWidget(covariant _TeamMap oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.points != widget.points) _buildMarkers();
+  }
+
+  Future<void> _buildMarkers() async {
+    final markers = <Marker>{};
+    for (var index = 0; index < widget.points.length; index++) {
+      final p = widget.points[index];
+      final icon = await _profileMarker(
+        initials: _initialsFor(p.name),
+        color: p.color,
+      );
+      markers.add(
+        Marker(
+          markerId: MarkerId('team-$index'),
+          position: p.point,
+          // Anchor at the pointer tip (bottom-center of the bitmap).
+          anchor: const Offset(0.5, 1.0),
+          infoWindow: InfoWindow(
+            title: p.name,
+            snippet: p.live
+                ? 'On field work · live'
+                : 'Working · last known location',
+          ),
+          icon: icon,
+        ),
+      );
+    }
+    if (mounted) setState(() => _markers = markers);
+  }
+
   LatLngBounds _bounds() {
     var minLat = widget.points.first.point.latitude, maxLat = minLat;
     var minLng = widget.points.first.point.longitude, maxLng = minLng;
@@ -533,24 +654,7 @@ class _TeamMapState extends State<_TeamMap> {
         target: widget.points.first.point,
         zoom: 13,
       ),
-      markers: {
-        for (var index = 0; index < widget.points.length; index++)
-          Marker(
-            markerId: MarkerId('team-$index'),
-            position: widget.points[index].point,
-            infoWindow: InfoWindow(
-              title: widget.points[index].name,
-              snippet: widget.points[index].live
-                  ? 'On field work · live'
-                  : 'Working · last known location',
-            ),
-            icon: BitmapDescriptor.defaultMarkerWithHue(
-              widget.points[index].live
-                  ? BitmapDescriptor.hueViolet
-                  : BitmapDescriptor.hueAzure,
-            ),
-          ),
-      },
+      markers: _markers,
       mapType: MapType.normal,
       mapToolbarEnabled: false,
       zoomControlsEnabled: false,
