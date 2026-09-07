@@ -53,6 +53,8 @@ export async function autocompletePlaces(
     input,
     sessionToken,
     languageCode: "en",
+    regionCode: "UG",
+    includedRegionCodes: ["ug"],
     includeQueryPredictions: false,
   };
   const latitude = Number(args.latitude);
@@ -64,6 +66,13 @@ export async function autocompletePlaces(
       circle: {
         center: { latitude, longitude },
         radius: 50000,
+      },
+    };
+  } else {
+    payload.locationBias = {
+      circle: {
+        center: { latitude: 1.3733, longitude: 32.2903 },
+        radius: 350000,
       },
     };
   }

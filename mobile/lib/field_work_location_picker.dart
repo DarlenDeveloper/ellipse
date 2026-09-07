@@ -34,8 +34,7 @@ class _FieldWorkDetailsSheet extends StatefulWidget {
   final List<Map<String, dynamic>> savedLocations;
 
   @override
-  State<_FieldWorkDetailsSheet> createState() =>
-      _FieldWorkDetailsSheetState();
+  State<_FieldWorkDetailsSheet> createState() => _FieldWorkDetailsSheetState();
 }
 
 class _FieldWorkDetailsSheetState extends State<_FieldWorkDetailsSheet> {
@@ -105,10 +104,9 @@ class _FieldWorkDetailsSheetState extends State<_FieldWorkDetailsSheet> {
     setState(() => _searching = true);
     _debounce = Timer(const Duration(milliseconds: 350), () async {
       try {
-        final result = await _functions.httpsCallable('placesAutocomplete').call({
-          'input': query,
-          'sessionToken': _sessionToken,
-        });
+        final result = await _functions
+            .httpsCallable('placesAutocomplete')
+            .call({'input': query, 'sessionToken': _sessionToken});
         if (!mounted || _search.text.trim() != query) return;
         final data = Map<String, dynamic>.from(result.data as Map);
         setState(() {
@@ -245,12 +243,20 @@ class _FieldWorkDetailsSheetState extends State<_FieldWorkDetailsSheet> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Plan field work',
-                          style: GoogleFonts.poppins(
-                              fontSize: 20, fontWeight: FontWeight.w700)),
-                      Text('Choose every destination before you leave',
-                          style: GoogleFonts.poppins(
-                              fontSize: 11.5, color: _muted)),
+                      Text(
+                        'Plan field work',
+                        style: GoogleFonts.poppins(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Text(
+                        'Choose every destination before you leave',
+                        style: GoogleFonts.poppins(
+                          fontSize: 11.5,
+                          color: _muted,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -288,11 +294,14 @@ class _FieldWorkDetailsSheetState extends State<_FieldWorkDetailsSheet> {
                   _sectionTitle('Destinations', '${_selected.length}/8'),
                   if (widget.savedLocations.isNotEmpty) ...[
                     const SizedBox(height: 10),
-                    Text('Saved places',
-                        style: GoogleFonts.poppins(
-                            fontSize: 11.5,
-                            color: _muted,
-                            fontWeight: FontWeight.w500)),
+                    Text(
+                      'Saved places',
+                      style: GoogleFonts.poppins(
+                        fontSize: 11.5,
+                        color: _muted,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
                     const SizedBox(height: 9),
                     SizedBox(
                       height: 42,
@@ -314,7 +323,9 @@ class _FieldWorkDetailsSheetState extends State<_FieldWorkDetailsSheet> {
                               size: 16,
                               color: selected ? Colors.white : _ink,
                             ),
-                            label: Text('${location['label'] ?? 'Saved place'}'),
+                            label: Text(
+                              '${location['label'] ?? 'Saved place'}',
+                            ),
                             labelStyle: TextStyle(
                               color: selected ? Colors.white : _ink,
                               fontSize: 11.5,
@@ -332,8 +343,8 @@ class _FieldWorkDetailsSheetState extends State<_FieldWorkDetailsSheet> {
                   if (_selected.isNotEmpty) ...[
                     const SizedBox(height: 14),
                     ..._selected.asMap().entries.map(
-                          (entry) => _selectedCard(entry.key, entry.value),
-                        ),
+                      (entry) => _selectedCard(entry.key, entry.value),
+                    ),
                     SizedBox(
                       height: 44,
                       child: TextButton.icon(
@@ -369,7 +380,46 @@ class _FieldWorkDetailsSheetState extends State<_FieldWorkDetailsSheet> {
                       borderRadius: BorderRadius.circular(22),
                       child: SizedBox(
                         height: 190,
-                        child: _DestinationMap(locations: _selected),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            _DestinationPreview(locations: _selected),
+                            Positioned(
+                              right: 10,
+                              top: 10,
+                              child: FilledButton.icon(
+                                onPressed: () => Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (_) => _DestinationMapScreen(
+                                      locations: _selected
+                                          .map(Map<String, dynamic>.from)
+                                          .toList(),
+                                    ),
+                                  ),
+                                ),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: Colors.white.withValues(
+                                    alpha: .94,
+                                  ),
+                                  foregroundColor: _ink,
+                                  elevation: 0,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 11,
+                                    vertical: 8,
+                                  ),
+                                ),
+                                icon: const Icon(Iconsax.map, size: 15),
+                                label: Text(
+                                  'Open Google Map',
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ],
@@ -383,14 +433,20 @@ class _FieldWorkDetailsSheetState extends State<_FieldWorkDetailsSheet> {
                       ),
                       child: Row(
                         children: [
-                          const Icon(Iconsax.warning_2,
-                              size: 18, color: Color(0xFF9D2922)),
+                          const Icon(
+                            Iconsax.warning_2,
+                            size: 18,
+                            color: Color(0xFF9D2922),
+                          ),
                           const SizedBox(width: 9),
                           Expanded(
-                            child: Text(_error!,
-                                style: GoogleFonts.poppins(
-                                    fontSize: 11.5,
-                                    color: const Color(0xFF9D2922))),
+                            child: Text(
+                              _error!,
+                              style: GoogleFonts.poppins(
+                                fontSize: 11.5,
+                                color: const Color(0xFF9D2922),
+                              ),
+                            ),
                           ),
                         ],
                       ),
@@ -418,9 +474,11 @@ class _FieldWorkDetailsSheetState extends State<_FieldWorkDetailsSheet> {
                         ),
                       )
                     : const Icon(Iconsax.location_tick, size: 20),
-                label: Text(_saving
-                    ? 'Saving your route…'
-                    : 'Continue and capture location'),
+                label: Text(
+                  _saving
+                      ? 'Saving your route…'
+                      : 'Continue and capture location',
+                ),
               ),
             ),
           ],
@@ -430,140 +488,148 @@ class _FieldWorkDetailsSheetState extends State<_FieldWorkDetailsSheet> {
   }
 
   InputDecoration _input(String hint, IconData icon) => InputDecoration(
-        hintText: hint,
-        hintStyle: GoogleFonts.poppins(fontSize: 12.5, color: _muted),
-        prefixIcon: Icon(icon, size: 19, color: _muted),
-        filled: true,
-        fillColor: _surface,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(17),
-          borderSide: BorderSide.none,
-        ),
-      );
+    hintText: hint,
+    hintStyle: GoogleFonts.poppins(fontSize: 12.5, color: _muted),
+    prefixIcon: Icon(icon, size: 19, color: _muted),
+    filled: true,
+    fillColor: _surface,
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(17),
+      borderSide: BorderSide.none,
+    ),
+  );
 
   Widget _sectionTitle(String title, String trailing) => Row(
-        children: [
-          Text(title,
-              style: GoogleFonts.poppins(
-                  fontSize: 15.5, fontWeight: FontWeight.w700)),
-          const Spacer(),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-            decoration: BoxDecoration(
-              color: const Color(0xFFEFF3FF),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Text(trailing,
-                style: GoogleFonts.poppins(
-                    fontSize: 10,
-                    color: _blue,
-                    fontWeight: FontWeight.w600)),
+    children: [
+      Text(
+        title,
+        style: GoogleFonts.poppins(fontSize: 15.5, fontWeight: FontWeight.w700),
+      ),
+      const Spacer(),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        decoration: BoxDecoration(
+          color: const Color(0xFFEFF3FF),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(
+          trailing,
+          style: GoogleFonts.poppins(
+            fontSize: 10,
+            color: _blue,
+            fontWeight: FontWeight.w600,
           ),
-        ],
-      );
+        ),
+      ),
+    ],
+  );
 
   Widget _searchBox() => Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0xFFDDE1E8)),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x0A1D2825),
-              blurRadius: 14,
-              offset: Offset(0, 5),
-            ),
-          ],
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(color: const Color(0xFFDDE1E8)),
+      boxShadow: const [
+        BoxShadow(
+          color: Color(0x0A1D2825),
+          blurRadius: 14,
+          offset: Offset(0, 5),
         ),
-        child: TextField(
-          controller: _search,
-          autofocus: _selected.isEmpty,
-          onChanged: _onQuery,
-          decoration: InputDecoration(
-            hintText: _selected.isEmpty
-                ? 'Search a destination, e.g. Cairo Bank'
-                : 'Search another stop',
-            hintStyle: GoogleFonts.poppins(fontSize: 12, color: _muted),
-            prefixIcon:
-                const Icon(Iconsax.search_normal_1, size: 19, color: _ink),
-            suffixIcon: _search.text.isEmpty
-                ? null
-                : IconButton(
-                    onPressed: () {
-                      _search.clear();
-                      _onQuery('');
-                    },
-                    icon: const Icon(Iconsax.close_circle, size: 18),
-                  ),
-            border: InputBorder.none,
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
-          ),
+      ],
+    ),
+    child: TextField(
+      controller: _search,
+      autofocus: _selected.isEmpty,
+      onChanged: _onQuery,
+      decoration: InputDecoration(
+        hintText: _selected.isEmpty
+            ? 'Search a destination, e.g. Cairo Bank'
+            : 'Search another stop',
+        hintStyle: GoogleFonts.poppins(fontSize: 12, color: _muted),
+        prefixIcon: const Icon(Iconsax.search_normal_1, size: 19, color: _ink),
+        suffixIcon: _search.text.isEmpty
+            ? null
+            : IconButton(
+                onPressed: () {
+                  _search.clear();
+                  _onQuery('');
+                },
+                icon: const Icon(Iconsax.close_circle, size: 18),
+              ),
+        border: InputBorder.none,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 16,
         ),
-      );
+      ),
+    ),
+  );
 
   Widget _suggestionList() => Container(
-        margin: const EdgeInsets.only(top: 8),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0xFFEAECF0)),
-        ),
-        child: Column(
-          children: [
-            for (var index = 0; index < _suggestions.length; index++) ...[
-              InkWell(
-                borderRadius: BorderRadius.circular(16),
-                onTap: () => _chooseSuggestion(_suggestions[index]),
-                child: Padding(
-                  padding: const EdgeInsets.all(13),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 38,
-                        height: 38,
-                        decoration: const BoxDecoration(
-                          color: _surface,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(Iconsax.location,
-                            size: 18, color: _ink),
-                      ),
-                      const SizedBox(width: 11),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('${_suggestions[index]['mainText'] ?? ''}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: GoogleFonts.poppins(
-                                    fontSize: 12.5,
-                                    fontWeight: FontWeight.w600)),
-                            if ('${_suggestions[index]['secondaryText'] ?? ''}'
-                                .isNotEmpty)
-                              Text(
-                                '${_suggestions[index]['secondaryText']}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: GoogleFonts.poppins(
-                                    fontSize: 10.5, color: _muted),
-                              ),
-                          ],
-                        ),
-                      ),
-                      const Icon(Iconsax.arrow_right_3,
-                          size: 16, color: _muted),
-                    ],
+    margin: const EdgeInsets.only(top: 8),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(color: const Color(0xFFEAECF0)),
+    ),
+    child: Column(
+      children: [
+        for (var index = 0; index < _suggestions.length; index++) ...[
+          InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () => _chooseSuggestion(_suggestions[index]),
+            child: Padding(
+              padding: const EdgeInsets.all(13),
+              child: Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: const BoxDecoration(
+                      color: _surface,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Iconsax.location, size: 18, color: _ink),
                   ),
-                ),
+                  const SizedBox(width: 11),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${_suggestions[index]['mainText'] ?? ''}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.poppins(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        if ('${_suggestions[index]['secondaryText'] ?? ''}'
+                            .isNotEmpty)
+                          Text(
+                            '${_suggestions[index]['secondaryText']}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.poppins(
+                              fontSize: 10.5,
+                              color: _muted,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Iconsax.arrow_right_3, size: 16, color: _muted),
+                ],
               ),
-              if (index != _suggestions.length - 1)
-                const Divider(height: 1, indent: 62),
-            ],
-          ],
-        ),
-      );
+            ),
+          ),
+          if (index != _suggestions.length - 1)
+            const Divider(height: 1, indent: 62),
+        ],
+      ],
+    ),
+  );
 
   Widget _selectedCard(int index, Map<String, dynamic> location) {
     final key = _key(location);
@@ -576,9 +642,7 @@ class _FieldWorkDetailsSheetState extends State<_FieldWorkDetailsSheet> {
         color: index == 0 ? const Color(0xFFF0F4FF) : _surface,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: index == 0
-              ? const Color(0xFFDCE5FF)
-              : const Color(0xFFE8EAE6),
+          color: index == 0 ? const Color(0xFFDCE5FF) : const Color(0xFFE8EAE6),
         ),
       ),
       child: Column(
@@ -593,25 +657,34 @@ class _FieldWorkDetailsSheetState extends State<_FieldWorkDetailsSheet> {
                   shape: BoxShape.circle,
                 ),
                 alignment: Alignment.center,
-                child: Text('${index + 1}',
-                    style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.w700)),
+                child: Text(
+                  '${index + 1}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('${location['label'] ?? 'Destination'}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.poppins(
-                            fontSize: 12.5, fontWeight: FontWeight.w600)),
-                    Text('${location['address'] ?? ''}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.poppins(
-                            fontSize: 10, color: _muted)),
+                    Text(
+                      '${location['label'] ?? 'Destination'}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.poppins(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      '${location['address'] ?? ''}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.poppins(fontSize: 10, color: _muted),
+                    ),
                   ],
                 ),
               ),
@@ -632,8 +705,10 @@ class _FieldWorkDetailsSheetState extends State<_FieldWorkDetailsSheet> {
             children: [
               const Icon(Iconsax.radar_1, size: 16, color: _muted),
               const SizedBox(width: 7),
-              Text('Arrival radius',
-                  style: GoogleFonts.poppins(fontSize: 10.5, color: _muted)),
+              Text(
+                'Arrival radius',
+                style: GoogleFonts.poppins(fontSize: 10.5, color: _muted),
+              ),
               Expanded(
                 child: Slider(
                   value: radius.clamp(50, 500),
@@ -647,10 +722,14 @@ class _FieldWorkDetailsSheetState extends State<_FieldWorkDetailsSheet> {
               ),
               SizedBox(
                 width: 42,
-                child: Text('${radius.round()}m',
-                    textAlign: TextAlign.end,
-                    style: GoogleFonts.poppins(
-                        fontSize: 10.5, fontWeight: FontWeight.w600)),
+                child: Text(
+                  '${radius.round()}m',
+                  textAlign: TextAlign.end,
+                  style: GoogleFonts.poppins(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ),
             ],
           ),
@@ -664,14 +743,186 @@ class _FieldWorkDetailsSheetState extends State<_FieldWorkDetailsSheet> {
               onChanged: (value) => setState(() {
                 value ? _saveForLater.add(key) : _saveForLater.remove(key);
               }),
-              title: Text('Save for future field work',
-                  style: GoogleFonts.poppins(
-                      fontSize: 10.5, fontWeight: FontWeight.w600)),
+              title: Text(
+                'Save for future field work',
+                style: GoogleFonts.poppins(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ),
         ],
       ),
     );
   }
+}
+
+class _DestinationPreview extends StatelessWidget {
+  const _DestinationPreview({required this.locations});
+
+  final List<Map<String, dynamic>> locations;
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+    color: const Color(0xFFF0F4F3),
+    child: CustomPaint(
+      painter: _DestinationPreviewPainter(locations),
+      child: const SizedBox.expand(),
+    ),
+  );
+}
+
+class _DestinationPreviewPainter extends CustomPainter {
+  const _DestinationPreviewPainter(this.locations);
+
+  final List<Map<String, dynamic>> locations;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final grid = Paint()
+      ..color = const Color(0xFFDDE6E3)
+      ..strokeWidth = 1;
+    for (var x = 16.0; x < size.width; x += 34) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), grid);
+    }
+    for (var y = 14.0; y < size.height; y += 30) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
+    }
+    if (locations.isEmpty) return;
+
+    final points = locations
+        .map(
+          (item) => LatLng(
+            (item['latitude'] as num).toDouble(),
+            (item['longitude'] as num).toDouble(),
+          ),
+        )
+        .toList();
+    var minLat = points.first.latitude, maxLat = minLat;
+    var minLng = points.first.longitude, maxLng = minLng;
+    for (final point in points) {
+      minLat = math.min(minLat, point.latitude);
+      maxLat = math.max(maxLat, point.latitude);
+      minLng = math.min(minLng, point.longitude);
+      maxLng = math.max(maxLng, point.longitude);
+    }
+    final latSpan = math.max(0.01, maxLat - minLat);
+    final lngSpan = math.max(0.01, maxLng - minLng);
+    const padding = 30.0;
+    Offset project(LatLng point) => Offset(
+      padding +
+          ((point.longitude - minLng) / lngSpan) * (size.width - padding * 2),
+      padding +
+          ((maxLat - point.latitude) / latSpan) * (size.height - padding * 2),
+    );
+
+    if (points.length > 1) {
+      final path = Path()
+        ..moveTo(project(points.first).dx, project(points.first).dy);
+      for (final point in points.skip(1)) {
+        final offset = project(point);
+        path.lineTo(offset.dx, offset.dy);
+      }
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = const Color(0xFF8FA8A1)
+          ..strokeWidth = 2
+          ..style = PaintingStyle.stroke,
+      );
+    }
+    for (var index = 0; index < points.length; index++) {
+      final offset = points.length == 1
+          ? size.center(Offset.zero)
+          : project(points[index]);
+      final color = index == 0 ? _blue : const Color(0xFF8B5CF6);
+      canvas.drawCircle(offset, 13, Paint()..color = Colors.white);
+      canvas.drawCircle(offset, 10, Paint()..color = color);
+      final label = TextPainter(
+        text: TextSpan(
+          text: '${index + 1}',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      label.paint(canvas, offset - Offset(label.width / 2, label.height / 2));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DestinationPreviewPainter oldDelegate) =>
+      oldDelegate.locations != locations;
+}
+
+class _DestinationMapScreen extends StatelessWidget {
+  const _DestinationMapScreen({required this.locations});
+
+  final List<Map<String, dynamic>> locations;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    body: Stack(
+      children: [
+        Positioned.fill(child: _DestinationMap(locations: locations)),
+        SafeArea(
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+              child: Row(
+                children: [
+                  Material(
+                    color: Colors.white,
+                    shape: const CircleBorder(),
+                    elevation: 4,
+                    child: IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Iconsax.arrow_left_2, size: 20),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 11,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: .95),
+                        borderRadius: BorderRadius.circular(17),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x181D2825),
+                            blurRadius: 12,
+                            offset: Offset(0, 5),
+                          ),
+                        ],
+                      ),
+                      child: Text(
+                        locations.length == 1
+                            ? '${locations.first['label'] ?? 'Field-work destination'}'
+                            : '${locations.length} field-work destinations',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.poppins(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _DestinationMap extends StatefulWidget {
@@ -687,19 +938,19 @@ class _DestinationMapState extends State<_DestinationMap> {
   GoogleMapController? _controller;
 
   Set<Marker> get _markers => widget.locations.asMap().entries.map((entry) {
-        final value = entry.value;
-        return Marker(
-          markerId: MarkerId('destination-${entry.key}'),
-          position: LatLng(
-            (value['latitude'] as num).toDouble(),
-            (value['longitude'] as num).toDouble(),
-          ),
-          infoWindow: InfoWindow(title: '${value['label'] ?? 'Destination'}'),
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            entry.key == 0 ? BitmapDescriptor.hueAzure : BitmapDescriptor.hueViolet,
-          ),
-        );
-      }).toSet();
+    final value = entry.value;
+    return Marker(
+      markerId: MarkerId('destination-${entry.key}'),
+      position: LatLng(
+        (value['latitude'] as num).toDouble(),
+        (value['longitude'] as num).toDouble(),
+      ),
+      infoWindow: InfoWindow(title: '${value['label'] ?? 'Destination'}'),
+      icon: BitmapDescriptor.defaultMarkerWithHue(
+        entry.key == 0 ? BitmapDescriptor.hueAzure : BitmapDescriptor.hueViolet,
+      ),
+    );
+  }).toSet();
 
   @override
   void didUpdateWidget(covariant _DestinationMap oldWidget) {
@@ -712,11 +963,15 @@ class _DestinationMapState extends State<_DestinationMap> {
     if (controller == null || widget.locations.isEmpty) return;
     if (widget.locations.length == 1) {
       final item = widget.locations.first;
-      await controller.animateCamera(CameraUpdate.newLatLngZoom(
-        LatLng((item['latitude'] as num).toDouble(),
-            (item['longitude'] as num).toDouble()),
-        15,
-      ));
+      await controller.animateCamera(
+        CameraUpdate.newLatLngZoom(
+          LatLng(
+            (item['latitude'] as num).toDouble(),
+            (item['longitude'] as num).toDouble(),
+          ),
+          15,
+        ),
+      );
       return;
     }
     var minLat = 90.0, maxLat = -90.0, minLng = 180.0, maxLng = -180.0;
@@ -728,13 +983,15 @@ class _DestinationMapState extends State<_DestinationMap> {
       minLng = math.min(minLng, lng);
       maxLng = math.max(maxLng, lng);
     }
-    await controller.animateCamera(CameraUpdate.newLatLngBounds(
-      LatLngBounds(
-        southwest: LatLng(minLat, minLng),
-        northeast: LatLng(maxLat, maxLng),
+    await controller.animateCamera(
+      CameraUpdate.newLatLngBounds(
+        LatLngBounds(
+          southwest: LatLng(minLat, minLng),
+          northeast: LatLng(maxLat, maxLng),
+        ),
+        42,
       ),
-      42,
-    ));
+    );
   }
 
   @override

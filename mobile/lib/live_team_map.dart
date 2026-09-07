@@ -51,7 +51,6 @@ class _LiveTeamMapScreenState extends State<LiveTeamMapScreen> {
 
   @override
   void dispose() {
-    _mapController?.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -70,7 +69,8 @@ class _LiveTeamMapScreenState extends State<LiveTeamMapScreen> {
     final day = (days?[key] as Map?)?.cast<String, dynamic>();
     if (day == null) {
       // Fallback: Mon–Fri 08:00–17:00.
-      final isWeekday = nowEat.weekday >= DateTime.monday &&
+      final isWeekday =
+          nowEat.weekday >= DateTime.monday &&
           nowEat.weekday <= DateTime.friday;
       final mins = nowEat.hour * 60 + nowEat.minute;
       return isWeekday && mins >= 8 * 60 && mins < 17 * 60;
@@ -106,32 +106,31 @@ class _LiveTeamMapScreenState extends State<LiveTeamMapScreen> {
   @override
   Widget build(BuildContext context) {
     final onDuty = current
-        .where((e) =>
-            e['status'] == 'working' || e['status'] == 'field_work')
+        .where((e) => e['status'] == 'working' || e['status'] == 'field_work')
         .toList();
 
     // Map-plottable are on-duty employees with a known location; everyone
     // else (off duty, location off) surfaces through search.
-    final onField =
-        onDuty.where((e) => e['status'] == 'field_work').toList();
-    final working =
-        onDuty.where((e) => e['status'] == 'working').toList();
+    final onField = onDuty.where((e) => e['status'] == 'field_work').toList();
+    final working = onDuty.where((e) => e['status'] == 'working').toList();
 
     final plottable = <_TeamPoint>[
       for (final e in onField)
         if (_location(e) != null)
           _TeamPoint(
-              name: _name(e),
-              point: _location(e)!,
-              live: true,
-              color: _cField),
+            name: _name(e),
+            point: _location(e)!,
+            live: true,
+            color: _cField,
+          ),
       for (final e in working)
         if (_location(e) != null)
           _TeamPoint(
-              name: _name(e),
-              point: _location(e)!,
-              live: false,
-              color: _cWorking),
+            name: _name(e),
+            point: _location(e)!,
+            live: false,
+            color: _cWorking,
+          ),
     ];
 
     final open = _withinWorkingHours;
@@ -153,7 +152,9 @@ class _LiveTeamMapScreenState extends State<LiveTeamMapScreen> {
     return Scaffold(
       backgroundColor: _fill,
       body: !open
-          ? SafeArea(child: _buildTopFloating(context, _OutOfHours(current: current)))
+          ? SafeArea(
+              child: _buildTopFloating(context, _OutOfHours(current: current)),
+            )
           : Stack(
               children: [
                 // Full-screen map (or empty state) behind everything.
@@ -162,7 +163,8 @@ class _LiveTeamMapScreenState extends State<LiveTeamMapScreen> {
                       ? _NoLocations(hasOnDuty: onDuty.isNotEmpty)
                       : _TeamMap(
                           points: plottable,
-                          onMapCreated: (controller) => _mapController = controller,
+                          onMapCreated: (controller) =>
+                              _mapController = controller,
                         ),
                 ),
 
@@ -207,120 +209,135 @@ class _LiveTeamMapScreenState extends State<LiveTeamMapScreen> {
 
   // A minimal top bar used for the out-of-hours state (keeps the back button).
   Widget _buildTopFloating(BuildContext context, Widget child) => Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
-            child: Row(
-              children: [
-                _circleBtn(Iconsax.arrow_left_2,
-                    () => Navigator.of(context).pop()),
-                const SizedBox(width: 10),
-                Text('Live team map',
-                    style: GoogleFonts.poppins(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: _dark)),
-              ],
-            ),
-          ),
-          Expanded(child: child),
-        ],
-      );
-
-  Widget _circleBtn(IconData icon, VoidCallback onTap) => GestureDetector(
-        onTap: onTap,
-        child: Container(
-          width: 46,
-          height: 46,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                  color: _dark.withValues(alpha: .12),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4)),
-            ],
-          ),
-          child: Icon(icon, color: _dark, size: 20),
-        ),
-      );
-
-  Widget _searchBar() => Container(
-        height: 46,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(24),
-          boxShadow: [
-            BoxShadow(
-                color: _dark.withValues(alpha: .12),
-                blurRadius: 10,
-                offset: const Offset(0, 4)),
-          ],
-        ),
+    children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
         child: Row(
           children: [
-            const Icon(Iconsax.search_normal_1, size: 18, color: _dark),
+            _circleBtn(Iconsax.arrow_left_2, () => Navigator.of(context).pop()),
             const SizedBox(width: 10),
-            Expanded(
-              child: TextField(
-                controller: _searchController,
-                onChanged: (v) => setState(() => _query = v),
-                textInputAction: TextInputAction.search,
-                style: GoogleFonts.poppins(fontSize: 13.5),
-                decoration: InputDecoration(
-                  isDense: true,
-                  border: InputBorder.none,
-                  hintText: 'Search team member',
-                  hintStyle: GoogleFonts.poppins(
-                      fontSize: 13.5, color: const Color(0xFF9299A5)),
-                ),
+            Text(
+              'Live team map',
+              style: GoogleFonts.poppins(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: _dark,
               ),
             ),
-            if (_query.isNotEmpty)
-              GestureDetector(
-                onTap: () {
-                  _searchController.clear();
-                  setState(() => _query = '');
-                },
-                child: const Icon(Iconsax.close_circle,
-                    size: 18, color: Color(0xFF9299A5)),
-              ),
           ],
         ),
-      );
+      ),
+      Expanded(child: child),
+    ],
+  );
+
+  Widget _circleBtn(IconData icon, VoidCallback onTap) => GestureDetector(
+    onTap: onTap,
+    child: Container(
+      width: 46,
+      height: 46,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: _dark.withValues(alpha: .12),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Icon(icon, color: _dark, size: 20),
+    ),
+  );
+
+  Widget _searchBar() => Container(
+    height: 46,
+    padding: const EdgeInsets.symmetric(horizontal: 14),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(24),
+      boxShadow: [
+        BoxShadow(
+          color: _dark.withValues(alpha: .12),
+          blurRadius: 10,
+          offset: const Offset(0, 4),
+        ),
+      ],
+    ),
+    child: Row(
+      children: [
+        const Icon(Iconsax.search_normal_1, size: 18, color: _dark),
+        const SizedBox(width: 10),
+        Expanded(
+          child: TextField(
+            controller: _searchController,
+            onChanged: (v) => setState(() => _query = v),
+            textInputAction: TextInputAction.search,
+            style: GoogleFonts.poppins(fontSize: 13.5),
+            decoration: InputDecoration(
+              isDense: true,
+              border: InputBorder.none,
+              hintText: 'Search team member',
+              hintStyle: GoogleFonts.poppins(
+                fontSize: 13.5,
+                color: const Color(0xFF9299A5),
+              ),
+            ),
+          ),
+        ),
+        if (_query.isNotEmpty)
+          GestureDetector(
+            onTap: () {
+              _searchController.clear();
+              setState(() => _query = '');
+            },
+            child: const Icon(
+              Iconsax.close_circle,
+              size: 18,
+              color: Color(0xFF9299A5),
+            ),
+          ),
+      ],
+    ),
+  );
 
   Widget _searchResults(List<_SearchHit> hits) => Container(
-        margin: const EdgeInsets.only(top: 8),
-        constraints: BoxConstraints(
-            maxHeight: MediaQuery.sizeOf(context).height * 0.42),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          boxShadow: [
-            BoxShadow(
-                color: _dark.withValues(alpha: .12),
-                blurRadius: 14,
-                offset: const Offset(0, 6)),
-          ],
+    margin: const EdgeInsets.only(top: 8),
+    constraints: BoxConstraints(
+      maxHeight: MediaQuery.sizeOf(context).height * 0.42,
+    ),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      boxShadow: [
+        BoxShadow(
+          color: _dark.withValues(alpha: .12),
+          blurRadius: 14,
+          offset: const Offset(0, 6),
         ),
-        child: hits.isEmpty
-            ? Padding(
-                padding: const EdgeInsets.all(18),
-                child: Text('No team member matches “$_query”.',
-                    style: GoogleFonts.poppins(
-                        fontSize: 12.5, color: const Color(0xFF687080))),
-              )
-            : ListView.separated(
-                shrinkWrap: true,
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                itemCount: hits.length,
-                separatorBuilder: (context, index) => const Divider(
-                    height: 1, indent: 60, color: Color(0xFFEFF1EE)),
-                itemBuilder: (context, i) => _resultRow(hits[i]),
+      ],
+    ),
+    child: hits.isEmpty
+        ? Padding(
+            padding: const EdgeInsets.all(18),
+            child: Text(
+              'No team member matches “$_query”.',
+              style: GoogleFonts.poppins(
+                fontSize: 12.5,
+                color: const Color(0xFF687080),
               ),
-      );
+            ),
+          )
+        : ListView.separated(
+            shrinkWrap: true,
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            itemCount: hits.length,
+            separatorBuilder: (context, index) =>
+                const Divider(height: 1, indent: 60, color: Color(0xFFEFF1EE)),
+            itemBuilder: (context, i) => _resultRow(hits[i]),
+          ),
+  );
 
   Widget _resultRow(_SearchHit hit) {
     // Determine display state. On duty but no point => location off.
@@ -334,7 +351,9 @@ class _LiveTeamMapScreenState extends State<LiveTeamMapScreen> {
       icon = locatable ? Iconsax.routing : Iconsax.location_slash;
     } else if (hit.status == 'working') {
       color = locatable ? _cWorking : _cNoLoc;
-      label = locatable ? 'Working · last known location' : 'Working · location off';
+      label = locatable
+          ? 'Working · last known location'
+          : 'Working · location off';
       icon = locatable ? Iconsax.user : Iconsax.location_slash;
     } else {
       color = _cOff;
@@ -360,7 +379,9 @@ class _LiveTeamMapScreenState extends State<LiveTeamMapScreen> {
               width: 36,
               height: 36,
               decoration: BoxDecoration(
-                  color: color.withValues(alpha: .14), shape: BoxShape.circle),
+                color: color.withValues(alpha: .14),
+                shape: BoxShape.circle,
+              ),
               child: Icon(icon, size: 18, color: color),
             ),
             const SizedBox(width: 12),
@@ -368,20 +389,31 @@ class _LiveTeamMapScreenState extends State<LiveTeamMapScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(hit.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.poppins(
-                          fontSize: 13.5, fontWeight: FontWeight.w600)),
-                  Text(label,
-                      style: GoogleFonts.poppins(
-                          fontSize: 10.5, color: const Color(0xFF687080))),
+                  Text(
+                    hit.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.poppins(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Text(
+                    label,
+                    style: GoogleFonts.poppins(
+                      fontSize: 10.5,
+                      color: const Color(0xFF687080),
+                    ),
+                  ),
                 ],
               ),
             ),
             if (locatable)
-              const Icon(Iconsax.arrow_right_3,
-                  size: 15, color: Color(0xFF9299A5)),
+              const Icon(
+                Iconsax.arrow_right_3,
+                size: 15,
+                color: Color(0xFF9299A5),
+              ),
           ],
         ),
       ),
@@ -389,47 +421,52 @@ class _LiveTeamMapScreenState extends State<LiveTeamMapScreen> {
   }
 
   Widget _legendCard(int fieldCount, int workingCount) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: .94),
-          borderRadius: BorderRadius.circular(14),
-          boxShadow: [
-            BoxShadow(
-                color: _dark.withValues(alpha: .08),
-                blurRadius: 10,
-                offset: const Offset(0, 4)),
-          ],
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: .94),
+      borderRadius: BorderRadius.circular(14),
+      boxShadow: [
+        BoxShadow(
+          color: _dark.withValues(alpha: .08),
+          blurRadius: 10,
+          offset: const Offset(0, 4),
         ),
-        child: Column(
+      ],
+    ),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _legendDot(_cField, 'Field (live)'),
-                const SizedBox(width: 12),
-                _legendDot(_cWorking, 'Working'),
-              ],
-            ),
+            _legendDot(_cField, 'Field (live)'),
+            const SizedBox(width: 12),
+            _legendDot(_cWorking, 'Working'),
           ],
         ),
-      );
+      ],
+    ),
+  );
 
   Widget _legendDot(Color color, String label) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 9,
-            height: 9,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 5),
-          Text(label,
-              style: GoogleFonts.poppins(
-                  fontSize: 10.5, color: const Color(0xFF687080))),
-        ],
-      );
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Container(
+        width: 9,
+        height: 9,
+        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      ),
+      const SizedBox(width: 5),
+      Text(
+        label,
+        style: GoogleFonts.poppins(
+          fontSize: 10.5,
+          color: const Color(0xFF687080),
+        ),
+      ),
+    ],
+  );
 }
 
 class _TeamPoint {
@@ -466,7 +503,6 @@ class _TeamMap extends StatefulWidget {
 }
 
 class _TeamMapState extends State<_TeamMap> {
-
   LatLngBounds _bounds() {
     var minLat = widget.points.first.point.latitude, maxLat = minLat;
     var minLng = widget.points.first.point.longitude, maxLng = minLng;
@@ -524,9 +560,7 @@ class _TeamMapState extends State<_TeamMap> {
       onMapCreated: (controller) {
         widget.onMapCreated(controller);
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          controller.animateCamera(
-            CameraUpdate.newLatLngBounds(_bounds(), 72),
-          );
+          controller.animateCamera(CameraUpdate.newLatLngBounds(_bounds(), 72));
         });
       },
     );
@@ -550,13 +584,19 @@ class _OutOfHours extends StatelessWidget {
               width: 64,
               height: 64,
               decoration: const BoxDecoration(
-                  color: Color(0xFFEFF1EE), shape: BoxShape.circle),
+                color: Color(0xFFEFF1EE),
+                shape: BoxShape.circle,
+              ),
               child: const Icon(Iconsax.moon, color: _dark, size: 28),
             ),
             const SizedBox(height: 18),
-            Text('Outside working hours',
-                style: GoogleFonts.poppins(
-                    fontSize: 17, fontWeight: FontWeight.w700)),
+            Text(
+              'Outside working hours',
+              style: GoogleFonts.poppins(
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
             const SizedBox(height: 8),
             Text(
               'Live team locations are only shown during your organization’s '
@@ -564,9 +604,10 @@ class _OutOfHours extends StatelessWidget {
               'hours to protect employee privacy.',
               textAlign: TextAlign.center,
               style: GoogleFonts.poppins(
-                  fontSize: 12.5,
-                  height: 1.5,
-                  color: const Color(0xFF687080)),
+                fontSize: 12.5,
+                height: 1.5,
+                color: const Color(0xFF687080),
+              ),
             ),
           ],
         ),
@@ -592,25 +633,32 @@ class _NoLocations extends StatelessWidget {
               width: 64,
               height: 64,
               decoration: const BoxDecoration(
-                  color: Color(0xFFEFF1EE), shape: BoxShape.circle),
+                color: Color(0xFFEFF1EE),
+                shape: BoxShape.circle,
+              ),
               child: const Icon(Iconsax.map, color: _dark, size: 28),
             ),
             const SizedBox(height: 18),
-            Text(hasOnDuty ? 'No live locations' : 'No one on duty',
-                style: GoogleFonts.poppins(
-                    fontSize: 17, fontWeight: FontWeight.w700)),
+            Text(
+              hasOnDuty ? 'No live locations' : 'No one on duty',
+              style: GoogleFonts.poppins(
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
             const SizedBox(height: 8),
             Text(
               hasOnDuty
                   ? 'Team members are on duty but none are sharing a location '
-                      'right now. Live location appears when someone is on field '
-                      'work with tracking on.'
+                        'right now. Live location appears when someone is on field '
+                        'work with tracking on.'
                   : 'No team members are clocked in at the moment.',
               textAlign: TextAlign.center,
               style: GoogleFonts.poppins(
-                  fontSize: 12.5,
-                  height: 1.5,
-                  color: const Color(0xFF687080)),
+                fontSize: 12.5,
+                height: 1.5,
+                color: const Color(0xFF687080),
+              ),
             ),
           ],
         ),
