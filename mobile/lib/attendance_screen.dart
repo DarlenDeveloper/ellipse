@@ -6,7 +6,6 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:iconsax_flutter/iconsax_flutter.dart';
 
-import 'attendance_auto_clock_in.dart';
 import 'attendance_employee_detail.dart';
 import 'attendance_tracking.dart';
 import 'field_work_location_picker.dart';
@@ -973,7 +972,6 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   List<Map<String, dynamic>> _fieldReports = [];
   List<Map<String, dynamic>> _savedLocations = [];
   String _role = 'employee';
-  bool _autoClockInEnabled = false;
   bool _loading = true;
   bool _submitting = false;
   String? _error;
@@ -1022,76 +1020,13 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         _savedLocations = (data['savedLocations'] as List? ?? const [])
             .map((item) => Map<String, dynamic>.from(item as Map))
             .toList();
-        final autoClockIn = data['autoClockIn'];
-        _autoClockInEnabled =
-            autoClockIn is Map && autoClockIn['enabled'] == true;
       });
-      await _syncAutoClockInGeofence();
     } on FirebaseFunctionsException catch (e) {
       if (mounted) {
         setState(() => _error = _friendlyError(e));
       }
     } finally {
       if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _syncAutoClockInGeofence() async {
-    if (!_autoClockInEnabled || _status != 'clocked_out') {
-      await configureAutoClockInGeofence(enabled: false, geofence: null);
-      return;
-    }
-    if (await Geolocator.checkPermission() != LocationPermission.always) return;
-    final raw = _settings?['geofence'];
-    await configureAutoClockInGeofence(
-      enabled: true,
-      geofence: raw is Map ? Map<String, dynamic>.from(raw) : null,
-    );
-  }
-
-  Future<void> _toggleAutoClockIn(bool enabled) async {
-    if (_submitting) return;
-    if (enabled) {
-      final allowed = await requestAutoClockInPermission(context);
-      if (!allowed) {
-        if (mounted) {
-          setState(() => _error =
-              'Always-on location permission is required for automatic clock-in.');
-        }
-        return;
-      }
-    }
-    setState(() {
-      _submitting = true;
-      _error = null;
-    });
-    try {
-      await FirebaseFunctions.instanceFor(region: 'us-central1')
-          .httpsCallable('setAttendanceAutoClockIn')
-          .call({'enabled': enabled});
-      final raw = _settings?['geofence'];
-      await configureAutoClockInGeofence(
-        enabled: enabled,
-        geofence: raw is Map ? Map<String, dynamic>.from(raw) : null,
-      );
-      if (!mounted) return;
-      setState(() => _autoClockInEnabled = enabled);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(enabled
-              ? 'Automatic clock-in is ready.'
-              : 'Automatic clock-in is off.'),
-        ),
-      );
-    } on FirebaseFunctionsException catch (error) {
-      if (mounted) setState(() => _error = _friendlyError(error));
-    } catch (error) {
-      if (mounted) {
-        setState(() => _error =
-            'Automatic clock-in could not be updated. Please try again.');
-      }
-    } finally {
-      if (mounted) setState(() => _submitting = false);
     }
   }
 
@@ -1591,10 +1526,6 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                           ),
                         _scheduleCard(),
                         const SizedBox(height: 18),
-                        if (_status == 'clocked_out') ...[
-                          _autoClockInCard(),
-                          const SizedBox(height: 18),
-                        ],
                         if (_status == 'working') ...[
                           _button(
                             'Start field work',
@@ -1731,55 +1662,6 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       ),
     );
   }
-
-  Widget _autoClockInCard() => Container(
-    padding: const EdgeInsets.fromLTRB(16, 15, 12, 15),
-    decoration: BoxDecoration(
-      gradient: const LinearGradient(
-        colors: [Color(0xFFF0F4FF), Color(0xFFF8FAFF)],
-      ),
-      borderRadius: BorderRadius.circular(18),
-      border: Border.all(color: const Color(0xFFDDE5FF)),
-    ),
-    child: Row(
-      children: [
-        Container(
-          width: 44,
-          height: 44,
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(Iconsax.radar_1,
-              color: Color(0xFF3566F6), size: 22),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Automatic clock-in',
-                  style: GoogleFonts.poppins(
-                      fontSize: 13, fontWeight: FontWeight.w700)),
-              const SizedBox(height: 3),
-              Text(
-                _autoClockInEnabled
-                    ? 'Ready when you enter the office radius'
-                    : 'Clock in when you reach the office',
-                style: GoogleFonts.poppins(
-                    fontSize: 10.5, color: const Color(0xFF687080)),
-              ),
-            ],
-          ),
-        ),
-        Switch.adaptive(
-          value: _autoClockInEnabled,
-          onChanged: _submitting ? null : _toggleAutoClockIn,
-          activeTrackColor: const Color(0xFF3566F6),
-        ),
-      ],
-    ),
-  );
 
   Widget _scheduleCard() {
     final day = _todaySchedule;

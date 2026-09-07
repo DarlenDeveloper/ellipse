@@ -1676,16 +1676,6 @@ export const deleteFieldWorkLocation = onCall(async (request) => {
   return (await import("./attendance")).deleteFieldWorkLocation(request.auth.uid, request.data ?? {});
 });
 
-export const setAttendanceAutoClockIn = onCall(async (request) => {
-  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
-  return (await import("./attendance")).setAttendanceAutoClockIn(request.auth.uid, request.data ?? {});
-});
-
-export const attendanceAutoClockIn = onCall(async (request) => {
-  if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
-  return (await import("./attendance")).automaticClockIn(request.auth.uid, request.data ?? {});
-});
-
 export const placesAutocomplete = onCall({ secrets: [googleMapsApiKey] }, async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Must be signed in.");
   return (await import("./places")).autocompletePlaces(googleMapsApiKey.value(), request.data ?? {});

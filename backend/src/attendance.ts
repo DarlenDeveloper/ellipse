@@ -139,13 +139,12 @@ function normalizeFieldWorkLocations(input: unknown): FieldWorkLocation[] {
 
 export async function getAttendanceStatus(uid: string) {
   const user = await caller(uid);
-  const [current, settings, sessions, events, savedLocationDocs, autoClockIn] = await Promise.all([
+  const [current, settings, sessions, events, savedLocationDocs] = await Promise.all([
     db.doc(`attendance_current/${user.enterpriseId}_${uid}`).get(),
     db.doc(`attendance_settings/${user.enterpriseId}`).get(),
     db.collection("attendance_sessions").where("user_id", "==", uid).get(),
     db.collection("attendance_events").where("user_id", "==", uid).get(),
     db.collection("field_work_locations").where("user_id", "==", uid).get(),
-    db.doc(`attendance_auto_clock_in/${user.enterpriseId}_${uid}`).get(),
   ]);
   const recentSessions = sessions.docs.map((d) => ({ id: d.id, ...d.data() }))
     .sort((a: any, b: any) => (b.started_at?.toMillis?.() ?? 0) - (a.started_at?.toMillis?.() ?? 0)).slice(0, 14);
@@ -161,7 +160,6 @@ export async function getAttendanceStatus(uid: string) {
     settings: settings.exists ? settings.data() : DEFAULT_SCHEDULE,
     dateKey: eatDateKey(), role: user.role, recentSessions, recentFieldWork,
     savedLocations,
-    autoClockIn: { enabled: autoClockIn.data()?.enabled === true },
   };
 }
 
@@ -209,55 +207,6 @@ export async function deleteFieldWorkLocation(uid: string, args: Record<string, 
   }
   await ref.set({ active: false, updated_at: FieldValue.serverTimestamp() }, { merge: true });
   return { ok: true };
-}
-
-export async function setAttendanceAutoClockIn(uid: string, args: Record<string, unknown>) {
-  const user = await caller(uid);
-  const enabled = args.enabled === true;
-  await db.doc(`attendance_auto_clock_in/${user.enterpriseId}_${uid}`).set({
-    enterprise_id: user.enterpriseId,
-    user_id: uid,
-    enabled,
-    updated_at: FieldValue.serverTimestamp(),
-  }, { merge: true });
-  return { ok: true, enabled };
-}
-
-function insideAutoClockInWindow(
-  days: Record<string, { enabled: boolean; start: string; end: string }>,
-  atMs = Date.now(),
-) {
-  const local = new Date(atMs + EAT_OFFSET_MS);
-  const key = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"][local.getUTCDay()];
-  const day = days?.[key];
-  if (!day?.enabled) return false;
-  const toMinutes = (value: string) => {
-    const [hour, minute] = value.split(":").map(Number);
-    return hour * 60 + minute;
-  };
-  const nowMinutes = local.getUTCHours() * 60 + local.getUTCMinutes();
-  // Permit normal early arrivals, but never auto-clock employees in overnight.
-  return nowMinutes >= toMinutes(day.start) - 90 && nowMinutes < toMinutes(day.end);
-}
-
-export async function automaticClockIn(uid: string, args: Record<string, unknown>) {
-  const user = await caller(uid);
-  const [preference, settings] = await Promise.all([
-    db.doc(`attendance_auto_clock_in/${user.enterpriseId}_${uid}`).get(),
-    db.doc(`attendance_settings/${user.enterpriseId}`).get(),
-  ]);
-  if (preference.data()?.enabled !== true) {
-    throw new HttpsError("failed-precondition", "Automatic clock-in is not enabled.");
-  }
-  const schedule = (settings.data()?.days ?? DEFAULT_SCHEDULE.days) as Record<string, { enabled: boolean; start: string; end: string }>;
-  if (!insideAutoClockInWindow(schedule)) {
-    throw new HttpsError("failed-precondition", "Outside your automatic clock-in window.");
-  }
-  return recordAttendanceAction(uid, {
-    action: "clock_in",
-    location: args.location,
-    source: "geofence_auto",
-  });
 }
 
 export async function recordAttendanceAction(uid: string, args: Record<string, unknown>) {

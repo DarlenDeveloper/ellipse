@@ -1,0 +1,3 @@
+// Google Maps Platform API key for the iOS app.
+// Consumed by Info.plist via $(GOOGLE_MAPS_API_KEY) and read in AppDelegate.swift.
+GOOGLE_MAPS_API_KEY = AIzaSyA2aD18yK6kmTMSCmns1487SR19egpyofc
