@@ -603,15 +603,41 @@ function periodWindow(p?: string): { start: Date; end: Date; label: string } {
 
 // ---- Report gatherers for non-CRM sources ----
 
+async function queryWebEvents(enterpriseId: string, start: Date, end?: Date) {
+  let indexedQuery = db.collection("analytics_events")
+    .where("workspace_id", "==", enterpriseId)
+    .where("source", "==", "web")
+    .where("timestamp", ">=", start);
+  if (end) indexedQuery = indexedQuery.where("timestamp", "<", end);
+
+  try {
+    return await indexedQuery.get();
+  } catch (error) {
+    // A newly-created composite index can take several minutes to build. Keep
+    // Ivy available during that window by using the existing workspace/time
+    // index and applying only the source filter in memory. The date range is
+    // still bounded, so this fallback cannot regress to the old all-time read.
+    const code = (error as { code?: number | string }).code;
+    const message = (error as Error).message ?? "";
+    if (code !== 9 && code !== "failed-precondition" && !/index.*(?:building|required)/i.test(message)) {
+      throw error;
+    }
+    let fallbackQuery = db.collection("analytics_events")
+      .where("workspace_id", "==", enterpriseId)
+      .where("timestamp", ">=", start);
+    if (end) fallbackQuery = fallbackQuery.where("timestamp", "<", end);
+    return fallbackQuery.orderBy("timestamp", "desc").get();
+  }
+}
+
 async function gatherWebReport(enterpriseId: string, start: Date, end: Date) {
-  const snap = await db.collection("analytics_events").where("workspace_id", "==", enterpriseId).get();
+  // Keep raw analytics reads bounded in Firestore. Fetching every event for the
+  // workspace and filtering in Node exhausted askAgent's memory as the event
+  // collection grew.
+  const snap = await queryWebEvents(enterpriseId, start, end);
   const events = snap.docs
     .map((d) => d.data() as Record<string, unknown>)
     .filter((e) => e.source === "web")
-    .filter((e) => {
-      const t = (e.timestamp as FirebaseFirestore.Timestamp)?.toMillis?.() ?? 0;
-      return t >= start.getTime() && t < end.getTime();
-    })
     .map((e) => e.payload as Record<string, unknown>);
   const pv = events.filter((p) => (p?.type ?? "pageview") === "pageview");
   const visitors = new Set(pv.map((p) => p?.visitor_id).filter(Boolean));
@@ -1600,12 +1626,11 @@ async function toolSalesSummary(enterpriseId: string, args: Record<string, unkno
 
 async function toolWebAnalytics(enterpriseId: string, args: Record<string, unknown>) {
   const days = Math.min(Number(args.days) || 30, 365);
-  const since = Date.now() - days * 86400000;
-  const snap = await db.collection("analytics_events").where("workspace_id", "==", enterpriseId).get();
+  const since = new Date(Date.now() - days * 86400000);
+  const snap = await queryWebEvents(enterpriseId, since);
   const events = snap.docs
     .map((d) => d.data() as Record<string, unknown>)
     .filter((e) => e.source === "web")
-    .filter((e) => ((e.timestamp as FirebaseFirestore.Timestamp)?.toMillis?.() ?? 0) >= since)
     .map((e) => e.payload as Record<string, unknown>);
   const pageviews = events.filter((p) => (p?.type ?? "pageview") === "pageview");
   const visitors = new Set(pageviews.map((p) => p?.visitor_id).filter(Boolean));

@@ -205,7 +205,14 @@ export const syncGmail = onCall(
  * onSnapshot, so new messages just appear.
  */
 export const scheduledGmailSync = onSchedule(
-  { schedule: "every 10 minutes", secrets: [googleClientId, googleClientSecret] },
+  {
+    schedule: "every 10 minutes",
+    memory: "512MiB",
+    timeoutSeconds: 300,
+    maxInstances: 1,
+    concurrency: 1,
+    secrets: [googleClientId, googleClientSecret],
+  },
   async () => {
     const { syncAllConnectedGmail } = await import("./connections/google");
     const ingested = await syncAllConnectedGmail();
@@ -711,7 +718,14 @@ export const zohoOAuthCallback = onRequest(
  * on period start). Idempotent, so hourly re-runs are safe.
  */
 export const scheduledReports = onSchedule(
-  { schedule: "every 60 minutes", secrets: [geminiKey, zohoClientId, zohoClientSecret, msClientId, msClientSecret] },
+  {
+    schedule: "every 60 minutes",
+    memory: "1GiB",
+    timeoutSeconds: 540,
+    maxInstances: 1,
+    concurrency: 1,
+    secrets: [geminiKey, zohoClientId, zohoClientSecret, msClientId, msClientSecret],
+  },
   async () => {
     const { generateDueReports, notifyDueOwnerReports } = await import("./reports");
     const [reports, ownerNotifications] = await Promise.all([
@@ -760,6 +774,9 @@ export const backfillReports = onCall(
  */
 export const askAgent = onCall(
   {
+    memory: "512MiB",
+    timeoutSeconds: 120,
+    concurrency: 10,
     secrets: [
       geminiKey,
       googleClientId,
